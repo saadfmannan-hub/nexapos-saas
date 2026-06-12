@@ -1,0 +1,60 @@
+{% extends "layouts/base.html" %}
+{% block title %}Inventory — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Inventory</h1>
+  {% if show_cost and total_value is not None %}
+  <span class="badge text-bg-light border fs-6">Stock value: {{ total_value }} {{ current_business.currency_display }}</span>
+  {% endif %}
+</div>
+{% include "inventory/_tabs.html" with tab="stock" %}
+
+<div class="card mb-3"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-md-4"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Search product, SKU, barcode…"></div>
+    <div class="col-md-3">
+      <select name="warehouse" class="form-select form-select-sm">
+        <option value="">All warehouses</option>
+        {% for w in warehouses %}<option value="{{ w.id }}" {% if request.GET.warehouse == w.id|stringformat:"s" %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="level" class="form-select form-select-sm">
+        <option value="">Any level</option>
+        <option value="low" {% if request.GET.level == "low" %}selected{% endif %}>Low stock</option>
+        <option value="out" {% if request.GET.level == "out" %}selected{% endif %}>Out of stock</option>
+      </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'inventory:stock_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
+  </form>
+</div></div>
+
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Product</th><th>Variant</th><th>Warehouse</th>
+      <th class="text-end">Quantity</th><th class="text-end">Reorder level</th>
+      {% if show_cost %}<th class="text-end">Avg cost</th><th class="text-end">Value</th>{% endif %}</tr></thead>
+    <tbody>
+      {% for level in page_obj %}
+      <tr>
+        <td><a class="text-reset fw-semibold" href="{% url 'catalog:product_detail' level.product.public_id %}">{{ level.product.name }}</a></td>
+        <td class="small">{{ level.variant.name|default:"—" }}</td>
+        <td class="small">{{ level.warehouse.name }}</td>
+        <td class="text-end fw-semibold {% if level.quantity <= 0 %}text-danger{% elif level.product.reorder_level and level.quantity <= level.product.reorder_level %}text-warning{% endif %}">{{ level.quantity }}</td>
+        <td class="text-end text-secondary">{{ level.product.reorder_level }}</td>
+        {% if show_cost %}
+        {% with target=level.variant|default:level.product %}
+        <td class="text-end">{{ target.average_cost }}</td>
+        <td class="text-end">{% widthratio level.quantity 1 target.average_cost %}</td>
+        {% endwith %}
+        {% endif %}
+      </tr>
+      {% empty %}
+      <tr><td colspan="7"><div class="empty-state"><i class="bi bi-clipboard-data d-block mb-2"></i>No stock records yet — add products with opening stock or receive a purchase.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "layouts/base.html" %}
+{% block title %}Setup — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Set up {{ current_business.name }}</span>
+        <span class="badge text-bg-primary">{{ done_count }}/{{ total }} complete</span>
+      </div>
+      <div class="card-body">
+        <div class="progress mb-4" style="height:8px">
+          <div class="progress-bar" style="width:{% widthratio done_count total 100 %}%"></div>
+        </div>
+        <div class="list-group list-group-flush">
+          {% for step in steps %}
+          <a href="{% url step.url %}" class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3">
+            {% if step.done %}
+              <i class="bi bi-check-circle-fill text-success fs-5"></i>
+            {% else %}
+              <i class="bi {{ step.icon }} text-secondary fs-5"></i>
+            {% endif %}
+            <span class="{% if step.done %}text-decoration-line-through text-secondary{% endif %}">{{ step.label }}</span>
+            <i class="bi bi-chevron-right ms-auto text-secondary"></i>
+          </a>
+          {% endfor %}
+        </div>
+        <form method="post" class="mt-4 d-flex gap-2">{% csrf_token %}
+          <button class="btn btn-primary">Finish onboarding</button>
+          <a href="{% url 'dashboard' %}" class="btn btn-outline-secondary">Skip for now</a>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

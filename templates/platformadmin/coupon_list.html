@@ -1,0 +1,40 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<h1 class="page-title mb-3">Coupons</h1>
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card"><div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>Code</th><th class="text-end">% off</th><th class="text-end">Amount off</th>
+          <th class="text-end">Extra trial</th><th class="text-end">Used</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          {% for c in coupons %}
+          <tr>
+            <td class="fw-semibold">{{ c.code }}</td>
+            <td class="text-end">{{ c.percent_off }}</td>
+            <td class="text-end">{{ c.amount_off }}</td>
+            <td class="text-end">{{ c.extra_trial_days }}d</td>
+            <td class="text-end">{{ c.redemption_count }}{% if c.max_redemptions %}/{{ c.max_redemptions }}{% endif %}</td>
+            <td>{% if c.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+            <td class="w-1"><a class="btn btn-sm btn-outline-secondary" href="?edit={{ c.public_id }}"><i class="bi bi-pencil"></i></a></td>
+          </tr>
+          {% empty %}<tr><td colspan="7"><div class="empty-state">No coupons yet.</div></td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">{% if editing %}Edit coupon{% else %}New coupon{% endif %}</div>
+    <div class="card-body">
+      <form method="post">{% csrf_token %}
+        {% for field in form.visible_fields %}
+          {% if field.name == "is_active" %}
+            <div class="form-check mb-3">{{ field }}<label class="form-check-label" for="{{ field.id_for_label }}">Active</label></div>
+          {% else %}{% include "components/form_field.html" %}{% endif %}
+        {% endfor %}
+        <button class="btn btn-primary">Save coupon</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

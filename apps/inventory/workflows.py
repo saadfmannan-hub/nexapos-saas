@@ -1,0 +1,259 @@
+"""Transfer / adjustment / count workflows built on the stock ledger."""
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
+
+from apps.audit import services as audit
+from apps.core.money import D
+
+from . import services
+from .models import (
+    StockAdjustment,
+    StockAdjustmentItem,
+    StockCount,
+    StockCountItem,
+    StockLevel,
+    StockTransfer,
+    StockTransferItem,
+)
+
+
+def _next_number(model, business, field, prefix):
+    n = model.objects.for_business(business).count() + 1
+    while model.objects.for_business(business).filter(**{field: f"{prefix}-{n:06d}"}).exists():
+        n += 1
+    return f"{prefix}-{n:06d}"
+
+
+# ---------------------------------------------------------------------------
+# Transfers
+# ---------------------------------------------------------------------------
+@transaction.atomic
+def create_transfer(*, business, from_warehouse, to_warehouse, rows, user, notes=""):
+    transfer = StockTransfer.objects.create(
+        business=business,
+        transfer_number=_next_number(StockTransfer, business, "transfer_number", "TRF"),
+        from_warehouse=from_warehouse,
+        to_warehouse=to_warehouse,
+        status=StockTransfer.Status.DRAFT,
+        requested_by=user,
+        notes=notes,
+    )
+    for row in rows:
+        target = row["variant"] or row["product"]
+        StockTransferItem.objects.create(
+            business=business, transfer=transfer,
+            product=row["product"], variant=row["variant"],
+            quantity=row["quantity"],
+            unit_cost=D(getattr(target, "average_cost", 0)) or D(
+                getattr(target, "purchase_price", 0)),
+        )
+    return transfer
+
+
+@transaction.atomic
+def dispatch_transfer(*, transfer, user, request=None):
+    if transfer.status not in (StockTransfer.Status.DRAFT, StockTransfer.Status.APPROVED):
+        raise ValidationError("Transfer cannot be dispatched in its current status.")
+    for item in transfer.items.select_related("product", "variant"):
+        services.record_movement(
+            business=transfer.business, warehouse=transfer.from_warehouse,
+            product=item.product, variant=item.variant,
+            movement_type="transfer_out", quantity=-item.quantity,
+            unit_cost=item.unit_cost, reference_type="Transfer",
+            reference_id=transfer.transfer_number, user=user,
+        )
+    transfer.status = StockTransfer.Status.DISPATCHED
+    transfer.dispatched_by = user
+    transfer.dispatched_at = timezone.now()
+    transfer.save()
+    audit.log("transfer.dispatched", business=transfer.business, user=user,
+              request=request, module="inventory", obj=transfer,
+              description=f"Transfer {transfer.transfer_number} dispatched.")
+    return transfer
+
+
+@transaction.atomic
+def receive_transfer(*, transfer, user, request=None):
+    if transfer.status != StockTransfer.Status.DISPATCHED:
+        raise ValidationError("Only dispatched transfers can be received.")
+    for item in transfer.items.select_related("product", "variant"):
+        services.record_movement(
+            business=transfer.business, warehouse=transfer.to_warehouse,
+            product=item.product, variant=item.variant,
+            movement_type="transfer_in", quantity=item.quantity,
+            unit_cost=item.unit_cost, reference_type="Transfer",
+            reference_id=transfer.transfer_number, user=user,
+        )
+    transfer.status = StockTransfer.Status.RECEIVED
+    transfer.received_by = user
+    transfer.received_at = timezone.now()
+    transfer.save()
+    audit.log("transfer.received", business=transfer.business, user=user,
+              request=request, module="inventory", obj=transfer,
+              description=f"Transfer {transfer.transfer_number} received.")
+    return transfer
+
+
+@transaction.atomic
+def cancel_transfer(*, transfer, user, request=None):
+    if transfer.status == StockTransfer.Status.DISPATCHED:
+        # Return goods to source
+        for item in transfer.items.select_related("product", "variant"):
+            services.record_movement(
+                business=transfer.business, warehouse=transfer.from_warehouse,
+                product=item.product, variant=item.variant,
+                movement_type="transfer_in", quantity=item.quantity,
+                unit_cost=item.unit_cost, reference_type="TransferCancel",
+                reference_id=transfer.transfer_number, user=user,
+            )
+    elif transfer.status == StockTransfer.Status.RECEIVED:
+        raise ValidationError("Received transfers cannot be cancelled.")
+    transfer.status = StockTransfer.Status.CANCELLED
+    transfer.save(update_fields=["status", "updated_at"])
+    audit.log("transfer.cancelled", business=transfer.business, user=user,
+              request=request, module="inventory", obj=transfer,
+              description=f"Transfer {transfer.transfer_number} cancelled.")
+    return transfer
+
+
+# ---------------------------------------------------------------------------
+# Adjustments
+# ---------------------------------------------------------------------------
+ADJUST_MOVEMENT = {
+    "damage": "damage", "expiry": "wastage", "loss": "adjust_out",
+    "theft": "adjust_out", "wastage": "wastage", "internal": "internal",
+    "sample": "internal", "count": "count", "data": "adjust_out", "other": "adjust_out",
+}
+
+
+@transaction.atomic
+def create_adjustment(*, business, warehouse, reason, rows, user, notes="",
+                      requires_approval=False, request=None):
+    adjustment = StockAdjustment.objects.create(
+        business=business,
+        adjustment_number=_next_number(StockAdjustment, business,
+                                       "adjustment_number", "ADJ"),
+        warehouse=warehouse, reason=reason,
+        status=(StockAdjustment.Status.PENDING if requires_approval
+                else StockAdjustment.Status.APPROVED),
+        notes=notes, created_by=user,
+    )
+    for row in rows:
+        previous = services.get_stock(business, warehouse, row["product"], row["variant"])
+        StockAdjustmentItem.objects.create(
+            business=business, adjustment=adjustment,
+            product=row["product"], variant=row["variant"],
+            previous_quantity=previous, change=row["quantity"],
+        )
+    if adjustment.status == StockAdjustment.Status.APPROVED:
+        _apply_adjustment(adjustment, user)
+    else:
+        from apps.notifications.services import notify_role
+
+        notify_role(business, "inventory.adjust_approve",
+                    f"Stock adjustment {adjustment.adjustment_number} needs approval",
+                    severity="warning", category="adjustment_pending",
+                    link="/inventory/adjustments/")
+    audit.log("adjustment.created", business=business, user=user, request=request,
+              module="inventory", obj=adjustment,
+              description=f"Adjustment {adjustment.adjustment_number} "
+                          f"({adjustment.get_reason_display()}) created.")
+    return adjustment
+
+
+def _apply_adjustment(adjustment, user):
+    movement_type_out = ADJUST_MOVEMENT.get(adjustment.reason, "adjust_out")
+    for item in adjustment.items.select_related("product", "variant"):
+        if item.change == 0:
+            continue
+        mtype = "adjust_in" if item.change > 0 else movement_type_out
+        target = item.variant or item.product
+        services.record_movement(
+            business=adjustment.business, warehouse=adjustment.warehouse,
+            product=item.product, variant=item.variant,
+            movement_type=mtype, quantity=item.change,
+            unit_cost=D(getattr(target, "average_cost", 0)),
+            reference_type="Adjustment", reference_id=adjustment.adjustment_number,
+            user=user, notes=adjustment.notes[:300],
+        )
+
+
+@transaction.atomic
+def approve_adjustment(*, adjustment, user, request=None):
+    if adjustment.status != StockAdjustment.Status.PENDING:
+        raise ValidationError("Only pending adjustments can be approved.")
+    adjustment.status = StockAdjustment.Status.APPROVED
+    adjustment.approved_by = user
+    adjustment.save()
+    _apply_adjustment(adjustment, user)
+    audit.log("adjustment.approved", business=adjustment.business, user=user,
+              request=request, module="inventory", obj=adjustment,
+              description=f"Adjustment {adjustment.adjustment_number} approved.")
+    return adjustment
+
+
+@transaction.atomic
+def reject_adjustment(*, adjustment, user, request=None):
+    if adjustment.status != StockAdjustment.Status.PENDING:
+        raise ValidationError("Only pending adjustments can be rejected.")
+    adjustment.status = StockAdjustment.Status.REJECTED
+    adjustment.approved_by = user
+    adjustment.save()
+    audit.log("adjustment.rejected", business=adjustment.business, user=user,
+              request=request, module="inventory", obj=adjustment,
+              description=f"Adjustment {adjustment.adjustment_number} rejected.")
+    return adjustment
+
+
+# ---------------------------------------------------------------------------
+# Physical counts
+# ---------------------------------------------------------------------------
+@transaction.atomic
+def start_count(*, business, warehouse, user, notes=""):
+    """Snapshot expected stock for every stocked product in the warehouse."""
+    count = StockCount.objects.create(
+        business=business,
+        count_number=_next_number(StockCount, business, "count_number", "CNT"),
+        warehouse=warehouse, created_by=user, notes=notes,
+    )
+    levels = StockLevel.objects.for_business(business).filter(
+        warehouse=warehouse
+    ).select_related("product", "variant")
+    for level in levels:
+        StockCountItem.objects.create(
+            business=business, count=count, product=level.product,
+            variant=level.variant, expected_quantity=level.quantity,
+        )
+    return count
+
+
+@transaction.atomic
+def approve_count(*, count, user, request=None):
+    if count.status not in (StockCount.Status.OPEN, StockCount.Status.REVIEW):
+        raise ValidationError("This count is not open.")
+    corrections = 0
+    for item in count.items.select_related("product", "variant"):
+        if item.counted_quantity is None:
+            continue
+        variance = item.counted_quantity - item.expected_quantity
+        if variance == 0:
+            continue
+        target = item.variant or item.product
+        services.record_movement(
+            business=count.business, warehouse=count.warehouse,
+            product=item.product, variant=item.variant,
+            movement_type="count", quantity=variance,
+            unit_cost=D(getattr(target, "average_cost", 0)),
+            reference_type="StockCount", reference_id=count.count_number,
+            user=user, enforce_policy=False,
+        )
+        corrections += 1
+    count.status = StockCount.Status.APPROVED
+    count.approved_by = user
+    count.save()
+    audit.log("count.approved", business=count.business, user=user, request=request,
+              module="inventory", obj=count,
+              description=f"Stock count {count.count_number} approved with "
+                          f"{corrections} corrections.")
+    return count

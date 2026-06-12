@@ -1,0 +1,122 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ sale.invoice_number }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Invoice {{ sale.invoice_number }}
+    <span class="badge badge-status bs-{{ sale.status }} ms-2 fs-6">{{ sale.get_status_display }}</span></h1>
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'sales:receipt' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Receipt</a>
+    <a href="{% url 'sales:invoice' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> A4 invoice</a>
+    <a href="{% url 'sales:invoice_pdf' sale.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
+    {% if "sales.refund" in business_perms and sale.status != "voided" %}
+      <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
+    {% endif %}
+    {% if "sales.void" in business_perms and sale.status != "voided" and not returns %}
+      <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#voidModal"><i class="bi bi-x-octagon"></i> Void</button>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">Items</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Price</th>
+          <th class="text-end">Discount</th><th class="text-end">Tax</th><th class="text-end">Total</th>
+          {% if show_profit %}<th class="text-end">Profit</th>{% endif %}
+          <th class="text-end">Returned</th></tr></thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>{{ item.product_name }}<br><span class="small text-secondary">{{ item.sku }}</span></td>
+            <td class="text-end">{{ item.quantity }}</td>
+            <td class="text-end">{{ item.unit_price }}</td>
+            <td class="text-end">{{ item.discount_amount }}</td>
+            <td class="text-end">{{ item.tax_amount }}</td>
+            <td class="text-end fw-semibold">{{ item.line_total }}</td>
+            {% if show_profit %}<td class="text-end">{{ item.gross_profit }}</td>{% endif %}
+            <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    {% if returns %}
+    <div class="card mt-3">
+      <div class="card-header">Returns against this invoice</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Return #</th><th>Date</th><th>Refund method</th><th class="text-end">Refund</th><th>By</th></tr></thead>
+        <tbody>
+          {% for r in returns %}
+          <tr>
+            <td class="fw-semibold">{{ r.return_number }}</td>
+            <td class="small">{{ r.created_at|date:"Y-m-d H:i" }}</td>
+            <td>{{ r.get_refund_method_display }}</td>
+            <td class="text-end">{{ r.refund_amount }}</td>
+            <td class="small">{{ r.processed_by.full_name|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Summary</div><div class="card-body">
+      <table class="table table-sm small mb-0">
+        <tr><th>Date</th><td>{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
+        <tr><th>Customer</th><td>{{ sale.customer.full_name }}</td></tr>
+        <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
+        <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
+        <tr><th>Subtotal</th><td>{{ sale.subtotal }}</td></tr>
+        <tr><th>Discount</th><td>{{ sale.discount_amount }}</td></tr>
+        <tr><th>Tax</th><td>{{ sale.tax_amount }}</td></tr>
+        <tr><th>Total</th><td class="fw-bold">{{ sale.total }} {{ current_business.currency_display }}</td></tr>
+        <tr><th>Paid</th><td>{{ sale.amount_paid }}</td></tr>
+        <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{{ sale.balance }}</td></tr>
+        {% if show_profit %}
+        <tr><th>Cost</th><td>{{ sale.total_cost }}</td></tr>
+        <tr><th>Gross profit</th><td class="fw-bold text-success">{{ sale.gross_profit }}</td></tr>
+        {% endif %}
+        {% if sale.status == "voided" %}
+        <tr><th>Voided by</th><td>{{ sale.voided_by.full_name }} ({{ sale.voided_at|date:"Y-m-d H:i" }})</td></tr>
+        <tr><th>Reason</th><td>{{ sale.void_reason }}</td></tr>
+        {% endif %}
+      </table>
+    </div></div>
+    <div class="card mt-3"><div class="card-header">Payments</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <tbody>
+          {% for p in payments %}
+          <tr><td>{{ p.method.name }}</td><td class="small text-secondary">{{ p.reference }}</td>
+              <td class="text-end fw-semibold">{{ p.amount }}</td></tr>
+          {% empty %}<tr><td class="text-center text-secondary py-3">No payments</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+
+<!-- Void modal -->
+<div class="modal fade" id="voidModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post" action="{% url 'sales:void' sale.public_id %}">{% csrf_token %}
+      <div class="modal-header"><h5 class="modal-title">Void invoice {{ sale.invoice_number }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 small">Voiding restores stock and reverses
+          customer balances. This action is recorded in the audit log and cannot be undone.</div>
+        <label class="form-label required-star">Reason</label>
+        <textarea name="reason" class="form-control" rows="2" required></textarea>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger">Void invoice</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+{% endblock %}

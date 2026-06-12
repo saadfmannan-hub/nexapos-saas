@@ -1,0 +1,33 @@
+{% extends "layouts/base.html" %}
+{% block title %}Variant — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6">
+  <div class="card">
+    <div class="card-header">{% if variant %}Edit variant{% else %}New variant{% endif %} — {{ product.name }}</div>
+    <div class="card-body">
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
+      <form method="post" enctype="multipart/form-data">{% csrf_token %}
+        <div class="row">
+          <div class="col-4">{% include "components/form_field.html" with field=form.attr_size %}</div>
+          <div class="col-4">{% include "components/form_field.html" with field=form.attr_color %}</div>
+          <div class="col-4">{% include "components/form_field.html" with field=form.attr_other %}</div>
+        </div>
+        {% include "components/form_field.html" with field=form.name %}
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.sku %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.barcode %}</div>
+        </div>
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.purchase_price %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.sale_price %}</div>
+        </div>
+        {% include "components/form_field.html" with field=form.image %}
+        <div class="form-check mb-3">{{ form.is_active }}
+          <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
+        <button class="btn btn-primary">Save variant</button>
+        <a href="{% url 'catalog:product_detail' product.public_id %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

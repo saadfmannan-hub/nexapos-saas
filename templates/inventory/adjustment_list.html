@@ -1,0 +1,38 @@
+{% extends "layouts/base.html" %}
+{% block title %}Adjustments — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Inventory</h1>
+  <a href="{% url 'inventory:adjustment_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New adjustment</a>
+</div>
+{% include "inventory/_tabs.html" with tab="adjustments" %}
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Number</th><th>Warehouse</th><th>Reason</th><th>Items</th><th>Status</th><th>By</th><th>Date</th><th class="text-end"></th></tr></thead>
+    <tbody>
+      {% for a in page_obj %}
+      <tr>
+        <td class="fw-semibold">{{ a.adjustment_number }}</td>
+        <td class="small">{{ a.warehouse.name }}</td>
+        <td>{{ a.get_reason_display }}</td>
+        <td>{{ a.items.count }}</td>
+        <td><span class="badge badge-status bs-{{ a.status }}">{{ a.get_status_display }}</span></td>
+        <td class="small">{{ a.created_by.full_name|default:"—" }}</td>
+        <td class="small">{{ a.created_at|date:"Y-m-d" }}</td>
+        <td class="text-end text-nowrap">
+          {% if a.status == "pending" and "inventory.adjust_approve" in business_perms %}
+          <form method="post" action="{% url 'inventory:adjustment_action' a.public_id 'approve' %}" class="d-inline">{% csrf_token %}
+            <button class="btn btn-sm btn-success">Approve</button></form>
+          <form method="post" action="{% url 'inventory:adjustment_action' a.public_id 'reject' %}" class="d-inline">{% csrf_token %}
+            <button class="btn btn-sm btn-outline-danger">Reject</button></form>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8"><div class="empty-state"><i class="bi bi-sliders d-block mb-2"></i>No adjustments yet.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

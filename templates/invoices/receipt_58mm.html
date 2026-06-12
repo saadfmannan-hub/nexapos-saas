@@ -1,0 +1,54 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receipt {{ sale.invoice_number }}</title>
+<style>
+  @page { size: 58mm auto; margin: 1.5mm; }
+  body { font-family: "Courier New", monospace; font-size: 8.5pt; width: 52mm;
+         margin: 0 auto; color: #000; }
+  .c { text-align: center; } .r { text-align: right; }
+  hr { border: none; border-top: 1px dashed #000; margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 1px 0; vertical-align: top; }
+  .b { font-weight: bold; }
+  .lg { font-size: 10pt; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body onload="{% if request.GET.autoprint %}window.print(){% endif %}">
+<div class="no-print c" style="margin:6px 0">
+  <button onclick="window.print()" style="padding:4px 12px;cursor:pointer">🖨 Print</button>
+</div>
+<div class="c">
+  <span class="b lg">{{ business.name }}</span><br>
+  {{ sale.branch.name }}<br>
+  {% if business.tax_registration_number %}Tax No: {{ business.tax_registration_number }}<br>{% endif %}
+</div>
+<hr>
+<table>
+  <tr><td>Inv</td><td class="r b">{{ sale.invoice_number }}</td></tr>
+  <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"y-m-d H:i" }}</td></tr>
+  {% if is_reprint %}<tr><td colspan="2" class="c b">** DUPLICATE **</td></tr>{% endif %}
+  {% if sale.status == "voided" %}<tr><td colspan="2" class="c b lg">** VOIDED **</td></tr>{% endif %}
+</table>
+<hr>
+{% for item in items %}
+<div>{{ item.product_name|truncatechars:26 }}</div>
+<table><tr>
+  <td>{{ item.quantity }} x {{ item.unit_price }}</td>
+  <td class="r">{{ item.line_total }}</td>
+</tr></table>
+{% endfor %}
+<hr>
+<table>
+  {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>{% endif %}
+  {% if settings_obj.show_tax_on_receipt %}<tr><td>Tax</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
+  <tr class="b lg"><td>TOTAL</td><td class="r">{{ sale.total }}</td></tr>
+  {% for p in payments %}<tr><td>{{ p.method.name|truncatechars:12 }}</td><td class="r">{{ p.amount }}</td></tr>{% endfor %}
+  {% if sale.change_due > 0 %}<tr class="b"><td>CHANGE</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
+</table>
+<hr>
+<div class="c">{{ settings_obj.receipt_footer|default:""|linebreaksbr }}</div>
+</body>
+</html>

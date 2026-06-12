@@ -1,0 +1,23 @@
+{% extends "layouts/base.html" %}
+{% block title %}Warehouse — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6">
+  <div class="card">
+    <div class="card-header">{% if warehouse %}Edit warehouse: {{ warehouse.name }}{% else %}New warehouse{% endif %}</div>
+    <div class="card-body">
+      <form method="post">{% csrf_token %}
+        {% for field in form.visible_fields %}
+          {% if field.name == "is_active" or field.name == "is_default" %}
+            <div class="form-check mb-3">{{ field }}
+              <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+          {% else %}
+            {% include "components/form_field.html" %}
+          {% endif %}
+        {% endfor %}
+        <button class="btn btn-primary">Save warehouse</button>
+        <a href="{% url 'branches:list' %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

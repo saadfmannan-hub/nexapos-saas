@@ -1,0 +1,22 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<h1 class="page-title mb-3">Platform audit log</h1>
+<div class="card"><div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr><th>When</th><th>Admin</th><th>Business</th><th>Action</th><th>Description</th><th>IP</th></tr></thead>
+    <tbody>
+      {% for log in page_obj %}
+      <tr>
+        <td class="small text-nowrap">{{ log.created_at|date:"Y-m-d H:i:s" }}</td>
+        <td class="small">{{ log.user.email|default:"system" }}</td>
+        <td class="small">{{ log.business.name|default:"—" }}</td>
+        <td><span class="badge text-bg-light border">{{ log.action }}</span></td>
+        <td class="small">{{ log.description }}</td>
+        <td class="small text-secondary">{{ log.ip_address|default:"—" }}</td>
+      </tr>
+      {% empty %}<tr><td colspan="6"><div class="empty-state">No platform actions yet.</div></td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

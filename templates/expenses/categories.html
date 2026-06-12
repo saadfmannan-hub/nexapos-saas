@@ -1,0 +1,39 @@
+{% extends "layouts/base.html" %}
+{% block title %}Expense categories — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Expense categories</h1>
+  <a href="{% url 'expenses:list' %}" class="btn btn-outline-secondary btn-sm">Back to expenses</a>
+</div>
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card"><div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>Category</th><th>Parent</th><th>Status</th><th class="w-1"></th></tr></thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td class="fw-semibold">{{ item.name }}</td>
+            <td>{{ item.parent.name|default:"—" }}</td>
+            <td>{% if item.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+            <td><a class="btn btn-sm btn-outline-secondary" href="?edit={{ item.public_id }}"><i class="bi bi-pencil"></i></a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">{% if editing %}Edit category{% else %}New category{% endif %}</div>
+    <div class="card-body">
+      <form method="post">{% csrf_token %}
+        {% include "components/form_field.html" with field=form.name %}
+        {% include "components/form_field.html" with field=form.parent %}
+        <div class="form-check mb-3">{{ form.is_active }}<label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
+        <button class="btn btn-primary">Save</button>
+        {% if editing %}<a href="{% url 'expenses:categories' %}" class="btn btn-outline-secondary">Cancel</a>{% endif %}
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

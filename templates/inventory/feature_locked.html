@@ -1,0 +1,11 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ feature }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="empty-state">
+  <i class="bi bi-lock d-block mb-2"></i>
+  <h5>{{ feature }} is not included in your plan</h5>
+  <p class="text-secondary">Upgrade your subscription to unlock this feature.
+  Your existing data is never deleted.</p>
+  <a href="{% url 'subscriptions:status' %}" class="btn btn-primary btn-sm">View plans</a>
+</div>
+{% endblock %}

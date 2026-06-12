@@ -1,0 +1,22 @@
+{% extends "layouts/base.html" %}
+{% block title %}Reports — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Reports center</h1>
+<div class="row g-3">
+  {% for group in groups %}
+  <div class="col-md-6 col-xl-4">
+    <div class="card h-100">
+      <div class="card-header">{{ group.name }}</div>
+      <div class="list-group list-group-flush">
+        {% for item in group.items %}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+           href="{% url 'reports:view' item.key %}">
+          {{ item.title }} <i class="bi bi-chevron-right text-secondary"></i>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

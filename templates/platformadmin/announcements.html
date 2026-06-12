@@ -1,0 +1,28 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<h1 class="page-title mb-3">Platform announcements</h1>
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card"><div class="list-group list-group-flush">
+      {% for a in announcements %}
+      <div class="list-group-item">
+        <div class="fw-semibold">{{ a.title }}</div>
+        <div class="small text-secondary">{{ a.body }}</div>
+        <div class="small text-secondary">{{ a.starts_at|date:"Y-m-d H:i" }}</div>
+      </div>
+      {% empty %}<div class="empty-state">No announcements.</div>{% endfor %}
+    </div></div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">Publish announcement</div><div class="card-body">
+      <form method="post">{% csrf_token %}
+        <div class="mb-3"><label class="form-label">Title</label>
+          <input name="title" class="form-control" required></div>
+        <div class="mb-3"><label class="form-label">Body</label>
+          <textarea name="body" class="form-control" rows="3"></textarea></div>
+        <button class="btn btn-primary">Publish</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

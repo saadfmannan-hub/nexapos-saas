@@ -1,0 +1,41 @@
+{% extends "layouts/base.html" %}
+{% block title %}Statement — {{ customer.full_name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 no-print">
+  <h1 class="page-title">Statement — {{ customer.full_name }}</h1>
+  <div class="d-flex gap-2">
+    <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print</button>
+    <a href="{% url 'customers:detail' customer.public_id %}" class="btn btn-outline-secondary btn-sm">Back</a>
+  </div>
+</div>
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>{{ current_business.name }} — Customer statement</span>
+    <span class="small text-secondary">Generated {% now "Y-m-d H:i" %}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Date</th><th>Description</th><th>Reference</th>
+        <th class="text-end">Debit</th><th class="text-end">Credit</th><th class="text-end">Balance</th></tr></thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td class="small">{{ e.date|date:"Y-m-d" }}</td>
+          <td>{{ e.type }}</td>
+          <td class="small">{{ e.ref }}</td>
+          <td class="text-end">{% if e.debit %}{{ e.debit }}{% endif %}</td>
+          <td class="text-end">{% if e.credit %}{{ e.credit }}{% endif %}</td>
+          <td class="text-end fw-semibold">{{ e.balance }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="text-center text-secondary py-4">No credit activity for this customer.</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr class="table-light fw-bold">
+        <td colspan="5">Closing balance (owed by customer)</td>
+        <td class="text-end">{{ closing_balance }} {{ current_business.currency_display }}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

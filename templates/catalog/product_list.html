@@ -1,0 +1,95 @@
+{% extends "layouts/base.html" %}
+{% block title %}Products — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Products</h1>
+  <div class="d-flex gap-2">
+    {% if "products.import" in business_perms %}
+    <a href="{% url 'catalog:product_import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% endif %}
+    {% if "products.manage" in business_perms %}
+    <a href="{% url 'catalog:product_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New product</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-md-4">
+      <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+             placeholder="Search name, SKU, barcode…">
+    </div>
+    <div class="col-md-3">
+      <select name="category" class="form-select form-select-sm">
+        <option value="">All categories</option>
+        {% for c in categories %}
+          <option value="{{ c.id }}" {% if request.GET.category == c.id|stringformat:"s" %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="status" class="form-select form-select-sm">
+        <option value="">Any status</option>
+        <option value="active" {% if request.GET.status == "active" %}selected{% endif %}>Active</option>
+        <option value="inactive" {% if request.GET.status == "inactive" %}selected{% endif %}>Inactive</option>
+      </select>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'catalog:product_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+    </div>
+    <div class="col-auto ms-auto small text-secondary">
+      {{ product_count }}{% if product_limit %} / {{ product_limit }} products on plan{% endif %}
+    </div>
+  </form>
+</div></div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr>
+        <th><a href="?{{ querystring }}sort={% if request.GET.sort == 'name' %}-name{% else %}name{% endif %}" class="text-reset">Product</a></th>
+        <th>SKU / Barcode</th><th>Category</th>
+        <th class="text-end"><a href="?{{ querystring }}sort={% if request.GET.sort == 'sale_price' %}-sale_price{% else %}sale_price{% endif %}" class="text-reset">Price</a></th>
+        <th class="text-end">Stock</th><th>Status</th><th class="w-1"></th>
+      </tr></thead>
+      <tbody>
+        {% for p in page_obj %}
+        <tr>
+          <td>
+            <a href="{% url 'catalog:product_detail' p.public_id %}" class="fw-semibold text-reset">{{ p.name }}</a>
+            {% if p.has_variants %}<span class="badge text-bg-info ms-1">Variants</span>{% endif %}
+            {% if p.product_type == "service" %}<span class="badge text-bg-secondary ms-1">Service</span>{% endif %}
+          </td>
+          <td class="small text-secondary">{{ p.sku|default:"—" }}{% if p.barcode %}<br>{{ p.barcode }}{% endif %}</td>
+          <td class="small">{{ p.category|default:"—" }}</td>
+          <td class="text-end fw-semibold">{{ p.sale_price }} {{ current_business.currency_display }}</td>
+          <td class="text-end">
+            {% if p.is_stocked %}
+              <span class="{% if p.total_stock <= p.reorder_level %}text-danger fw-bold{% endif %}">{{ p.total_stock|default:0 }}</span>
+            {% else %}<span class="text-secondary">—</span>{% endif %}
+          </td>
+          <td>{% if p.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+          <td class="text-nowrap">
+            {% if "products.manage" in business_perms %}
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:product_edit' p.public_id %}" title="Edit"><i class="bi bi-pencil"></i></a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="7">
+          <div class="empty-state">
+            <i class="bi bi-box-seam d-block mb-2"></i>
+            No products yet.
+            {% if "products.manage" in business_perms %}
+            <div class="mt-2"><a href="{% url 'catalog:product_create' %}" class="btn btn-sm btn-primary">Add your first product</a></div>
+            {% endif %}
+          </div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+</div>
+{% endblock %}

@@ -31,15 +31,24 @@ class PermissionRequiredMixin(BusinessRequiredMixin):
     """Alias kept for readability at call sites."""
 
 
-def get_tenant_object(model, business, **lookup):
+def get_tenant_object(model_or_qs, business, **lookup):
     """Fetch a tenant-owned object or raise 404.
 
+    Accepts either a model class or a queryset (e.g. with select_related).
     Cross-tenant primary keys / UUIDs must be indistinguishable from
     nonexistent ones, so this always raises Http404 (never 403).
     """
+    from django.db.models import QuerySet
+
+    if isinstance(model_or_qs, QuerySet):
+        qs = model_or_qs
+        model = qs.model
+    else:
+        model = model_or_qs
+        qs = model.objects.all()
     try:
-        return model.objects.for_business(business).get(**lookup)
-    except model.DoesNotExist:
+        return qs.for_business(business).get(**lookup)
+    except (model.DoesNotExist, ValueError, TypeError):
         raise Http404
 
 

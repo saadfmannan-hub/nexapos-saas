@@ -1,0 +1,34 @@
+{% extends "layouts/base.html" %}
+{% block title %}Expense — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6">
+  <div class="card">
+    <div class="card-header">{% if expense %}Edit {{ expense.expense_number }}{% else %}New expense{% endif %}</div>
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data">{% csrf_token %}
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.expense_date %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.branch %}</div>
+        </div>
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.category %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.payment_method %}</div>
+        </div>
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.payee %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.supplier %}</div>
+        </div>
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.amount %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.tax_amount %}</div>
+        </div>
+        {% include "components/form_field.html" with field=form.reference %}
+        {% include "components/form_field.html" with field=form.description %}
+        {% include "components/form_field.html" with field=form.attachment %}
+        <button class="btn btn-primary">Save expense</button>
+        <a href="{% url 'expenses:list' %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "layouts/base.html" %}
+{% block title %}Labels — {{ product.name }}{% endblock %}
+{% block extra_css %}
+<style>
+  .label-sheet { display: flex; flex-wrap: wrap; gap: 4mm; }
+  .label {
+    width: 38mm; border: 1px dashed #cbd5e1; padding: 2mm; text-align: center;
+    font-size: 8pt; background: #fff; border-radius: 2px;
+  }
+  .label .lname { font-weight: 700; line-height: 1.1; overflow: hidden; max-height: 2.4em; }
+  .label img { width: 100%; height: 11mm; object-fit: contain; }
+  @media print { .label { border: none; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 no-print">
+  <h1 class="page-title">Barcode labels — {{ product.name }}</h1>
+  <div class="d-flex gap-2">
+    <form method="get" class="d-flex gap-2">
+      <input type="number" name="count" class="form-control form-control-sm" style="width:90px"
+             value="{{ count_range|length }}" min="1" max="120">
+      <button class="btn btn-sm btn-outline-secondary">Update</button>
+    </form>
+    <button class="btn btn-sm btn-primary" onclick="window.print()"><i class="bi bi-printer"></i> Print</button>
+  </div>
+</div>
+<div class="label-sheet">
+  {% for _ in count_range %}
+  <div class="label">
+    <div class="lname">{{ product.name }}</div>
+    <img src="{% url 'catalog:product_barcode' product.public_id %}" alt="barcode">
+    <div>{{ product.barcode|default:product.sku }}</div>
+    <div class="fw-bold">{{ product.sale_price }} {{ business.currency_display }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

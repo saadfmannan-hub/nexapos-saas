@@ -1,0 +1,174 @@
+{% extends "layouts/base.html" %}
+{% load static humanize %}
+{% block title %}Dashboard — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+{% if onboarding_pending %}
+<div class="alert alert-info d-flex justify-content-between align-items-center">
+  <div><i class="bi bi-stars me-2"></i>Finish setting up your business to get the most out of {{ PRODUCT_NAME }}.</div>
+  <a href="{% url 'tenants:onboarding' %}" class="btn btn-sm btn-primary">Continue setup</a>
+</div>
+{% endif %}
+
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Dashboard</h1>
+  <form class="d-flex gap-2 align-items-center" method="get">
+    <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm">
+    <span class="text-secondary">→</span>
+    <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm">
+    <select name="branch" class="form-select form-select-sm" style="max-width:160px">
+      <option value="">All branches</option>
+      {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+    </select>
+    <button class="btn btn-sm btn-primary">Apply</button>
+  </form>
+</div>
+
+<!-- KPI row 1 -->
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'sales_summary' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Period sales</div>
+        <div class="kpi-value">{{ kpis.period_sales|floatformat:current_business.currency_precision|intcomma }}</div>
+        <div class="small text-secondary">Today: {{ kpis.today_sales|floatformat:current_business.currency_precision }}</div></div>
+      <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-graph-up-arrow"></i></div>
+    </div></div></a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'sales_detailed' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Invoices</div>
+        <div class="kpi-value">{{ kpis.invoices|intcomma }}</div>
+        <div class="small text-secondary">Avg: {{ kpis.avg_invoice|floatformat:current_business.currency_precision }}</div></div>
+      <div class="kpi-icon" style="background:#e0f2f1;color:#0ea5a4"><i class="bi bi-receipt"></i></div>
+    </div></div></a>
+  </div>
+  {% if show_profit %}
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'profit' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Gross profit</div>
+        <div class="kpi-value text-success">{{ kpis.gross_profit|floatformat:current_business.currency_precision|intcomma }}</div>
+        <div class="small text-secondary">Margin: {{ kpis.margin|floatformat:1 }}%</div></div>
+      <div class="kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-piggy-bank"></i></div>
+    </div></div></a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'expenses' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Est. net profit</div>
+        <div class="kpi-value {% if kpis.net_profit < 0 %}text-danger{% endif %}">{{ kpis.net_profit|floatformat:current_business.currency_precision|intcomma }}</div>
+        <div class="small text-secondary">Expenses: {{ kpis.expenses|floatformat:current_business.currency_precision }}</div></div>
+      <div class="kpi-icon" style="background:#fef3c7;color:#d97706"><i class="bi bi-wallet2"></i></div>
+    </div></div></a>
+  </div>
+  {% endif %}
+</div>
+
+<!-- KPI row 2 -->
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'receivables' %}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Receivables</div>
+        <div class="kpi-value {% if kpis.receivables > 0 %}text-warning{% endif %}">{{ kpis.receivables|floatformat:current_business.currency_precision|intcomma }}</div></div>
+      <div class="kpi-icon" style="background:#fef3c7;color:#d97706"><i class="bi bi-person-up"></i></div>
+    </div></div></a>
+  </div>
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'supplier_balances' %}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Payables</div>
+        <div class="kpi-value">{{ kpis.payables|floatformat:current_business.currency_precision|intcomma }}</div></div>
+      <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-truck"></i></div>
+    </div></div></a>
+  </div>
+  {% if kpis.stock_value is not None %}
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'current_stock' %}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Stock value</div>
+        <div class="kpi-value">{{ kpis.stock_value|floatformat:current_business.currency_precision|intcomma }}</div></div>
+      <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-boxes"></i></div>
+    </div></div></a>
+  </div>
+  {% endif %}
+  <div class="col-6 col-xl-3">
+    <a href="{% url 'reports:view' 'low_stock' %}" class="text-reset">
+    <div class="card kpi-card"><div class="card-body d-flex justify-content-between">
+      <div><div class="kpi-label">Low stock items</div>
+        <div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock }}</div>
+        <div class="small text-secondary">Returns: {{ kpis.returns|floatformat:current_business.currency_precision }}</div></div>
+      <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div>
+    </div></div></a>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card"><div class="card-header">Sales trend</div>
+      <div class="card-body"><canvas id="trendChart" height="110"></canvas></div></div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Payment methods</div>
+      <div class="card-body"><canvas id="methodChart" height="220"></canvas></div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Best-selling products</div>
+      <div class="card-body"><canvas id="productChart" height="160"></canvas></div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Sales by branch</div>
+      <div class="card-body"><canvas id="branchChart" height="160"></canvas></div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ chart_trend|json_script:"trend-data" }}
+{{ chart_methods|json_script:"method-data" }}
+{{ chart_products|json_script:"product-data" }}
+{{ chart_branches|json_script:"branch-data" }}
+<script src="{% static 'js/chart.umd.min.js' %}"></script>
+<script>
+(function() {
+  const palette = ['#0d6efd', '#0ea5a4', '#16a34a', '#d97706', '#dc2626',
+                   '#6366f1', '#0891b2', '#65a30d'];
+  const trend = JSON.parse(document.getElementById('trend-data').textContent);
+  const datasets = [{label: 'Sales', data: trend.sales, borderColor: '#0d6efd',
+    backgroundColor: 'rgba(13,110,253,.08)', fill: true, tension: .3}];
+  if (trend.profit.length)
+    datasets.push({label: 'Gross profit', data: trend.profit, borderColor: '#16a34a',
+      backgroundColor: 'transparent', tension: .3});
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line', data: {labels: trend.labels, datasets},
+    options: {plugins: {legend: {position: 'bottom'}}, scales: {y: {beginAtZero: true}}}
+  });
+
+  const methods = JSON.parse(document.getElementById('method-data').textContent);
+  new Chart(document.getElementById('methodChart'), {
+    type: 'doughnut',
+    data: {labels: methods.labels, datasets: [{data: methods.data, backgroundColor: palette}]},
+    options: {plugins: {legend: {position: 'bottom'}}}
+  });
+
+  const products = JSON.parse(document.getElementById('product-data').textContent);
+  new Chart(document.getElementById('productChart'), {
+    type: 'bar',
+    data: {labels: products.labels, datasets: [{label: 'Revenue', data: products.data,
+      backgroundColor: '#0d6efd'}]},
+    options: {indexAxis: 'y', plugins: {legend: {display: false}},
+              scales: {x: {beginAtZero: true}}}
+  });
+
+  const branches = JSON.parse(document.getElementById('branch-data').textContent);
+  new Chart(document.getElementById('branchChart'), {
+    type: 'bar',
+    data: {labels: branches.labels, datasets: [{label: 'Sales', data: branches.data,
+      backgroundColor: '#0ea5a4'}]},
+    options: {plugins: {legend: {display: false}}, scales: {y: {beginAtZero: true}}}
+  });
+})();
+</script>
+{% endblock %}

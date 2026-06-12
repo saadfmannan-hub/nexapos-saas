@@ -1,0 +1,104 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ product.name }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">{{ product.name }}</h1>
+  <div class="d-flex gap-2">
+    <a href="{% url 'catalog:product_labels' product.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upc"></i> Print labels</a>
+    {% if "products.manage" in business_perms %}
+    <a href="{% url 'catalog:product_edit' product.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
+    <form method="post" action="{% url 'catalog:product_archive' product.public_id %}"
+          onsubmit="return confirm('Archive this product? It stays on old invoices but disappears from sale screens.')">
+      {% csrf_token %}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-archive"></i> Archive</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card"><div class="card-body">
+      {% if product.image %}<img src="{{ product.image.url }}" class="img-fluid rounded mb-3" style="max-height:160px">{% endif %}
+      <table class="table table-sm small mb-0">
+        <tr><th>Type</th><td>{{ product.get_product_type_display }}</td></tr>
+        <tr><th>SKU</th><td>{{ product.sku|default:"—" }}</td></tr>
+        <tr><th>Barcode</th><td>{{ product.barcode|default:"—" }}</td></tr>
+        <tr><th>Category</th><td>{{ product.category|default:"—" }}</td></tr>
+        <tr><th>Brand</th><td>{{ product.brand|default:"—" }}</td></tr>
+        <tr><th>Unit</th><td>{{ product.unit|default:"—" }}</td></tr>
+        <tr><th>Sale price</th><td class="fw-bold">{{ product.sale_price }} {{ current_business.currency_display }}</td></tr>
+        {% if show_cost %}
+        <tr><th>Purchase price</th><td>{{ product.purchase_price }}</td></tr>
+        <tr><th>Average cost</th><td>{{ product.average_cost }}</td></tr>
+        {% endif %}
+        <tr><th>Tax</th><td>{{ product.tax_rate|default:"None" }}</td></tr>
+        <tr><th>Reorder level</th><td>{{ product.reorder_level }}</td></tr>
+      </table>
+      {% if product.barcode or product.sku %}
+      <div class="text-center mt-3"><img src="{% url 'catalog:product_barcode' product.public_id %}" style="max-height:70px"></div>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <div class="col-lg-8">
+    {% if product.has_variants or variants %}
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Variants</span>
+        {% if "products.manage" in business_perms %}
+        <a href="{% url 'catalog:variant_create' product.public_id %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Add variant</a>
+        {% endif %}
+      </div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th><th class="text-end">Price</th><th></th></tr></thead>
+        <tbody>
+          {% for v in variants %}
+          <tr>
+            <td>{{ v.name }}</td><td class="small">{{ v.sku|default:"—" }}</td>
+            <td class="small">{{ v.barcode|default:"—" }}</td>
+            <td class="text-end">{{ v.sale_price }}</td>
+            <td class="w-1">{% if "products.manage" in business_perms %}
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No variants yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endif %}
+
+    <div class="card mb-3">
+      <div class="card-header">Stock by warehouse</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Warehouse</th><th>Variant</th><th class="text-end">Quantity</th></tr></thead>
+        <tbody>
+          {% for level in levels %}
+          <tr><td>{{ level.warehouse.name }}</td><td>{{ level.variant.name|default:"—" }}</td>
+              <td class="text-end fw-semibold">{{ level.quantity }}</td></tr>
+          {% empty %}<tr><td colspan="3" class="text-center text-secondary py-3">No stock recorded</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Recent stock movements</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Date</th><th>Type</th><th>Warehouse</th><th class="text-end">Qty</th>
+                   <th class="text-end">Balance</th><th>Reference</th><th>By</th></tr></thead>
+        <tbody>
+          {% for m in movements %}
+          <tr>
+            <td class="small">{{ m.created_at|date:"Y-m-d H:i" }}</td>
+            <td><span class="badge text-bg-light border">{{ m.get_movement_type_display }}</span></td>
+            <td class="small">{{ m.warehouse.name }}</td>
+            <td class="text-end {% if m.quantity < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.quantity }}</td>
+            <td class="text-end">{{ m.balance_after }}</td>
+            <td class="small">{{ m.reference_type }} {{ m.reference_id }}</td>
+            <td class="small">{{ m.user.full_name|default:"—" }}</td>
+          </tr>
+          {% empty %}<tr><td colspan="7" class="text-center text-secondary py-3">No movements yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

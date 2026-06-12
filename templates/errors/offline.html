@@ -1,0 +1,11 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Offline — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="text-center py-4">
+  <i class="bi bi-wifi-off" style="font-size:3rem;color:#64748b"></i>
+  <h5 class="fw-bold mt-2">You are offline</h5>
+  <p class="text-secondary small">Check your internet connection and try again.
+  For data safety, sales and financial pages are never cached offline.</p>
+  <button onclick="location.reload()" class="btn btn-primary btn-sm">Retry</button>
+</div>
+{% endblock %}

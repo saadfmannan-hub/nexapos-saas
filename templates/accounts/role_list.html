@@ -1,0 +1,35 @@
+{% extends "layouts/base.html" %}
+{% block title %}Roles — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Roles</h1>
+  <div class="d-flex gap-2">
+    <a href="{% url 'accounts:user_list' %}" class="btn btn-outline-secondary btn-sm">Back to users</a>
+    {% if can_custom %}
+      <a href="{% url 'accounts:role_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Custom role</a>
+    {% else %}
+      <button class="btn btn-primary btn-sm" disabled title="Custom roles are available on higher plans">
+        <i class="bi bi-lock"></i> Custom role</button>
+    {% endif %}
+  </div>
+</div>
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Role</th><th>Type</th><th>Permissions</th><th class="w-1"></th></tr></thead>
+    <tbody>
+      {% for role in roles %}
+      <tr>
+        <td class="fw-semibold">{{ role.name }}</td>
+        <td>{% if role.is_owner %}<span class="badge text-bg-dark">Owner</span>
+            {% elif role.is_system %}<span class="badge text-bg-light border">System</span>
+            {% else %}<span class="badge text-bg-info">Custom</span>{% endif %}</td>
+        <td class="small text-secondary">{% if role.is_owner %}All permissions{% else %}{{ role.permissions|length }} permissions{% endif %}</td>
+        <td>{% if not role.is_owner %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:role_edit' role.public_id %}"><i class="bi bi-pencil"></i></a>
+        {% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div></div>
+{% endblock %}

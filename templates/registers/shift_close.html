@@ -1,0 +1,30 @@
+{% extends "layouts/base.html" %}
+{% block title %}Close shift — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-5">
+  <div class="card">
+    <div class="card-header">Close shift — {{ shift.register.name }}</div>
+    <div class="card-body">
+      <table class="table table-sm small">
+        <tr><th>Opening cash</th><td class="text-end">{{ shift.opening_cash }}</td></tr>
+        <tr><th>Cash sales</th><td class="text-end">{{ totals.cash_sales }}</td></tr>
+        <tr><th>Cash collections</th><td class="text-end">{{ totals.customer_collections_cash }}</td></tr>
+        <tr><th>Cash refunds</th><td class="text-end">−{{ totals.cash_refunds }}</td></tr>
+        <tr><th>Cash expenses</th><td class="text-end">−{{ totals.cash_expenses }}</td></tr>
+        <tr class="fw-bold table-light"><th>Expected cash in drawer</th><td class="text-end">{{ totals.expected_cash }}</td></tr>
+      </table>
+      <form method="post">{% csrf_token %}
+        <div class="mb-3">
+          <label class="form-label required-star">Actual cash counted</label>
+          <input type="number" step="any" min="0" name="actual_cash" class="form-control form-control-lg" required autofocus>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Closing notes</label>
+          <textarea name="notes" class="form-control" rows="2"></textarea>
+        </div>
+        <button class="btn btn-danger w-100" onclick="return confirm('Close this shift now?')">Close shift</button>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

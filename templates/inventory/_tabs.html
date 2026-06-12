@@ -1,0 +1,13 @@
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link {% if tab == 'stock' %}active{% endif %}" href="{% url 'inventory:stock_list' %}">Current stock</a></li>
+  <li class="nav-item"><a class="nav-link {% if tab == 'movements' %}active{% endif %}" href="{% url 'inventory:movement_list' %}">Movements</a></li>
+  {% if "inventory.transfer" in business_perms %}
+  <li class="nav-item"><a class="nav-link {% if tab == 'transfers' %}active{% endif %}" href="{% url 'inventory:transfer_list' %}">Transfers</a></li>
+  {% endif %}
+  {% if "inventory.adjust" in business_perms %}
+  <li class="nav-item"><a class="nav-link {% if tab == 'adjustments' %}active{% endif %}" href="{% url 'inventory:adjustment_list' %}">Adjustments</a></li>
+  {% endif %}
+  {% if "inventory.count" in business_perms %}
+  <li class="nav-item"><a class="nav-link {% if tab == 'counts' %}active{% endif %}" href="{% url 'inventory:count_list' %}">Physical counts</a></li>
+  {% endif %}
+</ul>

@@ -1,0 +1,115 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ customer.full_name }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">{{ customer.full_name }}
+    {% if not customer.is_active %}<span class="badge badge-status bs-suspended ms-2">Inactive</span>{% endif %}</h1>
+  <div class="d-flex gap-2">
+    <a href="{% url 'customers:statement' customer.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> Statement</a>
+    {% if "customers.manage" in business_perms and not customer.is_walk_in %}
+    <a href="{% url 'customers:edit' customer.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Total purchases</div>
+    <div class="kpi-value">{{ stats.total|default:0 }}</div>
+    <div class="small text-secondary">{{ stats.count|default:0 }} invoice{{ stats.count|pluralize }}</div>
+  </div></div></div>
+  <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Outstanding balance</div>
+    <div class="kpi-value {% if customer.balance > 0 %}text-danger{% endif %}">{{ customer.balance }}</div>
+    <div class="small text-secondary">Credit limit: {{ customer.credit_limit }}</div>
+  </div></div></div>
+  <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Store credit</div>
+    <div class="kpi-value text-success">{{ customer.store_credit }}</div>
+  </div></div></div>
+  <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Average invoice</div>
+    <div class="kpi-value">{{ stats.avg|default:0|floatformat:current_business.currency_precision }}</div>
+    <div class="small text-secondary">Last: {{ stats.last|date:"Y-m-d"|default:"—" }}</div>
+  </div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">Recent invoices</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Invoice</th><th>Date</th><th>Branch</th><th class="text-end">Total</th>
+          <th class="text-end">Paid</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for s in sales %}
+          <tr>
+            <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
+            <td class="small">{{ s.sale_date|date:"Y-m-d" }}</td>
+            <td class="small">{{ s.branch.name }}</td>
+            <td class="text-end">{{ s.total }}</td>
+            <td class="text-end">{{ s.amount_paid }}</td>
+            <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
+          </tr>
+          {% empty %}<tr><td colspan="6" class="text-center text-secondary py-3">No purchases yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% if returns %}
+    <div class="card mt-3">
+      <div class="card-header">Returns</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Return #</th><th>Invoice</th><th>Method</th><th class="text-end">Refund</th><th>Date</th></tr></thead>
+        <tbody>
+          {% for r in returns %}
+          <tr><td>{{ r.return_number }}</td>
+            <td><a href="{% url 'sales:detail' r.sale.public_id %}">{{ r.sale.invoice_number }}</a></td>
+            <td>{{ r.get_refund_method_display }}</td>
+            <td class="text-end">{{ r.refund_amount }}</td>
+            <td class="small">{{ r.created_at|date:"Y-m-d" }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    {% if can_collect and customer.balance > 0 %}
+    <div class="card border-primary mb-3">
+      <div class="card-header text-primary">Collect payment</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'customers:payment' customer.public_id %}">{% csrf_token %}
+          {% include "components/form_field.html" with field=payment_form.amount %}
+          {% include "components/form_field.html" with field=payment_form.payment_method %}
+          {% include "components/form_field.html" with field=payment_form.reference %}
+          {% include "components/form_field.html" with field=payment_form.notes %}
+          <button class="btn btn-primary w-100">Record payment</button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+    <div class="card">
+      <div class="card-header">Payment history</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <tbody>
+          {% for p in payments %}
+          <tr>
+            <td><strong>{{ p.receipt_number }}</strong><br>
+              <span class="small text-secondary">{{ p.created_at|date:"Y-m-d" }} · {{ p.payment_method.name }}</span></td>
+            <td class="text-end fw-semibold">{{ p.amount }}</td>
+          </tr>
+          {% empty %}<tr><td class="text-center text-secondary py-3">No payments recorded</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    <div class="card mt-3"><div class="card-header">Contact</div><div class="card-body small">
+      <div><i class="bi bi-telephone me-2"></i>{{ customer.mobile|default:"—" }}</div>
+      <div><i class="bi bi-whatsapp me-2"></i>{{ customer.whatsapp|default:"—" }}</div>
+      <div><i class="bi bi-envelope me-2"></i>{{ customer.email|default:"—" }}</div>
+      <div><i class="bi bi-geo-alt me-2"></i>{{ customer.address|default:"—" }} {{ customer.city }}</div>
+      {% if customer.notes %}<hr><div>{{ customer.notes|linebreaksbr }}</div>{% endif %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}

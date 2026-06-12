@@ -1,0 +1,107 @@
+{% extends "layouts/base.html" %}
+{% block title %}New purchase — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">New purchase</h1>
+<form method="post" enctype="multipart/form-data">{% csrf_token %}
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card"><div class="card-body">
+      <div class="row">
+        <div class="col-md-4 mb-3">
+          <label class="form-label required-star">Supplier</label>
+          <select name="supplier_id" class="form-select" required>
+            {% for s in suppliers %}<option value="{{ s.id }}">{{ s.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label required-star">Branch</label>
+          <select name="branch_id" class="form-select" required>
+            {% for b in branches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4 mb-3">
+          <label class="form-label required-star">Receive into warehouse</label>
+          <select name="warehouse_id" class="form-select" required>
+            {% for w in warehouses %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}
+          </select>
+        </div>
+      </div>
+
+      {# Item rows with cost — Alpine component #}
+      <div x-data="purchaseRows()" class="mb-3">
+        <label class="form-label">Items</label>
+        <div class="position-relative mb-2">
+          <input type="text" class="form-control" placeholder="Type 2+ characters to search products…"
+                 x-model="query" @input.debounce.300ms="search" autocomplete="off">
+          <div class="list-group position-absolute w-100 shadow" style="z-index:50" x-show="results.length" x-cloak>
+            <template x-for="r in results" :key="r.label">
+              <button type="button" class="list-group-item list-group-item-action"
+                      @click="add(r)" x-text="r.label + (r.sku ? ' — ' + r.sku : '')"></button>
+            </template>
+          </div>
+        </div>
+        <table class="table table-sm align-middle">
+          <thead><tr><th>Item</th><th style="width:130px">Quantity</th>
+            <th style="width:150px">Unit cost</th><th style="width:120px" class="text-end">Total</th><th style="width:40px"></th></tr></thead>
+          <tbody>
+            <template x-for="(row, i) in rows" :key="i">
+              <tr>
+                <td><span x-text="row.label"></span>
+                  <input type="hidden" name="product_id" :value="row.product_id">
+                  <input type="hidden" name="variant_id" :value="row.variant_id || ''"></td>
+                <td><input type="number" step="any" name="quantity" class="form-control form-control-sm" x-model="row.quantity"></td>
+                <td><input type="number" step="any" name="unit_cost" class="form-control form-control-sm" x-model="row.unit_cost"></td>
+                <td class="text-end" x-text="((+row.quantity || 0) * (+row.unit_cost || 0)).toFixed(3)"></td>
+                <td><button type="button" class="btn btn-sm btn-outline-danger" @click="rows.splice(i,1)"><i class="bi bi-x"></i></button></td>
+              </tr>
+            </template>
+            <tr x-show="!rows.length"><td colspan="5" class="text-center text-secondary small py-3">No items added yet</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div></div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Details</div><div class="card-body">
+      <div class="mb-3"><label class="form-label">Supplier invoice number</label>
+        <input name="supplier_invoice_number" class="form-control"></div>
+      <div class="row">
+        <div class="col-6 mb-3"><label class="form-label required-star">Purchase date</label>
+          <input type="date" name="purchase_date" value="{{ today|date:'Y-m-d' }}" class="form-control" required></div>
+        <div class="col-6 mb-3"><label class="form-label">Due date</label>
+          <input type="date" name="due_date" class="form-control"></div>
+      </div>
+      <div class="row">
+        <div class="col-4 mb-3"><label class="form-label">Discount</label>
+          <input type="number" step="any" min="0" name="discount" value="0" class="form-control"></div>
+        <div class="col-4 mb-3"><label class="form-label">Shipping</label>
+          <input type="number" step="any" min="0" name="shipping" value="0" class="form-control"></div>
+        <div class="col-4 mb-3"><label class="form-label">Other</label>
+          <input type="number" step="any" min="0" name="other" value="0" class="form-control"></div>
+      </div>
+      <div class="mb-3"><label class="form-label">Attachment</label>
+        <input type="file" name="attachment" class="form-control"></div>
+      <div class="mb-3"><label class="form-label">Notes</label>
+        <textarea name="notes" class="form-control" rows="2"></textarea></div>
+      <button class="btn btn-primary w-100">Create purchase order</button>
+      <a href="{% url 'purchases:list' %}" class="btn btn-outline-secondary w-100 mt-2">Cancel</a>
+    </div></div>
+  </div>
+</div>
+</form>
+{% endblock %}
+{% block extra_js %}
+<script>
+function purchaseRows() {
+  return {
+    query: '', results: [], rows: [],
+    async search() {
+      if (this.query.length < 2) { this.results = []; return; }
+      const r = await fetch("{% url 'inventory:item_search' %}?q=" + encodeURIComponent(this.query));
+      this.results = (await r.json()).results;
+    },
+    add(r) { this.rows.push({...r, quantity: 1, unit_cost: 0}); this.query = ''; this.results = []; }
+  }
+}
+</script>
+{% endblock %}

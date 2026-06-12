@@ -1,0 +1,427 @@
+{% extends "layouts/base.html" %}
+{% block title %}POS — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+{% if not shift and not can_sell_without_shift %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center">
+  <div><i class="bi bi-exclamation-triangle me-2"></i>
+    You need an open cash register shift before selling.</div>
+  <a href="{% url 'registers:shift_list' %}" class="btn btn-sm btn-primary">Open a shift</a>
+</div>
+{% endif %}
+
+<div x-data="pos()" x-init="init()" @keydown.window="hotkeys($event)">
+  <!-- Header strip -->
+  <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+    <span class="badge text-bg-dark"><i class="bi bi-shop me-1"></i>{{ branch.name }}</span>
+    {% if shift %}
+      <span class="badge text-bg-success"><i class="bi bi-cash-stack me-1"></i>{{ shift.register.name }} — shift open</span>
+    {% else %}
+      <span class="badge text-bg-warning">No open shift</span>
+    {% endif %}
+    <div class="ms-auto d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary" @click="loadHeld()" data-bs-toggle="modal" data-bs-target="#heldModal">
+        <i class="bi bi-pause-circle"></i> Held (<span x-text="heldCount">{{ held_sales|length }}</span>)</button>
+      <button class="btn btn-sm btn-outline-secondary" @click="toggleFullscreen()"><i class="bi bi-fullscreen"></i></button>
+    </div>
+  </div>
+
+  <div class="pos-shell">
+    <!-- LEFT: products -->
+    <div class="d-flex flex-column gap-2">
+      <div class="d-flex gap-2">
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-upc-scan"></i></span>
+          <input type="text" x-ref="barcode" x-model="barcodeInput" @keydown.enter.prevent="scanBarcode()"
+                 class="form-control" placeholder="Scan barcode or type SKU + Enter (F2)">
+        </div>
+        <input type="search" x-model="search" @input.debounce.300ms="loadProducts()"
+               class="form-control" placeholder="Search products… (F4)" x-ref="search" style="max-width: 280px">
+      </div>
+      <div class="d-flex gap-1 overflow-auto pb-1">
+        <button class="btn btn-sm pos-cat-pill" :class="category === '' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="category=''; loadProducts()">All</button>
+        {% for c in categories %}{% if not c.parent %}
+        <button class="btn btn-sm pos-cat-pill" :class="category === '{{ c.id }}' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="category='{{ c.id }}'; loadProducts()">{{ c.name }}</button>
+        {% endif %}{% endfor %}
+      </div>
+      <div class="pos-products">
+        <div class="pos-grid" x-show="!loading">
+          <template x-for="p in products" :key="p.product_id + '-' + (p.variant_id || 0)">
+            <div class="pos-product-card" @click="addToCart(p)">
+              <template x-if="p.image"><img :src="p.image" style="width:100%;height:64px;object-fit:contain" class="mb-1"></template>
+              <div class="pp-name" x-text="p.name"></div>
+              <div class="pp-price"><span x-text="fmt(p.price)"></span> {{ currency }}</div>
+              <div class="pp-stock" x-show="p.stocked && p.stock !== null">Stock: <span x-text="p.stock"></span></div>
+            </div>
+          </template>
+        </div>
+        <div x-show="loading" class="text-center py-5 text-secondary">
+          <div class="spinner-border spinner-border-sm me-2"></div>Loading products…
+        </div>
+        <div x-show="!loading && !products.length" class="empty-state">
+          <i class="bi bi-search d-block mb-2"></i>No matching products
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: cart -->
+    <div class="pos-cart">
+      <div class="p-2 border-bottom d-flex gap-2 align-items-center">
+        <div class="dropdown flex-grow-1">
+          <button class="btn btn-outline-secondary w-100 text-start dropdown-toggle" data-bs-toggle="dropdown">
+            <i class="bi bi-person me-1"></i><span x-text="customer.name"></span>
+            <template x-if="customer.balance > 0">
+              <span class="badge text-bg-warning ms-1" x-text="'Owes ' + fmt(customer.balance)"></span>
+            </template>
+          </button>
+          <div class="dropdown-menu p-2 w-100">
+            <input type="search" class="form-control form-control-sm mb-2" placeholder="Search customers…"
+                   x-model="customerSearch" @input.debounce.300ms="searchCustomers()" @click.stop>
+            <template x-for="c in customerResults" :key="c.id">
+              <button class="dropdown-item small" @click="selectCustomer(c)">
+                <span x-text="c.name"></span> <span class="text-secondary" x-text="c.mobile"></span>
+              </button>
+            </template>
+            {% if "customers.manage" in business_perms %}
+            <hr class="my-1">
+            <div class="px-1" @click.stop>
+              <div class="small fw-bold mb-1">Quick add</div>
+              <input class="form-control form-control-sm mb-1" placeholder="Name" x-model="newCustomer.name">
+              <input class="form-control form-control-sm mb-1" placeholder="Mobile" x-model="newCustomer.mobile">
+              <button class="btn btn-sm btn-primary w-100" @click="quickCustomer()">Add customer</button>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        <button class="btn btn-outline-danger" title="Clear cart (F8)" @click="clearCart()"><i class="bi bi-trash"></i></button>
+      </div>
+
+      <div class="pos-cart-items">
+        <template x-for="(line, i) in cart" :key="i">
+          <div class="cart-row">
+            <div class="d-flex justify-content-between align-items-start">
+              <div class="fw-semibold small" x-text="line.name"></div>
+              <button class="btn btn-sm p-0 text-danger" @click="cart.splice(i,1)"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="d-flex gap-2 align-items-center mt-1">
+              <div class="input-group input-group-sm" style="width: 110px">
+                <button class="btn btn-outline-secondary" @click="line.quantity = Math.max(1, +line.quantity - 1)">−</button>
+                <input type="number" step="any" min="0.001" class="form-control text-center" x-model="line.quantity">
+                <button class="btn btn-outline-secondary" @click="line.quantity = +line.quantity + 1">+</button>
+              </div>
+              <div class="input-group input-group-sm" style="width: 110px" title="Unit price">
+                <span class="input-group-text">@</span>
+                <input type="number" step="any" class="form-control" x-model="line.unit_price"
+                       {% if not can_override_price %}readonly{% endif %}>
+              </div>
+              {% if can_discount %}
+              <div class="input-group input-group-sm" style="width: 100px" title="Line discount" x-show="line.allow_discount">
+                <span class="input-group-text">−</span>
+                <input type="number" step="any" min="0" class="form-control" x-model="line.discount_amount">
+              </div>
+              {% endif %}
+              <div class="ms-auto fw-bold small" x-text="fmt(lineTotal(line))"></div>
+            </div>
+          </div>
+        </template>
+        <div x-show="!cart.length" class="empty-state py-5">
+          <i class="bi bi-cart d-block mb-2"></i>Cart is empty — scan or tap products
+        </div>
+      </div>
+
+      <div class="pos-totals">
+        <div class="d-flex justify-content-between small"><span>Subtotal (excl. tax)</span><span x-text="fmt(totals.base)"></span></div>
+        <div class="d-flex justify-content-between small"><span>Tax</span><span x-text="fmt(totals.tax)"></span></div>
+        {% if can_discount %}
+        <div class="d-flex justify-content-between small align-items-center my-1">
+          <span>Invoice discount</span>
+          <input type="number" step="any" min="0" class="form-control form-control-sm text-end" style="width:110px"
+                 x-model="invoiceDiscount">
+        </div>
+        {% endif %}
+        <div class="d-flex justify-content-between fs-5 fw-bold border-top pt-2 mt-1">
+          <span>Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
+        </div>
+        <input type="text" class="form-control form-control-sm my-2" placeholder="Sale notes…" x-model="notes">
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" @click="holdSale()" :disabled="!cart.length" title="Hold (F7)">
+            <i class="bi bi-pause"></i> Hold</button>
+          <button class="btn btn-primary btn-pos-pay flex-grow-1" :disabled="!cart.length || busy"
+                  @click="openPayment()" data-bs-toggle="modal" data-bs-target="#payModal" title="Pay (F9)">
+            <i class="bi bi-credit-card me-1"></i> PAY <span x-text="fmt(totals.total)"></span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Payment modal -->
+  <div class="modal fade" id="payModal" tabindex="-1">
+    <div class="modal-dialog modal-lg"><div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title">Payment — <span x-text="fmt(totals.total)"></span> {{ currency }}</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-5">
+            <table class="table table-sm small">
+              <tr><td>Subtotal</td><td class="text-end" x-text="fmt(totals.base)"></td></tr>
+              <tr><td>Discount</td><td class="text-end" x-text="fmt(totals.discount)"></td></tr>
+              <tr><td>Tax</td><td class="text-end" x-text="fmt(totals.tax)"></td></tr>
+              <tr class="fw-bold fs-6"><td>Grand total</td><td class="text-end" x-text="fmt(totals.total)"></td></tr>
+              <tr><td>Paid</td><td class="text-end" x-text="fmt(paidTotal)"></td></tr>
+              <tr :class="remaining > 0 ? 'text-danger fw-bold' : ''"><td>Remaining</td><td class="text-end" x-text="fmt(Math.max(0, remaining))"></td></tr>
+              <tr class="text-success fw-bold" x-show="changeDue > 0"><td>Change due</td><td class="text-end" x-text="fmt(changeDue)"></td></tr>
+            </table>
+            <div class="small text-secondary" x-show="customer.store_credit > 0">
+              Store credit available: <strong x-text="fmt(customer.store_credit)"></strong>
+            </div>
+          </div>
+          <div class="col-md-7">
+            <template x-for="(p, i) in payments" :key="i">
+              <div class="d-flex gap-2 mb-2">
+                <select class="form-select form-select-sm" x-model="p.method_id" style="max-width:170px">
+                  {% for m in payment_methods %}
+                    {% if m.kind == "customer_credit" %}{% if can_credit %}<option value="{{ m.id }}">{{ m.name }}</option>{% endif %}
+                    {% else %}<option value="{{ m.id }}">{{ m.name }}</option>{% endif %}
+                  {% endfor %}
+                </select>
+                <input type="number" step="any" min="0" class="form-control form-control-sm" x-model="p.amount" placeholder="Amount">
+                <input type="text" class="form-control form-control-sm" x-model="p.reference" placeholder="Ref #" style="max-width:110px">
+                <button class="btn btn-sm btn-outline-danger" @click="payments.splice(i,1)"><i class="bi bi-x"></i></button>
+              </div>
+            </template>
+            <div class="d-flex gap-2 mb-3">
+              <button class="btn btn-sm btn-outline-primary" @click="addPayment()"><i class="bi bi-plus"></i> Split payment</button>
+              <button class="btn btn-sm btn-outline-secondary" @click="exactCash()">Exact amount</button>
+            </div>
+            <div class="alert alert-danger py-2 small" x-show="payError" x-text="payError"></div>
+            <button class="btn btn-success w-100 btn-pos-pay" @click="checkout()" :disabled="busy">
+              <span x-show="!busy"><i class="bi bi-check-circle me-1"></i> Complete sale</span>
+              <span x-show="busy"><span class="spinner-border spinner-border-sm me-2"></span>Processing…</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- Success modal -->
+  <div class="modal fade" id="doneModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-body text-center py-4">
+        <i class="bi bi-check-circle-fill text-success" style="font-size:3rem"></i>
+        <h4 class="mt-2">Sale completed</h4>
+        <div class="text-secondary mb-1">Invoice <strong x-text="lastSale.invoice_number"></strong></div>
+        <div class="fs-4 fw-bold text-success mb-3" x-show="+lastSale.change_due > 0">
+          Change due: <span x-text="fmt(lastSale.change_due)"></span> {{ currency }}
+        </div>
+        <div class="d-flex gap-2 justify-content-center flex-wrap">
+          <a :href="lastSale.receipt_url" target="_blank" class="btn btn-primary"><i class="bi bi-printer"></i> Receipt</a>
+          <a :href="lastSale.invoice_url" target="_blank" class="btn btn-outline-primary"><i class="bi bi-file-text"></i> A4 invoice</a>
+          <a :href="lastSale.invoice_url.replace('/invoice/', '/invoice.pdf')" class="btn btn-outline-secondary"><i class="bi bi-download"></i> PDF</a>
+          <button class="btn btn-outline-secondary" @click="copyInvoiceLink()"><i class="bi bi-whatsapp"></i> Copy link</button>
+        </div>
+        <button class="btn btn-success w-100 mt-3" data-bs-dismiss="modal" @click="newSale()">
+          <i class="bi bi-plus-circle me-1"></i> New sale (Enter)</button>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- Held sales modal -->
+  <div class="modal fade" id="heldModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+      <div class="modal-header py-2"><h5 class="modal-title">Held sales</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <template x-for="h in heldSales" :key="h.id">
+          <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
+            <div><strong x-text="h.label"></strong>
+              <span class="small text-secondary" x-text="h.items + ' items · ' + h.created"></span></div>
+            <div class="d-flex gap-1">
+              <button class="btn btn-sm btn-primary" data-bs-dismiss="modal" @click="resumeHeld(h)">Resume</button>
+              <button class="btn btn-sm btn-outline-danger" @click="deleteHeld(h)"><i class="bi bi-trash"></i></button>
+            </div>
+          </div>
+        </template>
+        <div x-show="!heldSales.length" class="text-center text-secondary py-3">No held sales</div>
+      </div>
+    </div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function pos() {
+  const PREC = {{ precision }};
+  return {
+    products: [], loading: false, search: '', category: '', barcodeInput: '',
+    cart: [], invoiceDiscount: 0, notes: '', busy: false, payError: '',
+    customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0},
+    customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
+    payments: [], lastSale: {}, heldSales: [], heldCount: {{ held_sales|length }},
+    resumedHeldId: null,
+
+    init() { this.loadProducts(); this.$refs.barcode.focus(); },
+    fmt(v) { return (parseFloat(v || 0)).toFixed(PREC); },
+
+    async loadProducts() {
+      this.loading = true;
+      const params = new URLSearchParams({q: this.search, category: this.category,
+                                          warehouse_id: '{{ warehouse.id }}'});
+      const r = await fetch("{% url 'sales:pos_products' %}?" + params);
+      this.products = (await r.json()).items;
+      this.loading = false;
+    },
+    async scanBarcode() {
+      const code = this.barcodeInput.trim();
+      if (!code) return;
+      this.barcodeInput = '';
+      const r = await fetch("{% url 'sales:pos_barcode' %}?code=" + encodeURIComponent(code));
+      const data = await r.json();
+      if (data.found) { this.addToCart(data.item); }
+      else { this.search = code; this.loadProducts(); }
+    },
+    addToCart(p) {
+      const existing = this.cart.find(l => l.product_id === p.product_id && l.variant_id === p.variant_id
+                                          && +l.unit_price === +p.price);
+      if (existing) { existing.quantity = +existing.quantity + 1; }
+      else this.cart.push({product_id: p.product_id, variant_id: p.variant_id, name: p.name,
+                           quantity: 1, unit_price: p.price, discount_amount: 0,
+                           tax_rate: p.tax_rate, allow_discount: p.allow_discount});
+      this.$refs.barcode.focus();
+    },
+    lineTotal(l) {
+      const gross = (+l.unit_price * +l.quantity) - (+l.discount_amount || 0);
+      {% if not request.business.settings.prices_include_tax %}
+      return gross * (1 + (+l.tax_rate || 0) / 100);
+      {% else %}
+      return gross;
+      {% endif %}
+    },
+    get totals() {
+      let base = 0, tax = 0, lineDisc = 0;
+      const incl = {{ request.business.settings.prices_include_tax|yesno:"true,false" }};
+      this.cart.forEach(l => {
+        const gross = (+l.unit_price * +l.quantity) - (+l.discount_amount || 0);
+        lineDisc += (+l.discount_amount || 0);
+        const rate = (+l.tax_rate || 0) / 100;
+        if (rate > 0) {
+          if (incl) { const b = gross / (1 + rate); base += b; tax += gross - b; }
+          else { base += gross; tax += gross * rate; }
+        } else base += gross;
+      });
+      const total = Math.max(0, base + tax - (+this.invoiceDiscount || 0));
+      return {base, tax, discount: lineDisc + (+this.invoiceDiscount || 0), total};
+    },
+    get paidTotal() { return this.payments.reduce((s, p) => s + (+p.amount || 0), 0); },
+    get remaining() { return this.totals.total - this.paidTotal; },
+    get changeDue() { return Math.max(0, this.paidTotal - this.totals.total); },
+
+    async searchCustomers() {
+      const r = await fetch("{% url 'sales:pos_customers' %}?q=" + encodeURIComponent(this.customerSearch));
+      this.customerResults = (await r.json()).results;
+    },
+    selectCustomer(c) { this.customer = c; },
+    async quickCustomer() {
+      const body = new FormData();
+      body.append('name', this.newCustomer.name); body.append('mobile', this.newCustomer.mobile);
+      const r = await fetch("{% url 'sales:pos_quick_customer' %}",
+        {method: 'POST', body, headers: {'X-CSRFToken': '{{ csrf_token }}'}});
+      const data = await r.json();
+      if (data.ok) { this.customer = data.customer; this.newCustomer = {name:'', mobile:''}; }
+      else alert(data.error);
+    },
+
+    openPayment() {
+      this.payError = '';
+      this.payments = [{method_id: '{{ payment_methods.0.id }}', amount: this.totals.total.toFixed(PREC), reference: ''}];
+    },
+    addPayment() { this.payments.push({method_id: '{{ payment_methods.0.id }}', amount: '', reference: ''}); },
+    exactCash() { if (this.payments.length) this.payments[0].amount = this.totals.total.toFixed(PREC); },
+
+    async checkout() {
+      this.payError = ''; this.busy = true;
+      try {
+        const r = await fetch("{% url 'sales:pos_checkout' %}", {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+          body: JSON.stringify({
+            branch_id: {{ branch.id }},
+            customer_id: this.customer.id,
+            items: this.cart,
+            payments: this.payments.filter(p => +p.amount > 0),
+            invoice_discount: this.invoiceDiscount || 0,
+            notes: this.notes,
+            held_id: this.resumedHeldId,
+          }),
+        });
+        const data = await r.json();
+        if (!data.ok) { this.payError = data.error; return; }
+        this.lastSale = data.sale;
+        bootstrap.Modal.getInstance(document.getElementById('payModal'))?.hide();
+        new bootstrap.Modal(document.getElementById('doneModal')).show();
+      } catch (e) { this.payError = 'Network error — sale was not completed.'; }
+      finally { this.busy = false; }
+    },
+    newSale() {
+      this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
+      this.resumedHeldId = null;
+      this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0};
+      this.$refs.barcode.focus();
+    },
+    clearCart() { if (!this.cart.length || confirm('Clear the current cart?')) this.newSale(); },
+    copyInvoiceLink() {
+      navigator.clipboard.writeText(location.origin + this.lastSale.invoice_url);
+      alert('Invoice link copied — paste it into WhatsApp or email.');
+    },
+
+    async holdSale() {
+      const label = prompt('Label for this held sale (e.g. customer name):') || '';
+      const r = await fetch("{% url 'sales:pos_hold' %}", {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+        body: JSON.stringify({branch_id: {{ branch.id }}, label,
+          cart: {items: this.cart, customer: this.customer,
+                 invoice_discount: this.invoiceDiscount, notes: this.notes}}),
+      });
+      const data = await r.json();
+      if (data.ok) { this.heldCount++; this.newSale(); } else alert(data.error);
+    },
+    async loadHeld() {
+      const r = await fetch("{% url 'sales:pos_held_list' %}");
+      this.heldSales = (await r.json()).held;
+      this.heldCount = this.heldSales.length;
+    },
+    resumeHeld(h) {
+      this.cart = h.cart.items || [];
+      if (h.cart.customer) this.customer = h.cart.customer;
+      this.invoiceDiscount = h.cart.invoice_discount || 0;
+      this.notes = h.cart.notes || '';
+      this.resumedHeldId = h.id;
+    },
+    async deleteHeld(h) {
+      await fetch(`/sales/pos/held/${h.id}/delete/`, {method: 'POST',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'}});
+      this.loadHeld();
+    },
+
+    toggleFullscreen() {
+      if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+      else document.exitFullscreen();
+    },
+    hotkeys(e) {
+      if (e.key === 'F2') { e.preventDefault(); this.$refs.barcode.focus(); }
+      if (e.key === 'F4') { e.preventDefault(); this.$refs.search.focus(); }
+      if (e.key === 'F7') { e.preventDefault(); if (this.cart.length) this.holdSale(); }
+      if (e.key === 'F8') { e.preventDefault(); this.clearCart(); }
+      if (e.key === 'F9') { e.preventDefault();
+        if (this.cart.length) { this.openPayment();
+          new bootstrap.Modal(document.getElementById('payModal')).show(); } }
+    },
+  }
+}
+</script>
+{% endblock %}

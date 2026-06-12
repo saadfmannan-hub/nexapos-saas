@@ -1,0 +1,61 @@
+{% extends "layouts/base.html" %}
+{% block title %}Customers — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Customers</h1>
+  <div class="d-flex gap-2 align-items-center">
+    <span class="badge text-bg-light border">Outstanding receivables:
+      <strong>{{ receivables }} {{ current_business.currency_display }}</strong></span>
+    {% if "customers.manage" in business_perms %}
+    <a href="{% url 'customers:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-md-4"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
+      placeholder="Name, mobile, code, email…"></div>
+    <div class="col-md-3">
+      <select name="filter" class="form-select form-select-sm">
+        <option value="">All customers</option>
+        <option value="credit" {% if request.GET.filter == "credit" %}selected{% endif %}>With outstanding balance</option>
+        <option value="inactive" {% if request.GET.filter == "inactive" %}selected{% endif %}>Inactive</option>
+      </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'customers:list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
+    <div class="col-auto ms-auto small text-secondary">{{ customer_count }}{% if customer_limit %} / {{ customer_limit }} on plan{% endif %}</div>
+  </form>
+</div></div>
+
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Customer</th><th>Code</th><th>Mobile</th>
+      <th class="text-end">Balance owed</th><th class="text-end">Store credit</th>
+      <th class="text-end">Credit limit</th><th>Status</th><th class="w-1"></th></tr></thead>
+    <tbody>
+      {% for c in page_obj %}
+      <tr>
+        <td><a class="fw-semibold text-reset" href="{% url 'customers:detail' c.public_id %}">{{ c.full_name }}</a>
+          {% if c.is_walk_in %}<span class="badge text-bg-secondary ms-1">Walk-in</span>{% endif %}</td>
+        <td class="small">{{ c.code }}</td>
+        <td class="small">{{ c.mobile|default:"—" }}</td>
+        <td class="text-end {% if c.balance > 0 %}text-danger fw-semibold{% endif %}">{{ c.balance }}</td>
+        <td class="text-end">{{ c.store_credit }}</td>
+        <td class="text-end text-secondary">{{ c.credit_limit }}</td>
+        <td>{% if c.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+        <td class="text-nowrap">
+          {% if "customers.manage" in business_perms and not c.is_walk_in %}
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'customers:edit' c.public_id %}"><i class="bi bi-pencil"></i></a>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8"><div class="empty-state"><i class="bi bi-people d-block mb-2"></i>No customers found.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

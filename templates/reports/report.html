@@ -1,0 +1,59 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ title }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">{{ title }}</h1>
+  <div class="d-flex gap-2 no-print">
+    <a href="{% url 'reports:index' %}" class="btn btn-outline-secondary btn-sm">All reports</a>
+    <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print</button>
+    {% if can_export %}
+    <div class="btn-group">
+      <a class="btn btn-sm btn-primary" href="?{{ request.GET.urlencode }}&export=xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+      <a class="btn btn-sm btn-outline-primary" href="?{{ request.GET.urlencode }}&export=csv">CSV</a>
+      <a class="btn btn-sm btn-outline-primary" href="?{{ request.GET.urlencode }}&export=pdf">PDF</a>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-3 no-print"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-auto"><input type="date" name="from" value="{{ filters.date_from|default:'' }}" class="form-control form-control-sm"></div>
+    <div class="col-auto">→</div>
+    <div class="col-auto"><input type="date" name="to" value="{{ filters.date_to|default:'' }}" class="form-control form-control-sm"></div>
+    <div class="col-auto">
+      <select name="branch" class="form-select form-select-sm">
+        <option value="">All branches</option>
+        {% for b in branches %}<option value="{{ b.id }}" {% if filters.branch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <select name="warehouse" class="form-select form-select-sm">
+        <option value="">All warehouses</option>
+        {% for w in warehouses %}<option value="{{ w.id }}" {% if filters.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Apply</button>
+      <a href="{% url 'reports:view' key %}" class="btn btn-sm btn-outline-secondary">Reset</a></div>
+  </form>
+</div></div>
+
+<div class="card"><div class="table-responsive">
+  <table class="table table-sm table-hover mb-0">
+    <thead><tr>{% for col in data.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in data.rows %}
+      <tr>{% for v in row %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr>
+      {% empty %}
+      <tr><td colspan="{{ data.columns|length }}">
+        <div class="empty-state"><i class="bi bi-bar-chart d-block mb-2"></i>No data for the selected filters.</div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+    {% if data.totals %}
+    <tfoot><tr class="table-light fw-bold">{% for v in data.totals %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr></tfoot>
+    {% endif %}
+  </table>
+</div>
+<div class="card-body py-2 small text-secondary">{{ data.rows|length }} row{{ data.rows|length|pluralize }}</div></div>
+{% endblock %}

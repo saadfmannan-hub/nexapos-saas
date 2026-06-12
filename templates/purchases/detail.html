@@ -1,0 +1,139 @@
+{% extends "layouts/base.html" %}
+{% block title %}{{ purchase.purchase_number }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Purchase {{ purchase.purchase_number }}
+    <span class="badge badge-status bs-{{ purchase.status }} ms-2 fs-6">{{ purchase.get_status_display }}</span></h1>
+  {% if can_manage and purchase.status != "cancelled" %}
+  <div class="d-flex gap-2">
+    {% if purchase.status == "order" %}
+    <form method="post" action="{% url 'purchases:cancel' purchase.public_id %}"
+          onsubmit="return confirm('Cancel this purchase order?')">{% csrf_token %}
+      <button class="btn btn-outline-danger btn-sm">Cancel order</button></form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">Items {% if can_manage and purchase.status != "received" and purchase.status != "cancelled" %}<span class="small text-secondary">— enter quantities and click Receive</span>{% endif %}</div>
+      <form method="post" action="{% url 'purchases:receive' purchase.public_id %}">{% csrf_token %}
+      <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <thead><tr><th>Item</th><th class="text-end">Ordered</th><th class="text-end">Received</th>
+          <th class="text-end">Unit cost</th><th class="text-end">Total</th>
+          {% if can_manage %}<th style="width:120px" class="text-end">Receive now</th>{% endif %}</tr></thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>{{ item.product_name }}</td>
+            <td class="text-end">{{ item.quantity_ordered }}</td>
+            <td class="text-end">{{ item.quantity_received }}</td>
+            <td class="text-end">{{ item.unit_cost }}</td>
+            <td class="text-end">{{ item.line_total }}</td>
+            {% if can_manage %}
+            <td>{% if item.quantity_pending > 0 and purchase.status != "cancelled" %}
+              <input type="number" step="any" min="0" max="{{ item.quantity_pending }}"
+                     name="receive_{{ item.pk }}" class="form-control form-control-sm text-end">
+            {% else %}<span class="text-success small d-block text-end"><i class="bi bi-check-lg"></i></span>{% endif %}</td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% if can_manage and purchase.status == "order" or purchase.status == "partially_received" %}
+      <div class="card-body py-2">
+        <button class="btn btn-success btn-sm"><i class="bi bi-box-arrow-in-down"></i> Receive goods</button>
+      </div>
+      {% endif %}
+      </form>
+    </div>
+
+    {% if can_manage and purchase.status != "order" and purchase.status != "cancelled" %}
+    <div class="card mt-3">
+      <div class="card-header">Return goods to supplier</div>
+      <form method="post" action="{% url 'purchases:return' purchase.public_id %}">{% csrf_token %}
+      <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <thead><tr><th>Item</th><th class="text-end">Received</th><th style="width:120px" class="text-end">Return qty</th></tr></thead>
+        <tbody>
+          {% for item in items %}{% if item.quantity_received > 0 %}
+          <tr>
+            <td>{{ item.product_name }}</td>
+            <td class="text-end">{{ item.quantity_received }}</td>
+            <td><input type="number" step="any" min="0" name="return_{{ item.pk }}" class="form-control form-control-sm text-end"></td>
+          </tr>
+          {% endif %}{% endfor %}
+        </tbody>
+      </table></div>
+      <div class="card-body py-2 d-flex gap-2">
+        <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (e.g. damaged)" style="max-width:280px">
+        <button class="btn btn-outline-warning btn-sm">Process return</button>
+      </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Summary</div><div class="card-body">
+      <table class="table table-sm small mb-0">
+        <tr><th>Supplier</th><td><a href="{% url 'suppliers:detail' purchase.supplier.public_id %}">{{ purchase.supplier.name }}</a></td></tr>
+        <tr><th>Date</th><td>{{ purchase.purchase_date }}</td></tr>
+        {% if purchase.due_date %}<tr><th>Due</th><td>{{ purchase.due_date }}</td></tr>{% endif %}
+        <tr><th>Warehouse</th><td>{{ purchase.warehouse.name }}</td></tr>
+        {% if purchase.supplier_invoice_number %}<tr><th>Supplier inv #</th><td>{{ purchase.supplier_invoice_number }}</td></tr>{% endif %}
+        <tr><th>Subtotal</th><td>{{ purchase.subtotal }}</td></tr>
+        <tr><th>Discount</th><td>−{{ purchase.discount_amount }}</td></tr>
+        <tr><th>Shipping</th><td>{{ purchase.shipping_cost }}</td></tr>
+        <tr><th>Other</th><td>{{ purchase.other_charges }}</td></tr>
+        <tr class="fw-bold"><th>Total</th><td>{{ purchase.total }} {{ current_business.currency_display }}</td></tr>
+        <tr><th>Paid</th><td>{{ purchase.amount_paid }}</td></tr>
+        <tr class="{% if purchase.outstanding > 0 %}text-danger fw-bold{% endif %}"><th>Outstanding</th><td>{{ purchase.outstanding }}</td></tr>
+        {% if purchase.attachment %}<tr><th>Attachment</th><td><a href="{{ purchase.attachment.url }}" target="_blank">View file</a></td></tr>{% endif %}
+      </table>
+    </div></div>
+
+    {% if can_manage and purchase.outstanding > 0 and purchase.status != "cancelled" and purchase.status != "order" %}
+    <div class="card mt-3 border-primary"><div class="card-header text-primary">Record payment</div><div class="card-body">
+      <form method="post" action="{% url 'purchases:pay' purchase.public_id %}">{% csrf_token %}
+        <div class="mb-2"><label class="form-label">Amount</label>
+          <input type="number" step="any" min="0" max="{{ purchase.outstanding }}" name="amount"
+                 value="{{ purchase.outstanding }}" class="form-control" required></div>
+        <div class="mb-2"><label class="form-label">Method</label>
+          <select name="method_id" class="form-select">
+            {% for m in methods %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+          </select></div>
+        <div class="mb-2"><label class="form-label">Reference</label>
+          <input name="reference" class="form-control"></div>
+        <button class="btn btn-primary w-100">Pay supplier</button>
+      </form>
+    </div></div>
+    {% endif %}
+
+    <div class="card mt-3"><div class="card-header">Payments</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <tbody>
+          {% for p in payments %}
+          <tr><td>{{ p.payment_number }}<br><span class="small text-secondary">{{ p.created_at|date:"Y-m-d" }} · {{ p.payment_method.name }}</span></td>
+              <td class="text-end fw-semibold">{{ p.amount }}</td></tr>
+          {% empty %}<tr><td class="text-center text-secondary py-3">No payments yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    {% if returns %}
+    <div class="card mt-3"><div class="card-header">Returns</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <tbody>
+          {% for r in returns %}
+          <tr><td>{{ r.return_number }}<br><span class="small text-secondary">{{ r.created_at|date:"Y-m-d" }} · {{ r.reason }}</span></td>
+              <td class="text-end">{{ r.total }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

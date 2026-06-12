@@ -1,0 +1,135 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Invoice {{ sale.invoice_number }}</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #1e293b; margin: 0; }
+  .inv-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  .head td { vertical-align: top; }
+  h1 { font-size: 18pt; margin: 0 0 2px; color: #0f172a; }
+  .muted { color: #64748b; font-size: 9pt; }
+  .items th { background: #f1f5f9; text-align: left; padding: 6px 8px; font-size: 9pt;
+              text-transform: uppercase; border-bottom: 2px solid #cbd5e1; }
+  .items td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
+  .r { text-align: right; }
+  .totals td { padding: 3px 8px; }
+  .totals .grand { font-size: 13pt; font-weight: bold; border-top: 2px solid #0f172a; }
+  .badge-void { color: #b91c1c; border: 3px solid #b91c1c; padding: 6px 18px;
+                font-size: 16pt; font-weight: bold; display: inline-block;
+                transform: rotate(-8deg); }
+  .footer { margin-top: 26px; font-size: 9pt; color: #475569; }
+  .sig { margin-top: 40px; }
+  .sig td { width: 50%; padding-top: 24px; }
+  .sig .line { border-top: 1px solid #94a3b8; width: 70%; padding-top: 4px; font-size: 9pt; color: #64748b; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+<div class="inv-wrap">
+{% if not pdf_mode %}
+<div class="no-print" style="text-align:right;margin-bottom:8px">
+  <button onclick="window.print()" style="padding:6px 16px;cursor:pointer">🖨 Print</button>
+  <a href="{% url 'sales:invoice_pdf' sale.public_id %}" style="padding:6px 16px">⬇ PDF</a>
+</div>
+{% endif %}
+
+<table class="head">
+  <tr>
+    <td>
+      {% if settings_obj.show_logo_on_invoice and business.logo %}
+        <img src="{{ business.logo.url }}" style="max-height:54px;margin-bottom:6px"><br>
+      {% endif %}
+      <h1>{{ business.name }}</h1>
+      {% if business.legal_name %}<div class="muted">{{ business.legal_name }}</div>{% endif %}
+      <div class="muted">
+        {{ sale.branch.name }}{% if sale.branch.address %} · {{ sale.branch.address }}{% endif %}<br>
+        {% if business.phone %}Tel: {{ business.phone }} · {% endif %}{{ business.email }}<br>
+        {% if business.tax_registration_number %}Tax Reg. No: {{ business.tax_registration_number }}{% endif %}
+      </div>
+    </td>
+    <td class="r">
+      <h1>TAX INVOICE</h1>
+      <div><strong>{{ sale.invoice_number }}</strong></div>
+      <div class="muted">Date: {{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+      <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
+      {% if is_reprint %}<div class="muted"><em>DUPLICATE COPY</em></div>{% endif %}
+      {% if sale.status == "voided" %}<div class="badge-void">VOIDED</div>{% endif %}
+    </td>
+  </tr>
+</table>
+
+<table style="margin-top:14px">
+  <tr><td>
+    <div class="muted">BILL TO</div>
+    <strong>{{ sale.customer.full_name }}</strong><br>
+    <span class="muted">
+      {% if sale.customer.mobile %}{{ sale.customer.mobile }}<br>{% endif %}
+      {% if sale.customer.address %}{{ sale.customer.address }}<br>{% endif %}
+      {% if sale.customer.tax_number %}Tax No: {{ sale.customer.tax_number }}{% endif %}
+    </span>
+  </td></tr>
+</table>
+
+<table class="items" style="margin-top:14px">
+  <thead><tr>
+    <th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th>
+    <th class="r">Discount</th><th class="r">Tax</th><th class="r">Total</th>
+  </tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ item.product_name }}{% if item.sku %}<br><span class="muted">{{ item.sku }}</span>{% endif %}</td>
+      <td class="r">{{ item.quantity }}</td>
+      <td class="r">{{ item.unit_price }}</td>
+      <td class="r">{{ item.discount_amount }}</td>
+      <td class="r">{{ item.tax_amount }}</td>
+      <td class="r"><strong>{{ item.line_total }}</strong></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table style="margin-top:10px">
+  <tr>
+    <td style="width:55%; vertical-align:top">
+      <div class="muted">PAYMENTS</div>
+      {% for p in payments %}
+        <div>{{ p.method.name }}: {{ p.amount }} {{ business.currency_display }}
+          {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}</div>
+      {% empty %}<div class="muted">No payments recorded</div>{% endfor %}
+      {% if sale.balance > 0 %}
+        <div style="margin-top:4px"><strong>Balance due: {{ sale.balance }} {{ business.currency_display }}</strong></div>
+      {% endif %}
+      {% if sale.notes %}<div class="muted" style="margin-top:8px">Notes: {{ sale.notes }}</div>{% endif %}
+    </td>
+    <td style="width:45%">
+      <table class="totals">
+        <tr><td>Subtotal (excl. tax)</td><td class="r">{{ sale.subtotal }}</td></tr>
+        <tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>
+        <tr><td>Tax</td><td class="r">{{ sale.tax_amount }}</td></tr>
+        <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
+        <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
+        {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
+      </table>
+    </td>
+  </tr>
+</table>
+
+<table class="sig">
+  <tr>
+    <td><div class="line">Customer signature</div></td>
+    <td class="r"><div class="line" style="margin-left:auto">Authorized signature</div></td>
+  </tr>
+</table>
+
+<div class="footer">
+  {% if settings_obj.invoice_footer %}{{ settings_obj.invoice_footer|linebreaksbr }}<br>{% endif %}
+  {% if settings_obj.terms_and_conditions %}<em>{{ settings_obj.terms_and_conditions|linebreaksbr }}</em>{% endif %}
+</div>
+</div>
+</body>
+</html>

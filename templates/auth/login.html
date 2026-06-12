@@ -1,0 +1,32 @@
+{% extends "layouts/auth.html" %}
+{% block title %}Sign in — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h5 class="fw-bold mb-3">Sign in</h5>
+<form method="post" novalidate>
+  {% csrf_token %}
+  {% include "components/form_field.html" with field=form.email %}
+  <div class="mb-3" x-data="{show:false}">
+    <label class="form-label required-star" for="{{ form.password.id_for_label }}">Password</label>
+    <div class="input-group">
+      {{ form.password }}
+      <button class="btn btn-outline-secondary" type="button"
+              onclick="const i=document.getElementById('{{ form.password.id_for_label }}'); i.type = i.type==='password'?'text':'password'; this.firstElementChild.classList.toggle('bi-eye-slash')">
+        <i class="bi bi-eye"></i>
+      </button>
+    </div>
+    {% for error in form.password.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+  </div>
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="form-check">
+      {{ form.remember_me }}
+      <label class="form-check-label small" for="{{ form.remember_me.id_for_label }}">Remember me</label>
+    </div>
+    <a class="small" href="{% url 'accounts:password_reset' %}">Forgot password?</a>
+  </div>
+  <button class="btn btn-primary w-100 fw-semibold">Sign in</button>
+</form>
+<hr>
+<div class="text-center small">
+  New here? <a href="{% url 'tenants:register' %}" class="fw-semibold">Register your business</a>
+</div>
+{% endblock %}

@@ -1,0 +1,8 @@
+<ul class="nav nav-tabs mb-3">
+  <li class="nav-item"><a class="nav-link {% if tab == 'categories' %}active{% endif %}" href="{% url 'catalog:category_list' %}">Categories</a></li>
+  <li class="nav-item"><a class="nav-link {% if tab == 'brands' %}active{% endif %}" href="{% url 'catalog:brand_list' %}">Brands</a></li>
+  <li class="nav-item"><a class="nav-link {% if tab == 'units' %}active{% endif %}" href="{% url 'catalog:unit_list' %}">Units</a></li>
+  {% if "settings.manage" in business_perms %}
+  <li class="nav-item"><a class="nav-link {% if tab == 'taxes' %}active{% endif %}" href="{% url 'catalog:tax_list' %}">Tax rates</a></li>
+  {% endif %}
+</ul>

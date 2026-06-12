@@ -1,0 +1,56 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<h1 class="page-title mb-3">Platform overview</h1>
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Registered businesses</div>
+    <div class="kpi-value">{{ total_businesses }}</div>
+    <div class="small text-secondary">{{ active_businesses }} active</div>
+  </div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Total users</div>
+    <div class="kpi-value">{{ total_users }}</div>
+  </div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Subscription revenue</div>
+    <div class="kpi-value">{{ revenue }}</div>
+  </div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
+    <div class="kpi-label">Failed logins (24h)</div>
+    <div class="kpi-value {% if recent_failed_logins > 20 %}text-danger{% endif %}">{{ recent_failed_logins }}</div>
+    <div class="small text-secondary">Active support grants: {{ active_grants }}</div>
+  </div></div></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Subscriptions by status</div>
+      <div class="card-body">
+        {% for status, count in status_counts.items %}
+        <div class="d-flex justify-content-between border-bottom py-1">
+          <span class="badge badge-status bs-{{ status }}">{{ status }}</span>
+          <strong>{{ count }}</strong>
+        </div>
+        {% empty %}<div class="text-secondary small">No subscriptions yet</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="card"><div class="card-header">Recently registered</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Business</th><th>Owner</th><th>Registered</th><th></th></tr></thead>
+        <tbody>
+          {% for b in recent_businesses %}
+          <tr>
+            <td class="fw-semibold">{{ b.name }}</td>
+            <td class="small">{{ b.owner.email }}</td>
+            <td class="small">{{ b.created_at|date:"Y-m-d" }}</td>
+            <td class="w-1"><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:business_detail' b.public_id %}">Manage</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

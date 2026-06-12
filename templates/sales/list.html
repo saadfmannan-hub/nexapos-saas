@@ -1,0 +1,69 @@
+{% extends "layouts/base.html" %}
+{% block title %}Sales — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Sales &amp; invoices</h1>
+  {% if "sales.create" in business_perms %}
+  <a href="{% url 'sales:pos' %}" class="btn btn-primary btn-sm"><i class="bi bi-cart3"></i> New sale (POS)</a>
+  {% endif %}
+</div>
+
+<div class="card mb-3"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-md-3"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Invoice #, customer…"></div>
+    <div class="col-md-2">
+      <select name="status" class="form-select form-select-sm">
+        <option value="">Any status</option>
+        {% for value, label in statuses %}{% if value != "draft" %}
+          <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+        {% endif %}{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="branch" class="form-select form-select-sm">
+        <option value="">All branches</option>
+        {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2"><input type="date" name="from" value="{{ request.GET.from }}" class="form-control form-control-sm"></div>
+    <div class="col-md-2"><input type="date" name="to" value="{{ request.GET.to }}" class="form-control form-control-sm"></div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'sales:list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
+  </form>
+</div></div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>Invoices</span>
+    <span class="small text-secondary">
+      Total: <strong>{{ totals.total|default:0 }}</strong> ·
+      Paid: <strong>{{ totals.paid|default:0 }}</strong> {{ current_business.currency_display }}
+    </span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Branch</th>
+        <th class="text-end">Total</th><th class="text-end">Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for s in page_obj %}
+        <tr>
+          <td><a class="fw-semibold text-reset" href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
+          <td class="small">{{ s.sale_date|date:"Y-m-d H:i" }}</td>
+          <td>{{ s.customer.full_name }}</td>
+          <td class="small">{{ s.branch.name }}</td>
+          <td class="text-end fw-semibold">{{ s.total }}</td>
+          <td class="text-end">{{ s.amount_paid }}</td>
+          <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
+          <td class="text-nowrap">
+            <a class="btn btn-sm btn-outline-secondary" title="Receipt" target="_blank" href="{% url 'sales:receipt' s.public_id %}"><i class="bi bi-printer"></i></a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8"><div class="empty-state"><i class="bi bi-receipt d-block mb-2"></i>No sales found.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+</div>
+{% endblock %}

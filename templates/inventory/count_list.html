@@ -1,0 +1,43 @@
+{% extends "layouts/base.html" %}
+{% block title %}Physical counts — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Inventory</h1>
+{% include "inventory/_tabs.html" with tab="counts" %}
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card"><div class="table-responsive">
+      <table class="table table-hover mb-0">
+        <thead><tr><th>Number</th><th>Warehouse</th><th>Status</th><th>Items</th><th>Started by</th><th>Date</th><th></th></tr></thead>
+        <tbody>
+          {% for c in page_obj %}
+          <tr>
+            <td class="fw-semibold">{{ c.count_number }}</td>
+            <td class="small">{{ c.warehouse.name }}</td>
+            <td><span class="badge badge-status bs-{{ c.status }}">{{ c.get_status_display }}</span></td>
+            <td>{{ c.items.count }}</td>
+            <td class="small">{{ c.created_by.full_name|default:"—" }}</td>
+            <td class="small">{{ c.created_at|date:"Y-m-d" }}</td>
+            <td class="w-1"><a href="{% url 'inventory:count_detail' c.public_id %}" class="btn btn-sm btn-outline-primary">Open</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7"><div class="empty-state"><i class="bi bi-clipboard-check d-block mb-2"></i>No count sessions yet — start one on the right.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card"><div class="card-header">Start a count session</div><div class="card-body">
+      <p class="small text-secondary">Expected stock is frozen when the session
+      starts. Enter physical counts, review variances, then approve to apply
+      corrections.</p>
+      <form method="post">{% csrf_token %}
+        {% include "components/form_field.html" with field=form.warehouse %}
+        {% include "components/form_field.html" with field=form.notes %}
+        <button class="btn btn-primary">Start count</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

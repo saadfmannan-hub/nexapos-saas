@@ -1,0 +1,66 @@
+{% extends "layouts/base.html" %}
+{% block title %}Product — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">{% if product %}Edit: {{ product.name }}{% else %}New product{% endif %}</h1>
+{% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
+<form method="post" enctype="multipart/form-data">{% csrf_token %}
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Basics</div><div class="card-body">
+      {% include "components/form_field.html" with field=form.name %}
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.product_type %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.unit %}</div>
+      </div>
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.category %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.brand %}</div>
+      </div>
+      <div class="row">
+        <div class="col-4">{% include "components/form_field.html" with field=form.internal_code %}</div>
+        <div class="col-4">{% include "components/form_field.html" with field=form.sku %}</div>
+        <div class="col-4">{% include "components/form_field.html" with field=form.barcode %}</div>
+      </div>
+      {% include "components/form_field.html" with field=form.image %}
+      {% include "components/form_field.html" with field=form.description %}
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card"><div class="card-header">Pricing &amp; tax</div><div class="card-body">
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.purchase_price %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.sale_price %}</div>
+      </div>
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.wholesale_price %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.minimum_sale_price %}</div>
+      </div>
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.tax_rate %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.price_includes_tax %}</div>
+      </div>
+      <div class="form-check">{{ form.allow_discount }}
+        <label class="form-check-label" for="{{ form.allow_discount.id_for_label }}">Allow discounts</label></div>
+    </div></div>
+    <div class="card mt-3"><div class="card-header">Inventory</div><div class="card-body">
+      <div class="form-check mb-2">{{ form.track_inventory }}
+        <label class="form-check-label" for="{{ form.track_inventory.id_for_label }}">Track inventory for this product</label></div>
+      {% include "components/form_field.html" with field=form.reorder_level %}
+      {% if form.opening_stock %}
+      <div class="row">
+        <div class="col-6">{% include "components/form_field.html" with field=form.opening_stock %}</div>
+        <div class="col-6">{% include "components/form_field.html" with field=form.opening_warehouse %}</div>
+      </div>
+      {% endif %}
+      {% include "components/form_field.html" with field=form.preferred_supplier %}
+      <div class="form-check">{{ form.is_active }}
+        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
+    </div></div>
+  </div>
+</div>
+<div class="mt-3">
+  <button class="btn btn-primary">Save product</button>
+  <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Cancel</a>
+</div>
+</form>
+{% endblock %}

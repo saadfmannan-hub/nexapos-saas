@@ -1,0 +1,38 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Businesses</h1>
+  <form class="d-flex gap-2" method="get">
+    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Business or owner email…">
+    <select name="status" class="form-select form-select-sm">
+      <option value="">All</option>
+      <option value="active" {% if request.GET.status == "active" %}selected{% endif %}>Active</option>
+      <option value="suspended" {% if request.GET.status == "suspended" %}selected{% endif %}>Suspended</option>
+    </select>
+    <button class="btn btn-sm btn-primary">Filter</button>
+  </form>
+</div>
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Business</th><th>Owner</th><th>Plan</th><th>Subscription</th>
+      <th class="text-end">Users</th><th>Status</th><th>Registered</th><th></th></tr></thead>
+    <tbody>
+      {% for b in page_obj %}
+      <tr>
+        <td class="fw-semibold">{{ b.name }}</td>
+        <td class="small">{{ b.owner.email }}</td>
+        <td class="small">{{ b.subscription.plan.name|default:"—" }}</td>
+        <td>{% if b.subscription %}<span class="badge badge-status bs-{{ b.subscription.effective_status }}">{{ b.subscription.effective_status }}</span>{% endif %}</td>
+        <td class="text-end">{{ b.member_count }}</td>
+        <td>{% if b.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Suspended</span>{% endif %}</td>
+        <td class="small">{{ b.created_at|date:"Y-m-d" }}</td>
+        <td class="w-1"><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:business_detail' b.public_id %}">Manage</a></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="8"><div class="empty-state">No businesses found.</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

@@ -1,0 +1,189 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="{{ PLATFORM_PRIMARY_COLOR }}">
+  <title>{% block title %}{{ PRODUCT_NAME }}{% endblock %}</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="{% static 'icons/favicon.svg' %}" type="image/svg+xml">
+  <link rel="stylesheet" href="{% static 'css/bootstrap.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/bootstrap-icons.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="app-body">
+{% block body %}
+<!-- Sidebar -->
+<aside class="np-sidebar" id="sidebar">
+  <div class="brand">
+    {% if current_business.logo %}
+      <img src="{{ current_business.logo.url }}" alt="" style="width:26px;height:26px;border-radius:6px;object-fit:cover">
+    {% else %}<span class="logo-dot"></span>{% endif %}
+    <span class="text-truncate">{{ current_business.name|default:PRODUCT_NAME }}</span>
+  </div>
+  <div class="sidebar-scroll">
+    <nav class="nav flex-column mt-2">
+      {% if "dashboard.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}"><i class="bi bi-speedometer2"></i> Dashboard</a>
+      {% endif %}
+      {% if "sales.create" in business_perms %}
+      <a class="nav-link {% if active_nav == 'pos' %}active{% endif %}" href="{% url 'sales:pos' %}"><i class="bi bi-cart3"></i> POS / Sell</a>
+      {% endif %}
+
+      {% if "sales.view" in business_perms %}
+      <div class="nav-section">Sales</div>
+      <a class="nav-link {% if active_nav == 'sales' %}active{% endif %}" href="{% url 'sales:list' %}"><i class="bi bi-receipt"></i> Sales &amp; Invoices</a>
+      {% if "sales.refund" in business_perms %}
+      <a class="nav-link {% if active_nav == 'returns' %}active{% endif %}" href="{% url 'sales:return_list' %}"><i class="bi bi-arrow-counterclockwise"></i> Returns</a>
+      {% endif %}
+      {% endif %}
+      {% if "customers.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'customers' %}active{% endif %}" href="{% url 'customers:list' %}"><i class="bi bi-people"></i> Customers</a>
+      {% endif %}
+
+      {% if "products.view" in business_perms %}
+      <div class="nav-section">Catalog &amp; Stock</div>
+      <a class="nav-link {% if active_nav == 'products' %}active{% endif %}" href="{% url 'catalog:product_list' %}"><i class="bi bi-box-seam"></i> Products</a>
+      <a class="nav-link {% if active_nav == 'catalog_setup' %}active{% endif %}" href="{% url 'catalog:category_list' %}"><i class="bi bi-tags"></i> Categories &amp; Setup</a>
+      {% endif %}
+      {% if "inventory.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'inventory' %}active{% endif %}" href="{% url 'inventory:stock_list' %}"><i class="bi bi-clipboard-data"></i> Inventory</a>
+      {% endif %}
+
+      {% if "purchases.view" in business_perms or "suppliers.view" in business_perms %}
+      <div class="nav-section">Purchasing</div>
+      {% if "purchases.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'purchases' %}active{% endif %}" href="{% url 'purchases:list' %}"><i class="bi bi-bag"></i> Purchases</a>
+      {% endif %}
+      {% if "suppliers.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'suppliers' %}active{% endif %}" href="{% url 'suppliers:list' %}"><i class="bi bi-truck"></i> Suppliers</a>
+      {% endif %}
+      {% endif %}
+
+      {% if "expenses.view" in business_perms or "shifts.open" in business_perms or "reports.view" in business_perms %}
+      <div class="nav-section">Money &amp; Reports</div>
+      {% if "shifts.open" in business_perms %}
+      <a class="nav-link {% if active_nav == 'registers' %}active{% endif %}" href="{% url 'registers:shift_list' %}"><i class="bi bi-cash-stack"></i> Registers &amp; Shifts</a>
+      {% endif %}
+      {% if "expenses.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'expenses' %}active{% endif %}" href="{% url 'expenses:list' %}"><i class="bi bi-wallet2"></i> Expenses</a>
+      {% endif %}
+      {% if "reports.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'reports' %}active{% endif %}" href="{% url 'reports:index' %}"><i class="bi bi-graph-up"></i> Reports</a>
+      {% endif %}
+      {% endif %}
+
+      {% if "users.manage" in business_perms or "branches.manage" in business_perms or "settings.manage" in business_perms or "audit.view" in business_perms %}
+      <div class="nav-section">Administration</div>
+      {% if "branches.manage" in business_perms %}
+      <a class="nav-link {% if active_nav == 'branches' %}active{% endif %}" href="{% url 'branches:list' %}"><i class="bi bi-diagram-3"></i> Branches &amp; Warehouses</a>
+      {% endif %}
+      {% if "users.manage" in business_perms %}
+      <a class="nav-link {% if active_nav == 'users' %}active{% endif %}" href="{% url 'accounts:user_list' %}"><i class="bi bi-person-gear"></i> Users &amp; Roles</a>
+      {% endif %}
+      {% if "settings.manage" in business_perms %}
+      <a class="nav-link {% if active_nav == 'settings' %}active{% endif %}" href="{% url 'tenants:settings' %}"><i class="bi bi-gear"></i> Business Settings</a>
+      <a class="nav-link {% if active_nav == 'subscription' %}active{% endif %}" href="{% url 'subscriptions:status' %}"><i class="bi bi-stars"></i> Subscription</a>
+      {% endif %}
+      {% if "audit.view" in business_perms %}
+      <a class="nav-link {% if active_nav == 'audit' %}active{% endif %}" href="{% url 'audit:list' %}"><i class="bi bi-shield-check"></i> Audit Log</a>
+      {% endif %}
+      {% endif %}
+    </nav>
+  </div>
+  <div class="p-3 border-top border-secondary-subtle small text-secondary">
+    {{ PRODUCT_NAME }}
+  </div>
+</aside>
+
+<div class="np-main">
+  <!-- Topbar -->
+  <header class="np-topbar">
+    <button class="btn btn-light d-lg-none" onclick="document.getElementById('sidebar').classList.toggle('show')">
+      <i class="bi bi-list"></i>
+    </button>
+    <div class="d-none d-md-block">
+      {% block breadcrumbs %}{% endblock %}
+    </div>
+    <div class="ms-auto d-flex align-items-center gap-2">
+      {% if request.subscription and request.subscription.effective_status == 'trial' %}
+        <a href="{% url 'subscriptions:status' %}" class="badge text-bg-warning text-decoration-none d-none d-sm-inline">
+          Trial — ends {{ request.subscription.trial_ends_at|date:"M d" }}
+        </a>
+      {% elif request.subscription and not request.subscription.is_operational %}
+        <a href="{% url 'subscriptions:status' %}" class="badge text-bg-danger text-decoration-none">Subscription inactive — read only</a>
+      {% endif %}
+
+      {% if "notifications.view" in business_perms %}
+      <a href="{% url 'notifications:list' %}" class="btn btn-light position-relative" title="Notifications">
+        <i class="bi bi-bell"></i>
+        {% if unread_notifications %}<span class="notification-dot">{{ unread_notifications }}</span>{% endif %}
+      </a>
+      {% endif %}
+
+      <div class="dropdown">
+        <button class="btn btn-light d-flex align-items-center gap-2 dropdown-toggle" data-bs-toggle="dropdown">
+          <span class="avatar-sm">{{ request.user.full_name|first|upper }}</span>
+          <span class="d-none d-md-inline">{{ request.user.full_name }}</span>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><h6 class="dropdown-header">{{ request.user.email }}</h6></li>
+          {% if request.user.memberships.count > 1 %}
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header">Switch business</h6></li>
+            {% for m in request.user.memberships.all %}
+              {% if m.is_active %}
+              <li>
+                <form method="post" action="{% url 'tenants:switch_business' %}">{% csrf_token %}
+                  <input type="hidden" name="business_id" value="{{ m.business_id }}">
+                  <button class="dropdown-item {% if m.business_id == current_business.id %}active{% endif %}">{{ m.business.name }}</button>
+                </form>
+              </li>
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item" href="{% url 'accounts:profile' %}"><i class="bi bi-person me-2"></i>My profile</a></li>
+          <li><a class="dropdown-item" href="{% url 'accounts:change_password' %}"><i class="bi bi-key me-2"></i>Change password</a></li>
+          {% if request.user.is_platform_admin %}
+          <li><a class="dropdown-item" href="{% url 'platformadmin:dashboard' %}"><i class="bi bi-building-gear me-2"></i>Platform admin</a></li>
+          {% endif %}
+          <li><hr class="dropdown-divider"></li>
+          <li>
+            <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}
+              <button class="dropdown-item text-danger"><i class="bi bi-box-arrow-right me-2"></i>Sign out</button>
+            </form>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </header>
+
+  <main class="np-content">
+    {% if messages %}
+      <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1080">
+        {% for message in messages %}
+        <div class="toast show align-items-center border-0 text-bg-{% if message.tags == 'error' %}danger{% elif message.tags == 'warning' %}warning{% elif message.tags == 'success' %}success{% else %}primary{% endif %}" role="alert">
+          <div class="d-flex">
+            <div class="toast-body">{{ message }}</div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+{% endblock body %}
+
+<script src="{% static 'js/bootstrap.bundle.min.js' %}"></script>
+<script defer src="{% static 'js/alpine.min.js' %}"></script>
+<script>
+  // Auto-hide toasts
+  setTimeout(() => document.querySelectorAll('.toast.show').forEach(t => t.classList.remove('show')), 6000);
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

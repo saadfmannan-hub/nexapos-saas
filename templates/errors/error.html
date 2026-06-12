@@ -1,0 +1,10 @@
+{% extends "layouts/auth.html" %}
+{% block title %}{{ code }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="text-center py-4">
+  <div style="font-size:3.2rem;font-weight:800;color:#0d6efd">{{ code }}</div>
+  <h5 class="fw-bold">{{ title }}</h5>
+  <p class="text-secondary small">{{ message }}</p>
+  <a href="/" class="btn btn-primary btn-sm">Go to dashboard</a>
+</div>
+{% endblock %}

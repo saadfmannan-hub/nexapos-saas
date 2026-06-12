@@ -1,0 +1,111 @@
+{% extends "layouts/base.html" %}
+{% block title %}Registers &amp; shifts — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Registers &amp; shifts</h1>
+<div class="row g-3">
+  <div class="col-lg-4">
+    {% if my_shift %}
+    <div class="card border-success">
+      <div class="card-header text-success"><i class="bi bi-cash-stack me-1"></i> Your open shift</div>
+      <div class="card-body">
+        <table class="table table-sm small mb-3">
+          <tr><th>Register</th><td>{{ my_shift.register.name }}</td></tr>
+          <tr><th>Branch</th><td>{{ my_shift.branch.name }}</td></tr>
+          <tr><th>Opened</th><td>{{ my_shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
+          <tr><th>Opening cash</th><td>{{ my_shift.opening_cash }}</td></tr>
+        </table>
+        <a href="{% url 'sales:pos' %}" class="btn btn-primary btn-sm"><i class="bi bi-cart3"></i> Go to POS</a>
+        <a href="{% url 'registers:shift_detail' my_shift.public_id %}" class="btn btn-outline-secondary btn-sm">X report</a>
+        {% if "shifts.close" in business_perms %}
+        <a href="{% url 'registers:shift_close' my_shift.public_id %}" class="btn btn-outline-danger btn-sm">Close shift</a>
+        {% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="card-header">Open a shift</div>
+      <div class="card-body">
+        {% if registers %}
+        <form method="post" action="{% url 'registers:shift_open' %}">{% csrf_token %}
+          <div class="mb-3">
+            <label class="form-label required-star">Register</label>
+            <select name="register_id" class="form-select" required>
+              {% for r in registers %}<option value="{{ r.id }}">{{ r.name }} — {{ r.branch.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label required-star">Opening cash</label>
+            <input type="number" step="any" min="0" name="opening_cash" class="form-control" value="0" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Notes</label>
+            <input type="text" name="notes" class="form-control">
+          </div>
+          <button class="btn btn-primary w-100">Open shift</button>
+        </form>
+        {% else %}
+        <div class="empty-state py-3"><i class="bi bi-cash-stack d-block mb-2"></i>No registers available for your branches.</div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if "registers.manage" in business_perms %}
+    <div class="card mt-3">
+      <div class="card-header">Add a register</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'registers:register_create' %}">{% csrf_token %}
+          <div class="row g-2">
+            <div class="col-7"><input name="name" class="form-control form-control-sm" placeholder="Name e.g. Counter 2" required></div>
+            <div class="col-5"><input name="code" class="form-control form-control-sm" placeholder="Code" required></div>
+            <div class="col-7">
+              <select name="branch_id" class="form-select form-select-sm">
+                {% for r in registers %}{% ifchanged r.branch.id %}<option value="{{ r.branch.id }}">{{ r.branch.name }}</option>{% endifchanged %}{% endfor %}
+                {% if not registers %}{% for b in request.business.branches_branch_set.all %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}{% endif %}
+              </select>
+            </div>
+            <div class="col-5">
+              <select name="receipt_printer" class="form-select form-select-sm">
+                <option value="80mm">80mm</option><option value="58mm">58mm</option><option value="a4">A4</option>
+              </select>
+            </div>
+            <div class="col-12"><button class="btn btn-sm btn-outline-primary w-100">Add register</button></div>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header">Shift history</div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Register</th><th>Cashier</th><th>Opened</th><th>Closed</th>
+            <th class="text-end">Expected</th><th class="text-end">Actual</th>
+            <th class="text-end">Diff</th><th>Status</th><th class="w-1"></th></tr></thead>
+          <tbody>
+            {% for s in page_obj %}
+            <tr>
+              <td>{{ s.register.name }}</td>
+              <td class="small">{{ s.cashier.full_name }}</td>
+              <td class="small">{{ s.opened_at|date:"m-d H:i" }}</td>
+              <td class="small">{{ s.closed_at|date:"m-d H:i"|default:"—" }}</td>
+              <td class="text-end">{{ s.expected_cash }}</td>
+              <td class="text-end">{{ s.actual_cash|default_if_none:"—" }}</td>
+              <td class="text-end {% if s.difference < 0 %}text-danger{% elif s.difference > 0 %}text-success{% endif %}">{{ s.difference }}</td>
+              <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
+              <td><a href="{% url 'registers:shift_detail' s.public_id %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i></a></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="9"><div class="empty-state"><i class="bi bi-clock-history d-block mb-2"></i>No shifts yet.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "layouts/base.html" %}
+{% block title %}Shift report — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">
+    {% if shift.status == "open" %}X report (live){% else %}Z report{% endif %}
+    — {{ shift.register.name }}
+    <span class="badge badge-status bs-{{ shift.status }} ms-2 fs-6">{{ shift.get_status_display }}</span>
+  </h1>
+  <div class="d-flex gap-2 no-print">
+    <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print</button>
+    {% if shift.status == "open" and "shifts.close" in business_perms %}
+      <a href="{% url 'registers:shift_close' shift.public_id %}" class="btn btn-danger btn-sm">Close shift</a>
+    {% endif %}
+    {% if shift.status == "closed" and can_approve %}
+      <form method="post" action="{% url 'registers:shift_approve' shift.public_id %}">{% csrf_token %}
+        <button class="btn btn-success btn-sm">Approve closing</button></form>
+    {% endif %}
+    {% if shift.status != "open" and can_reopen %}
+      <form method="post" action="{% url 'registers:shift_reopen' shift.public_id %}"
+            onsubmit="return confirm('Reopen this shift? This is audited.')">{% csrf_token %}
+        <button class="btn btn-outline-warning btn-sm">Reopen</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">Cash summary</div><div class="card-body">
+      <table class="table table-sm mb-0">
+        <tr><th>Cashier</th><td>{{ shift.cashier.full_name }}</td></tr>
+        <tr><th>Opened</th><td>{{ shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
+        {% if shift.closed_at %}<tr><th>Closed</th><td>{{ shift.closed_at|date:"Y-m-d H:i" }}</td></tr>{% endif %}
+        <tr><th>Opening cash</th><td>{{ shift.opening_cash }}</td></tr>
+        <tr><th>+ Cash sales</th><td>{{ totals.cash_sales }}</td></tr>
+        <tr><th>+ Cash collections</th><td>{{ totals.customer_collections_cash }}</td></tr>
+        <tr><th>− Cash refunds</th><td>{{ totals.cash_refunds }}</td></tr>
+        <tr><th>− Cash expenses</th><td>{{ totals.cash_expenses }}</td></tr>
+        <tr class="table-light fw-bold"><th>Expected cash</th><td>{{ totals.expected_cash }}</td></tr>
+        {% if shift.actual_cash is not None %}
+        <tr><th>Actual cash</th><td>{{ shift.actual_cash }}</td></tr>
+        <tr class="fw-bold {% if shift.difference < 0 %}table-danger{% elif shift.difference > 0 %}table-warning{% else %}table-success{% endif %}">
+          <th>Difference</th><td>{{ shift.difference }}</td></tr>
+        {% endif %}
+      </table>
+    </div></div>
+    <div class="card mt-3"><div class="card-header">Sales by payment type</div><div class="card-body">
+      <table class="table table-sm mb-0">
+        <tr><th>Cash</th><td class="text-end">{{ totals.cash_sales }}</td></tr>
+        <tr><th>Card</th><td class="text-end">{{ totals.card_sales }}</td></tr>
+        <tr><th>Bank transfer</th><td class="text-end">{{ totals.bank_sales }}</td></tr>
+        <tr><th>Customer credit</th><td class="text-end">{{ totals.credit_sales }}</td></tr>
+        <tr><th>Store credit</th><td class="text-end">{{ totals.store_credit_used }}</td></tr>
+        <tr><th>Other</th><td class="text-end">{{ totals.other_sales }}</td></tr>
+      </table>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card"><div class="card-header">Sales in this shift</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Invoice</th><th>Time</th><th>Customer</th><th class="text-end">Total</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for s in sales %}
+          <tr>
+            <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
+            <td class="small">{{ s.sale_date|date:"H:i" }}</td>
+            <td class="small">{{ s.customer.full_name }}</td>
+            <td class="text-end">{{ s.total }}</td>
+            <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No sales in this shift yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

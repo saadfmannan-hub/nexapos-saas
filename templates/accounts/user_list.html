@@ -1,0 +1,36 @@
+{% extends "layouts/base.html" %}
+{% block title %}Users — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">Users &amp; roles</h1>
+  <div class="d-flex gap-2">
+    <a href="{% url 'accounts:role_list' %}" class="btn btn-outline-secondary btn-sm">Manage roles</a>
+    <a href="{% url 'accounts:user_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add employee</a>
+  </div>
+</div>
+<div class="card">
+  <div class="card-header d-flex justify-content-between">
+    <span>Team members</span>
+    <span class="small text-secondary">{{ user_count }}{% if user_limit %} / {{ user_limit }} on plan{% endif %}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Branches</th><th>Status</th><th class="w-1"></th></tr></thead>
+      <tbody>
+        {% for m in memberships %}
+        <tr>
+          <td><span class="avatar-sm me-2">{{ m.user.full_name|first|upper }}</span>{{ m.user.full_name }}</td>
+          <td>{{ m.user.email }}</td>
+          <td><span class="badge {% if m.role.is_owner %}text-bg-dark{% else %}text-bg-light border{% endif %}">{{ m.role.name }}</span></td>
+          <td class="small">
+            {% for b in m.branches.all %}{{ b.name }}{% if not forloop.last %}, {% endif %}{% empty %}All branches{% endfor %}
+          </td>
+          <td>{% if m.is_active %}<span class="badge-status bs-active badge">Active</span>{% else %}<span class="badge-status bs-suspended badge">Inactive</span>{% endif %}</td>
+          <td><a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_edit' m.public_id %}"><i class="bi bi-pencil"></i></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

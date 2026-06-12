@@ -1,0 +1,38 @@
+{% extends "layouts/base.html" %}
+{% block title %}Import products — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Import products</h1>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">Upload file</div><div class="card-body">
+      <ol class="small text-secondary">
+        <li>Download the <a href="{% url 'catalog:import_template' %}">CSV template</a>.</li>
+        <li>Fill one product per row (columns: {{ columns|join:", " }}).</li>
+        <li>Upload as .csv or .xlsx — invalid rows are reported, never silently imported.</li>
+      </ol>
+      <form method="post" enctype="multipart/form-data">{% csrf_token %}
+        {% include "components/form_field.html" with field=form.file %}
+        {% include "components/form_field.html" with field=form.match_by %}
+        <button class="btn btn-primary">Validate &amp; import</button>
+        <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Back</a>
+      </form>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    {% if results %}
+    <div class="card"><div class="card-header">Import result</div><div class="card-body">
+      <div class="d-flex gap-3 mb-3">
+        <span class="badge text-bg-success fs-6">{{ results.created }} created</span>
+        <span class="badge text-bg-secondary fs-6">{{ results.skipped }} skipped (already exist)</span>
+        <span class="badge text-bg-danger fs-6">{{ results.errors|length }} errors</span>
+      </div>
+      {% if results.errors %}
+      <div class="border rounded p-2 bg-danger-subtle small" style="max-height:300px;overflow:auto">
+        {% for e in results.errors %}<div>{{ e }}</div>{% endfor %}
+      </div>
+      {% endif %}
+    </div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

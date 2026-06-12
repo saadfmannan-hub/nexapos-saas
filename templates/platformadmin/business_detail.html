@@ -1,0 +1,137 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">{{ business.name }}
+    {% if not business.is_active %}<span class="badge badge-status bs-suspended ms-2 fs-6">Suspended</span>{% endif %}</h1>
+  <a href="{% url 'platformadmin:business_list' %}" class="btn btn-outline-secondary btn-sm">Back</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">Business</div><div class="card-body">
+      <table class="table table-sm small mb-0">
+        <tr><th>Owner</th><td>{{ business.owner.full_name }} ({{ business.owner.email }})</td></tr>
+        <tr><th>Country</th><td>{{ business.country|default:"—" }}</td></tr>
+        <tr><th>Category</th><td>{{ business.business_category|default:"—" }}</td></tr>
+        <tr><th>Currency</th><td>{{ business.currency_code }} ({{ business.currency_precision }} dp)</td></tr>
+        <tr><th>Registered</th><td>{{ business.created_at|date:"Y-m-d" }}</td></tr>
+        <tr><th>Usage</th><td>{{ usage.branches }} branches · {{ usage.users }} users ·
+            {{ usage.products }} products · {{ usage.invoices }} invoices</td></tr>
+        {% if business.suspension_reason %}<tr><th>Suspension reason</th><td>{{ business.suspension_reason }}</td></tr>{% endif %}
+      </table>
+    </div></div>
+
+    <div class="card mt-3"><div class="card-header">Subscription</div><div class="card-body">
+      {% if sub %}
+      <div class="d-flex justify-content-between mb-2">
+        <strong>{{ sub.plan.name }}</strong>
+        <span class="badge badge-status bs-{{ sub.effective_status }}">{{ sub.effective_status }}</span>
+      </div>
+      <div class="small text-secondary mb-3">
+        {% if sub.trial_ends_at %}Trial ends {{ sub.trial_ends_at|date:"Y-m-d" }} · {% endif %}
+        {% if sub.current_period_end %}Period ends {{ sub.current_period_end|date:"Y-m-d" }}{% endif %}
+      </div>
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'extend' %}" class="border rounded p-2 mb-2">
+        {% csrf_token %}
+        <div class="small fw-bold mb-1">Extend / activate subscription</div>
+        <div class="row g-2">
+          <div class="col-4"><input type="number" name="days" value="30" min="1" class="form-control form-control-sm" title="Days"></div>
+          <div class="col-8">
+            <select name="plan_id" class="form-select form-select-sm">
+              {% for p in plans %}<option value="{{ p.id }}" {% if sub.plan_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-4"><input type="text" name="amount" class="form-control form-control-sm" placeholder="Amount paid"></div>
+          <div class="col-4">
+            <select name="method" class="form-select form-select-sm">
+              <option value="manual">Manual</option><option value="bank_transfer">Bank transfer</option>
+            </select>
+          </div>
+          <div class="col-4"><input type="text" name="reference" class="form-control form-control-sm" placeholder="Ref #"></div>
+          <div class="col-12"><button class="btn btn-sm btn-primary w-100">Extend subscription</button></div>
+        </div>
+      </form>
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'extend_trial' %}" class="d-flex gap-2">
+        {% csrf_token %}
+        <input type="number" name="days" value="7" min="1" class="form-control form-control-sm" style="max-width:90px">
+        <button class="btn btn-sm btn-outline-primary">Extend trial</button>
+      </form>
+      {% endif %}
+    </div></div>
+
+    <div class="card mt-3 border-danger"><div class="card-header text-danger">Danger zone</div><div class="card-body">
+      {% if business.is_active %}
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'suspend' %}"
+            onsubmit="return confirm('Suspend this business? Users will lose access but NO data is deleted.')">
+        {% csrf_token %}
+        <input type="text" name="reason" class="form-control form-control-sm mb-2" placeholder="Suspension reason" required>
+        <button class="btn btn-sm btn-danger">Suspend business</button>
+      </form>
+      {% else %}
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'activate' %}">
+        {% csrf_token %}
+        <button class="btn btn-sm btn-success">Reactivate business</button>
+      </form>
+      {% endif %}
+    </div></div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card"><div class="card-header">Members</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>User</th><th>Role</th><th>Status</th></tr></thead>
+        <tbody>
+          {% for m in members %}
+          <tr><td class="small">{{ m.user.full_name }} ({{ m.user.email }})</td>
+              <td><span class="badge text-bg-light border">{{ m.role.name }}</span></td>
+              <td>{% if m.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card mt-3"><div class="card-header">Support access (audited)</div><div class="card-body">
+      <p class="small text-secondary">Platform staff cannot see tenant business data
+      without an explicit, time-limited, audited grant. The business owner
+      {% if business.settings.notify_support_access %}is notified{% else %}has notifications disabled{% endif %}.</p>
+      <form method="post" action="{% url 'platformadmin:support_access' business.public_id %}" class="d-flex gap-2 mb-3">
+        {% csrf_token %}
+        <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (required)" required>
+        <input type="number" name="hours" value="4" min="1" max="72" class="form-control form-control-sm" style="max-width:90px" title="Hours">
+        <button class="btn btn-sm btn-warning text-nowrap">Grant access</button>
+      </form>
+      <table class="table table-sm small mb-0">
+        <thead><tr><th>Granted to</th><th>Reason</th><th>Expires</th><th></th></tr></thead>
+        <tbody>
+          {% for g in grants %}
+          <tr>
+            <td>{{ g.granted_to.email }}</td>
+            <td>{{ g.reason }}</td>
+            <td>{% if g.revoked_at %}<span class="text-danger">Revoked</span>
+                {% elif g.expires_at < now %}Expired{% else %}{{ g.expires_at|date:"Y-m-d H:i" }}{% endif %}</td>
+            <td>{% if g.is_active %}
+              <form method="post" action="{% url 'platformadmin:support_access' business.public_id %}">{% csrf_token %}
+                <input type="hidden" name="revoke_id" value="{{ g.pk }}">
+                <button class="btn btn-sm btn-outline-danger">Revoke</button></form>
+            {% endif %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="4" class="text-center text-secondary py-2">No support access has been granted</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div></div>
+
+    <div class="card mt-3"><div class="card-header">Subscription payments</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th class="text-end">Amount</th></tr></thead>
+        <tbody>
+          {% for p in payments %}
+          <tr><td class="small">{{ p.created_at|date:"Y-m-d" }}</td>
+              <td>{{ p.get_method_display }}</td><td class="small">{{ p.reference }}</td>
+              <td class="text-end">{{ p.amount }} {{ p.currency_code }}</td></tr>
+          {% empty %}<tr><td colspan="4" class="text-center text-secondary py-2">No payments recorded</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "layouts/base.html" %}
+{% block title %}Returns — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="page-title">Sales returns</h1>
+  <form class="d-flex gap-2" method="get">
+    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Return #, invoice, customer…">
+    <button class="btn btn-sm btn-primary">Search</button>
+  </form>
+</div>
+<div class="card"><div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Return #</th><th>Invoice</th><th>Customer</th><th>Refund method</th>
+      <th class="text-end">Refund</th><th>Date</th><th>By</th></tr></thead>
+    <tbody>
+      {% for r in page_obj %}
+      <tr>
+        <td class="fw-semibold">{{ r.return_number }}</td>
+        <td><a href="{% url 'sales:detail' r.sale.public_id %}">{{ r.sale.invoice_number }}</a></td>
+        <td>{{ r.customer.full_name }}</td>
+        <td>{{ r.get_refund_method_display }}</td>
+        <td class="text-end fw-semibold">{{ r.refund_amount }}</td>
+        <td class="small">{{ r.created_at|date:"Y-m-d H:i" }}</td>
+        <td class="small">{{ r.processed_by.full_name|default:"—" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="7"><div class="empty-state"><i class="bi bi-arrow-counterclockwise d-block mb-2"></i>
+        No returns yet. Open an invoice and use "Return items".</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+{% endblock %}

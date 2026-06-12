@@ -1,0 +1,76 @@
+{% extends "layouts/base.html" %}
+{% block title %}Subscription — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Subscription</h1>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">Current plan</div>
+      <div class="card-body">
+        {% if subscription %}
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h4 class="mb-0">{{ subscription.plan.name }}</h4>
+            <span class="badge badge-status bs-{{ subscription.effective_status }}">{{ subscription.get_status_display }}</span>
+          </div>
+          <ul class="list-unstyled small text-secondary mb-3">
+            {% if subscription.trial_ends_at %}<li>Trial ends: <strong>{{ subscription.trial_ends_at|date:"Y-m-d" }}</strong></li>{% endif %}
+            {% if subscription.current_period_end %}<li>Current period ends: <strong>{{ subscription.current_period_end|date:"Y-m-d" }}</strong></li>{% endif %}
+            <li>Billing cycle: {{ subscription.get_billing_cycle_display }}</li>
+          </ul>
+          {% if not subscription.is_operational %}
+            <div class="alert alert-danger py-2 small">
+              Your subscription is not active. Your data is safe and remains
+              read-only. Contact support to renew: {{ PLATFORM_SUPPORT_EMAIL }}
+            </div>
+          {% endif %}
+          <p class="small text-secondary mb-0">To upgrade, renew, or change your plan,
+          contact <a href="mailto:{{ PLATFORM_SUPPORT_EMAIL }}">{{ PLATFORM_SUPPORT_EMAIL }}</a>.
+          Bank transfer and manual activation are supported.</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="card mt-3">
+      <div class="card-header">Plan usage</div>
+      <div class="card-body">
+        {% for resource, u in usage.items %}
+        <div class="mb-2">
+          <div class="d-flex justify-content-between small">
+            <span class="text-capitalize">{{ resource|cut:"_"|capfirst }}</span>
+            <span>{{ u.current }}{% if u.limit %} / {{ u.limit }}{% else %} / ∞{% endif %}</span>
+          </div>
+          {% if u.limit %}
+          <div class="progress" style="height:6px">
+            <div class="progress-bar {% if not u.allowed %}bg-danger{% endif %}" style="width:{% widthratio u.current u.limit 100 %}%"></div>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-header">Available plans</div>
+      <div class="card-body">
+        <div class="row g-3">
+          {% for plan in plans %}
+          <div class="col-md-4">
+            <div class="border rounded p-3 h-100 {% if subscription.plan_id == plan.id %}border-primary border-2{% endif %}">
+              <div class="fw-bold">{{ plan.name }}</div>
+              <div class="fs-5 fw-bold text-primary">{{ plan.monthly_price }} <span class="small text-secondary fw-normal">{{ plan.currency_code }}/mo</span></div>
+              <ul class="small text-secondary list-unstyled mt-2 mb-0">
+                <li>{% if plan.max_branches %}{{ plan.max_branches }} branch{{ plan.max_branches|pluralize:"es" }}{% else %}Unlimited branches{% endif %}</li>
+                <li>{% if plan.max_users %}{{ plan.max_users }} user{{ plan.max_users|pluralize }}{% else %}Unlimited users{% endif %}</li>
+                {% if plan.feature_transfers %}<li>Stock transfers</li>{% endif %}
+                {% if plan.feature_advanced_reports %}<li>Advanced reports</li>{% endif %}
+                {% if plan.feature_api_access %}<li>API access</li>{% endif %}
+              </ul>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
