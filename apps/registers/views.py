@@ -14,14 +14,22 @@ from .services import ShiftError
 
 @require_permission("shifts.open")
 def shift_list(request):
+    from apps.branches.models import Branch
+
     my_shift = services.get_open_shift(request.business, request.user)
     registers = (
         CashRegister.objects.for_business(request.business)
         .filter(is_active=True).select_related("branch")
     )
+    # All active branches for the business; restricted only when the
+    # member is explicitly branch-limited (owners/admins see everything).
+    branches = Branch.objects.for_business(request.business).filter(
+        is_active=True
+    ).order_by("name")
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
         registers = registers.filter(branch_id__in=allowed)
+        branches = branches.filter(id__in=allowed)
 
     qs = (
         Shift.objects.for_business(request.business)
@@ -32,8 +40,8 @@ def shift_list(request):
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "registers/shift_list.html", {
-        "my_shift": my_shift, "registers": registers, "page_obj": page_obj,
-        "active_nav": "registers", "querystring": "",
+        "my_shift": my_shift, "registers": registers, "branches": branches,
+        "page_obj": page_obj, "active_nav": "registers", "querystring": "",
     })
 
 
@@ -145,6 +153,9 @@ def register_create(request):
 
         branch = get_tenant_object(Branch, request.business,
                                    pk=request.POST.get("branch_id"))
+        if not request.membership.can_access_branch(branch):
+            messages.error(request, "You cannot create a register for that branch.")
+            return redirect("registers:shift_list")
         name = request.POST.get("name", "").strip()
         code = request.POST.get("code", "").strip().upper()
         if not name or not code:

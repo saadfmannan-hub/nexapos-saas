@@ -61,8 +61,7 @@
             <div class="col-5"><input name="code" class="form-control form-control-sm" placeholder="Code" required></div>
             <div class="col-7">
               <select name="branch_id" class="form-select form-select-sm">
-                {% for r in registers %}{% ifchanged r.branch.id %}<option value="{{ r.branch.id }}">{{ r.branch.name }}</option>{% endifchanged %}{% endfor %}
-                {% if not registers %}{% for b in request.business.branches_branch_set.all %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}{% endif %}
+                {% for b in branches %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}
               </select>
             </div>
             <div class="col-5">

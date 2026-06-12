@@ -154,6 +154,132 @@ class PurchaseOrderDocumentTests(TenantTestCase):
         self.assertEqual(mimetype, "application/pdf")
 
 
+class RegisterBranchDropdownTests(TenantTestCase):
+    """Registers & Shifts: the 'Add a register' branch dropdown must list
+    every active branch of the business — not just branches that already
+    have a register."""
+
+    def setUp(self):
+        from apps.branches.models import Branch
+
+        self.branch2 = Branch.objects.create(
+            business=self.business_a, name="HK Road Branch", code="HK",
+        )
+        Branch.objects.create(
+            business=self.business_a, name="Closed Branch", code="CLS",
+            is_active=False,
+        )
+
+    def test_owner_sees_all_active_branches(self):
+        self.client.force_login(self.owner_a)
+        response = self.client.get(reverse("registers:shift_list"))
+        branch_names = [b.name for b in response.context["branches"]]
+        self.assertIn("Head Office", branch_names)
+        self.assertIn("HK Road Branch", branch_names)
+        self.assertNotIn("Closed Branch", branch_names)
+        # Both options render in the dropdown even though only Head Office
+        # has a register so far.
+        self.assertContains(response, "HK Road Branch")
+
+    def test_branch_limited_user_sees_only_assigned_branches(self):
+        self.cashier_membership.branches.set([self.branch_a])
+        self.client.force_login(self.cashier_a)
+        response = self.client.get(reverse("registers:shift_list"))
+        branch_ids = [b.id for b in response.context["branches"]]
+        self.assertEqual(branch_ids, [self.branch_a.id])
+
+    def test_register_create_blocked_for_unassigned_branch(self):
+        from apps.accounts.models import Membership, Role, User
+        from apps.registers.models import CashRegister
+
+        manager_role = Role.objects.for_business(self.business_a).get(
+            name="Branch Manager")
+        manager = User.objects.create_user(
+            email="ho-manager@example.com", password="StrongPass123!",
+            full_name="HO Manager",
+        )
+        membership = Membership.objects.create(
+            business=self.business_a, user=manager, role=manager_role)
+        membership.branches.set([self.branch_a])  # NOT branch2
+        self.client.force_login(manager)
+        self.client.post(reverse("registers:register_create"), {
+            "name": "Forbidden Register", "code": "FRB",
+            "branch_id": self.branch2.id, "receipt_printer": "80mm",
+        })
+        self.assertFalse(
+            CashRegister.objects.for_business(self.business_a)
+            .filter(code="FRB").exists()
+        )
+
+    def test_register_create_works_for_owner_on_second_branch(self):
+        from apps.registers.models import CashRegister
+
+        self.client.force_login(self.owner_a)
+        self.client.post(reverse("registers:register_create"), {
+            "name": "HK Counter", "code": "HK1",
+            "branch_id": self.branch2.id, "receipt_printer": "80mm",
+        })
+        register = CashRegister.objects.for_business(self.business_a).get(code="HK1")
+        self.assertEqual(register.branch_id, self.branch2.id)
+
+
+class DashboardTrendSeriesTests(TenantTestCase):
+    """Revenue & Profit Trend must be a daily series over the selected
+    range, with zero-filled days — not one point per day that had sales."""
+
+    def setUp(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from apps.sales.models import Sale
+
+        self.allow_no_shift()
+        self.today = timezone.localdate()
+        s_old = self.make_sale()  # 21.000, profit 12.000
+        Sale.objects.filter(pk=s_old.pk).update(
+            sale_date=timezone.now() - timedelta(days=3))
+        self.make_sale()  # today
+        self.client.force_login(self.owner_a)
+        self.d_from = self.today - timedelta(days=4)
+
+    def dashboard(self, **params):
+        query = {"from": str(self.d_from), "to": str(self.today), **params}
+        return self.client.get(reverse("dashboard"), query)
+
+    def test_every_day_in_range_present_with_zero_fill(self):
+        response = self.dashboard()
+        trend = response.context["chart_trend"]
+        self.assertEqual(len(trend["labels"]), 5)        # 5-day range
+        self.assertEqual(len(trend["sales"]), 5)
+        self.assertEqual(len(trend["profit"]), 5)
+        # Sales on day index 1 (today-3) and index 4 (today); zeros between
+        self.assertEqual(trend["sales"][0], 0.0)
+        self.assertAlmostEqual(trend["sales"][1], 21.0)
+        self.assertEqual(trend["sales"][2], 0.0)
+        self.assertEqual(trend["sales"][3], 0.0)
+        self.assertAlmostEqual(trend["sales"][4], 21.0)
+        self.assertAlmostEqual(trend["profit"][1], 12.0)
+        # Labels are human-readable dates ("Jun 01" style)
+        self.assertEqual(trend["labels"][4], self.today.strftime("%b %d"))
+
+    def test_branch_filter_keeps_full_range(self):
+        from apps.branches.models import Branch
+
+        empty_branch = Branch.objects.create(
+            business=self.business_a, name="Empty Branch", code="EMP")
+        response = self.dashboard(branch=empty_branch.id)
+        trend = response.context["chart_trend"]
+        self.assertEqual(len(trend["labels"]), 5)
+        self.assertEqual(sum(trend["sales"]), 0.0)
+
+    def test_sparklines_align_with_zero_filled_series(self):
+        response = self.dashboard()
+        sparks = response.context["sparks"]
+        self.assertEqual(len(sparks["sales"]), 5)
+        self.assertEqual(len(sparks["expenses"]), 5)
+
+
 class CustomerDetailRegressionTests(TenantTestCase):
     """Bug #2 — FieldError: Cannot compute Avg('total') on customer detail."""
 

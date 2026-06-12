@@ -104,10 +104,34 @@ def dashboard(request):
         .annotate(total=Sum("total"), profit=Sum("gross_profit"))
         .order_by("day")
     )
+    # Zero-fill the full selected range so the trend is a daily series
+    # (days without sales plot as 0), not one dot per day that had sales.
+    d_from = date_cls.fromisoformat(str(date_from))
+    d_to = date_cls.fromisoformat(str(date_to))
+    by_day = {str(r["day"]): r for r in trend}
+    iso_labels, pretty_labels, sales_series, profit_series = [], [], [], []
+    day = d_from
+    # Safety cap: ranges beyond ~2 years fall back to sales-days only.
+    fill_daily = (d_to - d_from).days <= 750
+    if fill_daily:
+        while day <= d_to:
+            key = day.isoformat()
+            row = by_day.get(key)
+            iso_labels.append(key)
+            pretty_labels.append(day.strftime("%b %d"))
+            sales_series.append(float(row["total"] or 0) if row else 0.0)
+            profit_series.append(float(row["profit"] or 0) if row else 0.0)
+            day += timedelta(days=1)
+    else:
+        for r in trend:
+            iso_labels.append(str(r["day"]))
+            pretty_labels.append(r["day"].strftime("%b %d"))
+            sales_series.append(float(r["total"] or 0))
+            profit_series.append(float(r["profit"] or 0))
     chart_trend = {
-        "labels": [str(r["day"]) for r in trend],
-        "sales": [float(r["total"] or 0) for r in trend],
-        "profit": [float(r["profit"] or 0) for r in trend] if show_profit else [],
+        "labels": pretty_labels,
+        "sales": sales_series,
+        "profit": profit_series if show_profit else [],
     }
     by_method = (
         SalePayment.objects.for_business(business)
@@ -141,8 +165,6 @@ def dashboard(request):
             return None
         return round(float((cur - prev) / prev * 100), 1)
 
-    d_from = date_cls.fromisoformat(str(date_from))
-    d_to = date_cls.fromisoformat(str(date_to))
     span = (d_to - d_from).days + 1
     prev_from, prev_to = d_from - timedelta(days=span), d_from - timedelta(days=1)
     prev = sales.filter(sale_date__date__gte=prev_from, sale_date__date__lte=prev_to)
@@ -173,7 +195,7 @@ def dashboard(request):
         str(r["expense_date"]): float(r["t"] or 0)
         for r in expenses_qs.values("expense_date").annotate(t=Sum("amount"))
     }
-    spark_expenses = [exp_daily.get(label, 0) for label in chart_trend["labels"]]
+    spark_expenses = [exp_daily.get(label, 0) for label in iso_labels]
 
     # ---- extra interactive charts ------------------------------------------
     hourly = (
