@@ -15,10 +15,10 @@
     <div class="small text-secondary">{{ date_from }} → {{ date_to }} · compared with the previous period</div>
   </div>
   <form class="d-flex gap-2 align-items-center flex-wrap" method="get">
-    <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm">
+    <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm w-auto">
     <span class="text-secondary">→</span>
-    <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm">
-    <select name="branch" class="form-select form-select-sm" style="max-width:160px">
+    <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm w-auto">
+    <select name="branch" class="form-select form-select-sm w-auto" style="max-width:160px">
       <option value="">All branches</option>
       {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
     </select>
@@ -39,7 +39,7 @@
         <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-lightning-charge"></i></div>
       </div>
       {% include "dashboard/_trend.html" with value=trends.today_sales label="vs yesterday" %}
-      <canvas class="spark" data-spark="sales" data-color="#0d6efd"></canvas>
+      <div class="spark"><canvas data-spark="sales" data-color="#0d6efd"></canvas></div>
     </div></a>
   </div>
   <div class="col-6 col-xl-3">
@@ -68,7 +68,7 @@
         <div class="kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-piggy-bank"></i></div>
       </div>
       {% include "dashboard/_trend.html" with value=trends.gross_profit label="vs previous period" %}
-      <canvas class="spark" data-spark="profit" data-color="#16a34a"></canvas>
+      <div class="spark"><canvas data-spark="profit" data-color="#16a34a"></canvas></div>
     </div></a>
   </div>
   <div class="col-6 col-xl-3">
@@ -82,7 +82,7 @@
         <div class="kpi-icon" style="background:#fef3c7;color:#d97706"><i class="bi bi-wallet2"></i></div>
       </div>
       {% include "dashboard/_trend.html" with value=trends.net_profit label="vs previous period" %}
-      <canvas class="spark" data-spark="expenses" data-color="#d97706"></canvas>
+      <div class="spark"><canvas data-spark="expenses" data-color="#d97706"></canvas></div>
     </div></a>
   </div>
   {% endif %}
@@ -263,11 +263,11 @@
                    '#6366f1', '#0891b2', '#65a30d'];
   const get = id => JSON.parse(document.getElementById(id).textContent);
 
-  // Sparklines inside KPI cards
+  // Sparklines inside KPI cards (canvas lives in a fixed-height .spark box)
   const sparks = get('spark-data');
-  document.querySelectorAll('canvas.spark').forEach(el => {
+  document.querySelectorAll('.spark canvas').forEach(el => {
     const data = sparks[el.dataset.spark] || [];
-    if (!data.length) { el.style.display = 'none'; return; }
+    if (!data.length) { el.parentElement.style.display = 'none'; return; }
     new Chart(el, {
       type: 'line',
       data: {labels: data.map((_, i) => i),

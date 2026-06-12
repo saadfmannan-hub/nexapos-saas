@@ -200,7 +200,11 @@ a { text-decoration: none; }
   background: var(--kpi-accent, linear-gradient(90deg, #0d6efd, #0ea5a4));
 }
 .kpi-pro .kpi-value { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
-.kpi-pro .spark { height: 38px; margin-top: .35rem; }
+/* Chart.js with maintainAspectRatio:false REQUIRES a positioned,
+   fixed-height container — a bare canvas grows unbounded. */
+.kpi-pro .spark { position: relative; height: 38px; margin-top: .4rem; }
+.kpi-pro .spark canvas { position: absolute; inset: 0;
+                         width: 100% !important; height: 100% !important; }
 .trend-badge {
   font-size: .72rem; font-weight: 700; border-radius: 999px;
   padding: .15em .55em; display: inline-flex; align-items: center; gap: .15rem;
