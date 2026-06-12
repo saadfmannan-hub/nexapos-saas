@@ -55,11 +55,11 @@ def customer_form(request, public_id=None):
     if public_id:
         instance = get_tenant_object(Customer, request.business, public_id=public_id)
     else:
-        try:
-            subscriptions.check_limit(request.business, "customers")
-        except (subscriptions.LimitExceeded, subscriptions.SubscriptionInactive) as exc:
-            messages.warning(request, str(exc))
-            return redirect("customers:list")
+        from apps.subscriptions.helpers import guard_limit
+
+        blocked = guard_limit(request, "customers")
+        if blocked:
+            return blocked
     form = CustomerForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
         customer = form.save(commit=False)
@@ -89,10 +89,13 @@ def customer_detail(request, public_id):
         .select_related("branch")
         .order_by("-sale_date")
     )
+    # Aggregate aliases must not shadow field names ("total" would break
+    # Avg("total") with "Cannot compute Avg('total'): 'total' is an aggregate").
     stats = sales.exclude(status=Sale.Status.VOIDED).aggregate(
-        total=Sum("total"), paid=Sum("amount_paid"), count=Count("id"),
+        sum_total=Sum("total"), paid=Sum("amount_paid"), count=Count("id"),
         avg=Avg("total"), last=Max("sale_date"),
     )
+    stats["total"] = stats.pop("sum_total")
     payments = (
         CustomerPayment.objects.for_business(request.business)
         .filter(customer=customer).select_related("payment_method", "received_by")

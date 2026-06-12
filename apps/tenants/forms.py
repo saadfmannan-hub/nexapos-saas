@@ -10,18 +10,9 @@ from .models import Business, BusinessSettings
 INPUT = {"class": "form-control"}
 SELECT = {"class": "form-select"}
 
-COMMON_CURRENCIES = [
-    ("USD", "USD — US Dollar (2 dp)"), ("EUR", "EUR — Euro (2 dp)"),
-    ("GBP", "GBP — British Pound (2 dp)"), ("AED", "AED — UAE Dirham (2 dp)"),
-    ("SAR", "SAR — Saudi Riyal (2 dp)"), ("OMR", "OMR — Omani Rial (3 dp)"),
-    ("KWD", "KWD — Kuwaiti Dinar (3 dp)"), ("BHD", "BHD — Bahraini Dinar (3 dp)"),
-    ("QAR", "QAR — Qatari Riyal (2 dp)"), ("INR", "INR — Indian Rupee (2 dp)"),
-    ("PKR", "PKR — Pakistani Rupee (2 dp)"), ("EGP", "EGP — Egyptian Pound (2 dp)"),
-    ("KES", "KES — Kenyan Shilling (2 dp)"), ("NGN", "NGN — Nigerian Naira (2 dp)"),
-    ("OTHER", "Other (enter code below)"),
-]
+from apps.core.currencies import currency_choices, precision_for
 
-THREE_DP = {"OMR", "KWD", "BHD"}
+COMMON_CURRENCIES = currency_choices() + [("OTHER", "Other (enter code below)")]
 
 BUSINESS_CATEGORIES = [
     "Clothing", "Perfumes", "Mobile & Accessories", "Electronics", "Grocery",
@@ -88,7 +79,7 @@ class RegistrationForm(forms.Form):
 
     @property
     def currency_precision(self):
-        return 3 if self.currency_code in THREE_DP else 2
+        return precision_for(self.currency_code, default=2)
 
 
 class BusinessProfileForm(forms.ModelForm):
@@ -109,9 +100,27 @@ class BusinessProfileForm(forms.ModelForm):
             f.widget.attrs.setdefault("class", css)
         self.fields["currency_precision"].widget = forms.Select(
             choices=[(0, "0"), (2, "2"), (3, "3")], attrs=SELECT)
+        self.fields["currency_code"] = forms.ChoiceField(
+            choices=currency_choices(current=self.instance.currency_code),
+            widget=forms.Select(attrs=SELECT),
+            help_text="Symbol and decimals are applied automatically; "
+                      "override the symbol below if needed.",
+        )
+        self.fields["currency_symbol"].required = False
         self.fields["timezone"] = forms.ChoiceField(
             choices=[(z, z) for z in sorted(zoneinfo.available_timezones())],
             widget=forms.Select(attrs=SELECT))
+
+    def clean(self):
+        data = super().clean()
+        # Auto-adopt the registry precision when the currency changes and
+        # the precision was left at the old currency's default.
+        code = data.get("currency_code", "")
+        if code and code != self.instance.currency_code:
+            old_default = precision_for(self.instance.currency_code, default=None)
+            if data.get("currency_precision") in (None, old_default):
+                data["currency_precision"] = precision_for(code, default=2)
+        return data
 
 
 class BusinessSettingsForm(forms.ModelForm):

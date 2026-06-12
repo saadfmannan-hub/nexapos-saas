@@ -59,7 +59,12 @@ class Business(TimeStampedModel):
 
     @property
     def currency_display(self):
-        return self.currency_symbol or self.currency_code
+        """Explicit symbol > registry symbol > raw code."""
+        if self.currency_symbol:
+            return self.currency_symbol
+        from apps.core.currencies import symbol_for
+
+        return symbol_for(self.currency_code, fallback=self.currency_code)
 
 
 class BusinessSettings(TimeStampedModel):

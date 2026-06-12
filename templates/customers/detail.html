@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}{{ customer.full_name }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -15,21 +16,21 @@
 <div class="row g-3 mb-3">
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Total purchases</div>
-    <div class="kpi-value">{{ stats.total|default:0 }}</div>
+    <div class="kpi-value">{% money stats.total %}</div>
     <div class="small text-secondary">{{ stats.count|default:0 }} invoice{{ stats.count|pluralize }}</div>
   </div></div></div>
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Outstanding balance</div>
-    <div class="kpi-value {% if customer.balance > 0 %}text-danger{% endif %}">{{ customer.balance }}</div>
-    <div class="small text-secondary">Credit limit: {{ customer.credit_limit }}</div>
+    <div class="kpi-value {% if customer.balance > 0 %}text-danger{% endif %}">{% money customer.balance %}</div>
+    <div class="small text-secondary">Credit limit: {% money customer.credit_limit %}</div>
   </div></div></div>
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Store credit</div>
-    <div class="kpi-value text-success">{{ customer.store_credit }}</div>
+    <div class="kpi-value text-success">{% money customer.store_credit %}</div>
   </div></div></div>
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Average invoice</div>
-    <div class="kpi-value">{{ stats.avg|default:0|floatformat:current_business.currency_precision }}</div>
+    <div class="kpi-value">{% money stats.avg %}</div>
     <div class="small text-secondary">Last: {{ stats.last|date:"Y-m-d"|default:"—" }}</div>
   </div></div></div>
 </div>
@@ -47,8 +48,8 @@
             <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
             <td class="small">{{ s.sale_date|date:"Y-m-d" }}</td>
             <td class="small">{{ s.branch.name }}</td>
-            <td class="text-end">{{ s.total }}</td>
-            <td class="text-end">{{ s.amount_paid }}</td>
+            <td class="text-end">{% money s.total %}</td>
+            <td class="text-end">{% money s.amount_paid %}</td>
             <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
           </tr>
           {% empty %}<tr><td colspan="6" class="text-center text-secondary py-3">No purchases yet</td></tr>{% endfor %}

@@ -1,18 +1,45 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}{{ purchase.purchase_number }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Purchase {{ purchase.purchase_number }}
     <span class="badge badge-status bs-{{ purchase.status }} ms-2 fs-6">{{ purchase.get_status_display }}</span></h1>
-  {% if can_manage and purchase.status != "cancelled" %}
-  <div class="d-flex gap-2">
-    {% if purchase.status == "order" %}
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'purchases:print' purchase.public_id %}" target="_blank"
+       class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print PO</a>
+    <a href="{% url 'purchases:pdf' purchase.public_id %}"
+       class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
+    <a href="{% url 'purchases:share' purchase.public_id %}"
+       class="btn btn-outline-secondary btn-sm"><i class="bi bi-link-45deg"></i> Supplier link</a>
+    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal"
+            data-bs-target="#emailPoModal"><i class="bi bi-envelope"></i> Email</button>
+    {% if can_manage and purchase.status == "order" %}
     <form method="post" action="{% url 'purchases:cancel' purchase.public_id %}"
           onsubmit="return confirm('Cancel this purchase order?')">{% csrf_token %}
       <button class="btn btn-outline-danger btn-sm">Cancel order</button></form>
     {% endif %}
   </div>
-  {% endif %}
+</div>
+
+<!-- Email PO modal -->
+<div class="modal fade" id="emailPoModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post" action="{% url 'purchases:email' purchase.public_id %}">{% csrf_token %}
+      <div class="modal-header py-2"><h5 class="modal-title">Email purchase order</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <label class="form-label">Send to</label>
+        <input type="email" name="email" class="form-control"
+               value="{{ purchase.supplier.email }}" placeholder="supplier@example.com" required>
+        <div class="form-text">The PO is attached as a PDF together with a view-online link.</div>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary"><i class="bi bi-envelope"></i> Send</button>
+      </div>
+    </form>
+  </div></div>
 </div>
 
 <div class="row g-3">
@@ -83,13 +110,13 @@
         {% if purchase.due_date %}<tr><th>Due</th><td>{{ purchase.due_date }}</td></tr>{% endif %}
         <tr><th>Warehouse</th><td>{{ purchase.warehouse.name }}</td></tr>
         {% if purchase.supplier_invoice_number %}<tr><th>Supplier inv #</th><td>{{ purchase.supplier_invoice_number }}</td></tr>{% endif %}
-        <tr><th>Subtotal</th><td>{{ purchase.subtotal }}</td></tr>
-        <tr><th>Discount</th><td>−{{ purchase.discount_amount }}</td></tr>
-        <tr><th>Shipping</th><td>{{ purchase.shipping_cost }}</td></tr>
-        <tr><th>Other</th><td>{{ purchase.other_charges }}</td></tr>
-        <tr class="fw-bold"><th>Total</th><td>{{ purchase.total }} {{ current_business.currency_display }}</td></tr>
-        <tr><th>Paid</th><td>{{ purchase.amount_paid }}</td></tr>
-        <tr class="{% if purchase.outstanding > 0 %}text-danger fw-bold{% endif %}"><th>Outstanding</th><td>{{ purchase.outstanding }}</td></tr>
+        <tr><th>Subtotal</th><td>{% money purchase.subtotal %}</td></tr>
+        <tr><th>Discount</th><td>−{% money purchase.discount_amount %}</td></tr>
+        <tr><th>Shipping</th><td>{% money purchase.shipping_cost %}</td></tr>
+        <tr><th>Other</th><td>{% money purchase.other_charges %}</td></tr>
+        <tr class="fw-bold"><th>Total</th><td>{% money purchase.total symbol=1 %}</td></tr>
+        <tr><th>Paid</th><td>{% money purchase.amount_paid %}</td></tr>
+        <tr class="{% if purchase.outstanding > 0 %}text-danger fw-bold{% endif %}"><th>Outstanding</th><td>{% money purchase.outstanding %}</td></tr>
         {% if purchase.attachment %}<tr><th>Attachment</th><td><a href="{{ purchase.attachment.url }}" target="_blank">View file</a></td></tr>{% endif %}
       </table>
     </div></div>

@@ -175,6 +175,55 @@ a { text-decoration: none; }
   display: flex; align-items: center; justify-content: center; padding: 0 4px;
 }
 
+/* ---------------- Premium dashboard ---------------- */
+.np-content.dash-bg {
+  background:
+    radial-gradient(1100px 380px at 8% -10%, rgba(13,110,253,.10), transparent 60%),
+    radial-gradient(900px 320px at 95% -5%, rgba(14,165,164,.10), transparent 55%),
+    var(--np-bg);
+}
+.kpi-pro {
+  position: relative;
+  border: 1px solid rgba(255,255,255,.65);
+  border-radius: 1rem;
+  background: linear-gradient(165deg, rgba(255,255,255,.92), rgba(255,255,255,.72));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 2px rgba(16,24,40,.05), 0 8px 22px -12px rgba(16,24,40,.14);
+  transition: transform .18s ease, box-shadow .18s ease;
+  overflow: hidden;
+}
+.kpi-pro:hover { transform: translateY(-3px);
+  box-shadow: 0 4px 8px rgba(16,24,40,.06), 0 18px 34px -14px rgba(16,24,40,.22); }
+.kpi-pro::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--kpi-accent, linear-gradient(90deg, #0d6efd, #0ea5a4));
+}
+.kpi-pro .kpi-value { font-size: 1.5rem; font-weight: 800; letter-spacing: -.02em; }
+.kpi-pro .spark { height: 38px; margin-top: .35rem; }
+.trend-badge {
+  font-size: .72rem; font-weight: 700; border-radius: 999px;
+  padding: .15em .55em; display: inline-flex; align-items: center; gap: .15rem;
+}
+.trend-up { background: #dcfce7; color: #15803d; }
+.trend-down { background: #fee2e2; color: #b91c1c; }
+.trend-flat { background: #e2e8f0; color: #475569; }
+.widget-card { border-radius: 1rem; }
+.widget-card .list-group-item { border-color: #f1f5f9; padding: .55rem 1rem; }
+.widget-card .card-header { font-size: .8rem; text-transform: uppercase;
+  letter-spacing: .06em; color: #64748b; border-bottom: 1px solid #eef2f7; }
+.chart-card { border-radius: 1rem; }
+.chart-card .card-header { border-bottom: 1px solid #eef2f7; }
+
+/* Skeleton loaders */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+.skeleton { position: relative; overflow: hidden; background: #e9eef5;
+            border-radius: 6px; min-height: 1em; }
+.skeleton::after { content: ""; position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent);
+  animation: shimmer 1.3s infinite; }
+
 /* Print */
 @media print {
   .np-sidebar, .np-topbar, .no-print { display: none !important; }

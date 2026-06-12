@@ -1,0 +1,13 @@
+{% if value is not None %}
+  {% if value > 0 %}
+    <span class="trend-badge trend-up"><i class="bi bi-arrow-up-right"></i> {{ value }}%</span>
+  {% elif value < 0 %}
+    <span class="trend-badge trend-down"><i class="bi bi-arrow-down-right"></i> {{ value }}%</span>
+  {% else %}
+    <span class="trend-badge trend-flat">0%</span>
+  {% endif %}
+  <span class="small text-secondary">{{ label }}</span>
+{% else %}
+  <span class="trend-badge trend-flat">—</span>
+  <span class="small text-secondary">{{ label }}</span>
+{% endif %}

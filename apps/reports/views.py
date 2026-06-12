@@ -1,10 +1,10 @@
-from datetime import timedelta
+from datetime import date as date_cls, timedelta
 from decimal import Decimal
 
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied
-from django.db.models import Avg, Count, F, Sum
-from django.db.models.functions import TruncDate
+from django.db.models import Avg, Count, F, Q, Sum
+from django.db.models.functions import ExtractHour, TruncDate
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -135,6 +135,104 @@ def dashboard(request):
         "data": [float(r["t"] or 0) for r in by_branch],
     }
 
+    # ---- previous-period comparison (trend %) ------------------------------
+    def _pct(cur, prev):
+        if prev in (None, 0) or prev == ZERO:
+            return None
+        return round(float((cur - prev) / prev * 100), 1)
+
+    d_from = date_cls.fromisoformat(str(date_from))
+    d_to = date_cls.fromisoformat(str(date_to))
+    span = (d_to - d_from).days + 1
+    prev_from, prev_to = d_from - timedelta(days=span), d_from - timedelta(days=1)
+    prev = sales.filter(sale_date__date__gte=prev_from, sale_date__date__lte=prev_to)
+    if branch_id.isdigit():
+        prev = prev.filter(branch_id=branch_id)
+    prev_agg = prev.aggregate(t=Sum("total"), p=Sum("gross_profit"), c=Count("id"))
+    prev_expenses = Expense.objects.for_business(business).exclude(
+        status__in=["rejected", "cancelled"]
+    ).filter(expense_date__gte=prev_from, expense_date__lte=prev_to).aggregate(
+        t=Sum("amount"))["t"] or ZERO
+    prev_total = prev_agg["t"] or ZERO
+    prev_profit = prev_agg["p"] or ZERO
+    yesterday_sales = sales.filter(
+        sale_date__date=today - timedelta(days=1)
+    ).aggregate(t=Sum("total"))["t"] or ZERO
+    trends = {
+        "today_sales": _pct(today_sales, yesterday_sales),
+        "period_sales": _pct(agg["total"] or ZERO, prev_total),
+        "gross_profit": _pct(gross, prev_profit),
+        "net_profit": _pct(gross - expenses_total, prev_profit - prev_expenses),
+        "invoices": _pct(Decimal(agg["count"] or 0), Decimal(prev_agg["c"] or 0)),
+    }
+
+    # ---- sparklines (daily series for the period) --------------------------
+    spark_sales = chart_trend["sales"]
+    spark_profit = chart_trend["profit"]
+    exp_daily = {
+        str(r["expense_date"]): float(r["t"] or 0)
+        for r in expenses_qs.values("expense_date").annotate(t=Sum("amount"))
+    }
+    spark_expenses = [exp_daily.get(label, 0) for label in chart_trend["labels"]]
+
+    # ---- extra interactive charts ------------------------------------------
+    hourly = (
+        period.annotate(h=ExtractHour("sale_date")).values("h")
+        .annotate(t=Sum("total")).order_by("h")
+    )
+    hour_map = {r["h"]: float(r["t"] or 0) for r in hourly}
+    chart_hourly = {"labels": [f"{h:02d}" for h in range(24)],
+                    "data": [hour_map.get(h, 0) for h in range(24)]}
+
+    from apps.inventory.models import StockMovement
+
+    move_start = today - timedelta(days=13)
+    movements = (
+        StockMovement.objects.for_business(business)
+        .filter(created_at__date__gte=move_start)
+        .annotate(day=TruncDate("created_at")).values("day")
+        .annotate(qin=Sum("quantity", filter=Q(quantity__gt=0)),
+                  qout=Sum("quantity", filter=Q(quantity__lt=0)))
+        .order_by("day")
+    )
+    chart_movement = {
+        "labels": [str(r["day"]) for r in movements],
+        "stock_in": [float(r["qin"] or 0) for r in movements],
+        "stock_out": [abs(float(r["qout"] or 0)) for r in movements],
+    }
+    top_cust = (
+        period.exclude(customer__is_walk_in=True)
+        .values("customer__full_name").annotate(t=Sum("total"))
+        .order_by("-t")[:6]
+    )
+    chart_customers = {
+        "labels": [r["customer__full_name"][:22] for r in top_cust],
+        "data": [float(r["t"] or 0) for r in top_cust],
+    }
+
+    # ---- activity widgets ---------------------------------------------------
+    from apps.customers.models import Customer as CustomerModel
+    from apps.purchases.models import Purchase
+    from apps.suppliers.models import Supplier as SupplierModel
+
+    widgets = {
+        "recent_sales": sales.select_related("customer").order_by("-sale_date")[:7],
+        "recent_expenses": Expense.objects.for_business(business)
+            .exclude(status__in=["rejected", "cancelled"])
+            .select_related("category").order_by("-expense_date", "-created_at")[:5],
+        "pending_receivables": CustomerModel.objects.for_business(business)
+            .filter(balance__gt=0).order_by("-balance")[:5],
+        "pending_payables": SupplierModel.objects.for_business(business)
+            .filter(balance__gt=0).order_by("-balance")[:5],
+        "low_stock_items": StockLevel.objects.for_business(business)
+            .filter(product__reorder_level__gt=0,
+                    quantity__lte=F("product__reorder_level"))
+            .select_related("product", "warehouse")[:7],
+        "awaiting_pos": Purchase.objects.for_business(business)
+            .filter(status__in=["order", "partially_received"])
+            .select_related("supplier").order_by("-purchase_date")[:5],
+    }
+
     from apps.branches.models import Branch
 
     return render(request, "dashboard/index.html", {
@@ -159,6 +257,12 @@ def dashboard(request):
         },
         "chart_trend": chart_trend, "chart_methods": chart_methods,
         "chart_products": chart_products, "chart_branches": chart_branches,
+        "chart_hourly": chart_hourly, "chart_movement": chart_movement,
+        "chart_customers": chart_customers,
+        "trends": trends,
+        "sparks": {"sales": spark_sales, "profit": spark_profit,
+                   "expenses": spark_expenses},
+        "widgets": widgets,
         "show_profit": show_profit,
         "onboarding_pending": not request.business.onboarding_completed,
     })

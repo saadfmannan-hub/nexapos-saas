@@ -1,0 +1,135 @@
+{% load money_tags %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Purchase Order {{ purchase.purchase_number }}</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #1e293b; margin: 0; }
+  .po-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  .head td { vertical-align: top; }
+  h1 { font-size: 18pt; margin: 0 0 2px; color: #0f172a; }
+  .muted { color: #64748b; font-size: 9pt; }
+  .items th { background: #0f172a; color: #fff; text-align: left; padding: 6px 8px;
+              font-size: 9pt; text-transform: uppercase; }
+  .items td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
+  .r { text-align: right; }
+  .totals td { padding: 3px 8px; }
+  .totals .grand { font-size: 13pt; font-weight: bold; border-top: 2px solid #0f172a; }
+  .terms { margin-top: 22px; font-size: 9pt; color: #475569; border: 1px solid #e2e8f0;
+           border-radius: 6px; padding: 10px 12px; background: #f8fafc; }
+  .sig { margin-top: 44px; }
+  .sig td { width: 50%; padding-top: 24px; }
+  .sig .line { border-top: 1px solid #94a3b8; width: 70%; padding-top: 4px;
+               font-size: 9pt; color: #64748b; }
+  .status-pill { display: inline-block; padding: 3px 12px; border-radius: 999px;
+                 font-size: 9pt; font-weight: bold; background: #e2e8f0; color: #334155; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+<div class="po-wrap">
+{% if not pdf_mode and not shared_mode %}
+<div class="no-print" style="text-align:right;margin-bottom:8px">
+  <button onclick="window.print()" style="padding:6px 16px;cursor:pointer">🖨 Print</button>
+  <a href="{% url 'purchases:pdf' purchase.public_id %}" style="padding:6px 16px">⬇ PDF</a>
+</div>
+{% elif shared_mode %}
+<div class="no-print" style="text-align:right;margin-bottom:8px">
+  <button onclick="window.print()" style="padding:6px 16px;cursor:pointer">🖨 Print</button>
+</div>
+{% endif %}
+
+<table class="head">
+  <tr>
+    <td>
+      {% if business.logo %}<img src="{{ business.logo.url }}" style="max-height:54px;margin-bottom:6px"><br>{% endif %}
+      <h1>{{ business.name }}</h1>
+      {% if business.legal_name %}<div class="muted">{{ business.legal_name }}</div>{% endif %}
+      <div class="muted">
+        {{ purchase.branch.name }}{% if business.address %} · {{ business.address }}{% endif %}<br>
+        {% if business.phone %}Tel: {{ business.phone }} · {% endif %}{{ business.email }}<br>
+        {% if business.tax_registration_number %}Tax Reg. No: {{ business.tax_registration_number }}{% endif %}
+      </div>
+    </td>
+    <td class="r">
+      <h1>PURCHASE ORDER</h1>
+      <div><strong>{{ purchase.purchase_number }}</strong></div>
+      <div class="muted">Date: {{ purchase.purchase_date }}</div>
+      {% if purchase.due_date %}<div class="muted">Expected by: {{ purchase.due_date }}</div>{% endif %}
+      <div style="margin-top:6px"><span class="status-pill">{{ purchase.get_status_display }}</span></div>
+    </td>
+  </tr>
+</table>
+
+<table style="margin-top:14px">
+  <tr><td>
+    <div class="muted">SUPPLIER</div>
+    <strong>{{ purchase.supplier.name }}</strong><br>
+    <span class="muted">
+      {% if purchase.supplier.contact_person %}Attn: {{ purchase.supplier.contact_person }}<br>{% endif %}
+      {% if purchase.supplier.mobile %}{{ purchase.supplier.mobile }}{% endif %}
+      {% if purchase.supplier.email %} · {{ purchase.supplier.email }}{% endif %}<br>
+      {% if purchase.supplier.address %}{{ purchase.supplier.address }}<br>{% endif %}
+      {% if purchase.supplier.tax_number %}Tax No: {{ purchase.supplier.tax_number }}{% endif %}
+    </span>
+  </td>
+  <td class="r" style="vertical-align:top">
+    <div class="muted">DELIVER TO</div>
+    <strong>{{ purchase.warehouse.name }}</strong><br>
+    <span class="muted">{{ purchase.warehouse.address|default:purchase.branch.address }}</span>
+  </td></tr>
+</table>
+
+<table class="items" style="margin-top:14px">
+  <thead><tr>
+    <th>#</th><th>Item</th><th class="r">Quantity</th>
+    <th class="r">Unit cost</th><th class="r">Total</th>
+  </tr></thead>
+  <tbody>
+    {% for item in items %}
+    <tr>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ item.product_name }}</td>
+      <td class="r">{{ item.quantity_ordered }}</td>
+      <td class="r">{{ item.unit_cost|money_p:business.currency_precision }}</td>
+      <td class="r"><strong>{{ item.line_total|money_p:business.currency_precision }}</strong></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<table style="margin-top:10px">
+  <tr>
+    <td style="width:55%; vertical-align:top">
+      {% if purchase.notes %}<div class="muted">NOTES</div><div class="muted">{{ purchase.notes|linebreaksbr }}</div>{% endif %}
+    </td>
+    <td style="width:45%">
+      <table class="totals">
+        <tr><td>Subtotal</td><td class="r">{{ purchase.subtotal|money_p:business.currency_precision }}</td></tr>
+        {% if purchase.discount_amount %}<tr><td>Discount</td><td class="r">−{{ purchase.discount_amount|money_p:business.currency_precision }}</td></tr>{% endif %}
+        {% if purchase.shipping_cost %}<tr><td>Shipping</td><td class="r">{{ purchase.shipping_cost|money_p:business.currency_precision }}</td></tr>{% endif %}
+        {% if purchase.other_charges %}<tr><td>Other charges</td><td class="r">{{ purchase.other_charges|money_p:business.currency_precision }}</td></tr>{% endif %}
+        <tr class="grand"><td>TOTAL</td><td class="r">{{ purchase.total|money_p:business.currency_precision }} {{ business.currency_display }}</td></tr>
+      </table>
+    </td>
+  </tr>
+</table>
+
+{% if settings_obj.terms_and_conditions %}
+<div class="terms">
+  <strong>Terms &amp; Conditions</strong><br>
+  {{ settings_obj.terms_and_conditions|linebreaksbr }}
+</div>
+{% endif %}
+
+<table class="sig">
+  <tr>
+    <td><div class="line">Authorized by ({{ business.name }})</div></td>
+    <td class="r"><div class="line" style="margin-left:auto">Accepted by supplier</div></td>
+  </tr>
+</table>
+</div>
+</body>
+</html>

@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Sales — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -36,8 +37,8 @@
   <div class="card-header d-flex justify-content-between">
     <span>Invoices</span>
     <span class="small text-secondary">
-      Total: <strong>{{ totals.total|default:0 }}</strong> ·
-      Paid: <strong>{{ totals.paid|default:0 }}</strong> {{ current_business.currency_display }}
+      Total: <strong>{% money totals.total %}</strong> ·
+      Paid: <strong>{% money totals.paid %}</strong> {{ current_business.currency_display }}
     </span>
   </div>
   <div class="table-responsive">
@@ -51,8 +52,8 @@
           <td class="small">{{ s.sale_date|date:"Y-m-d H:i" }}</td>
           <td>{{ s.customer.full_name }}</td>
           <td class="small">{{ s.branch.name }}</td>
-          <td class="text-end fw-semibold">{{ s.total }}</td>
-          <td class="text-end">{{ s.amount_paid }}</td>
+          <td class="text-end fw-semibold">{% money s.total %}</td>
+          <td class="text-end">{% money s.amount_paid %}</td>
           <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
           <td class="text-nowrap">
             <a class="btn btn-sm btn-outline-secondary" title="Receipt" target="_blank" href="{% url 'sales:receipt' s.public_id %}"><i class="bi bi-printer"></i></a>

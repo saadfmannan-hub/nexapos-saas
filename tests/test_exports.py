@@ -67,6 +67,23 @@ class ExportTests(TenantTestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    def test_new_financial_reports_render_and_export(self):
+        for key in ("profit_loss", "cash_flow", "expense_analysis",
+                    "customer_sales"):
+            response = self.client.get(reverse("reports:view", args=[key]))
+            self.assertEqual(response.status_code, 200, key)
+            response = self.client.get(
+                reverse("reports:view", args=[key]) + "?export=csv")
+            self.assertEqual(response.status_code, 200, key)
+
+    def test_profit_loss_net_matches_components(self):
+        from decimal import Decimal as D
+
+        response = self.client.get(reverse("reports:view", args=["profit_loss"]))
+        rows = {r[0]: r[1] for r in response.context["data"]["rows"] if r[0]}
+        self.assertEqual(rows["GROSS PROFIT"], D("12.000"))
+        self.assertEqual(rows["ESTIMATED NET PROFIT"], D("12.000"))
+
     def test_dashboard_renders_with_real_data(self):
         response = self.client.get(reverse("dashboard"))
         self.assertEqual(response.status_code, 200)

@@ -206,6 +206,144 @@ def purchase_return(request, public_id):
     return redirect("purchases:detail", public_id=public_id)
 
 
+# ---------------------------------------------------------------------------
+# Purchase order documents: print / PDF / supplier share link / email
+# ---------------------------------------------------------------------------
+PO_SHARE_SALT = "purchase-order-share"
+PO_SHARE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+
+def _po_context(purchase, **extra):
+    return {
+        "purchase": purchase,
+        "items": purchase.items.all(),
+        "business": purchase.business,
+        "settings_obj": purchase.business.settings,
+        **extra,
+    }
+
+
+@require_permission("purchases.view")
+def purchase_print(request, public_id):
+    purchase = get_tenant_object(
+        Purchase.objects.select_related("supplier", "warehouse", "branch", "business"),
+        request.business, public_id=public_id,
+    )
+    from django.shortcuts import render as _render
+
+    return _render(request, "invoices/purchase_order.html", _po_context(purchase))
+
+
+@require_permission("purchases.view")
+def purchase_pdf(request, public_id):
+    from django.http import HttpResponse
+
+    from apps.reports.pdf import render_pdf
+
+    purchase = get_tenant_object(
+        Purchase.objects.select_related("supplier", "warehouse", "branch", "business"),
+        request.business, public_id=public_id,
+    )
+    pdf = render_pdf("invoices/purchase_order.html",
+                     _po_context(purchase, pdf_mode=True))
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="PO-{purchase.purchase_number}.pdf"'
+    )
+    return response
+
+
+@require_permission("purchases.view")
+def purchase_share(request, public_id):
+    """Generate (and display) a time-limited signed link the supplier can
+    open without an account. The token is unguessable and tenant-bound."""
+    from django.core import signing
+
+    from apps.audit import services as audit
+
+    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    token = signing.dumps({"po": str(purchase.public_id)}, salt=PO_SHARE_SALT)
+    share_url = request.build_absolute_uri(f"/purchases/shared/{token}/")
+    if request.method == "POST":
+        audit.log("purchase.share_link", request=request, module="purchases",
+                  obj=purchase,
+                  description=f"Share link generated for {purchase.purchase_number}.")
+    from django.shortcuts import render as _render
+
+    return _render(request, "purchases/share.html", {
+        "purchase": purchase, "share_url": share_url,
+        "days": PO_SHARE_MAX_AGE // 86400, "active_nav": "purchases",
+    })
+
+
+def purchase_shared(request, token):
+    """Public supplier view of a purchase order (signed, time-limited)."""
+    from django.core import signing
+    from django.http import Http404
+    from django.shortcuts import render as _render
+
+    try:
+        data = signing.loads(token, salt=PO_SHARE_SALT, max_age=PO_SHARE_MAX_AGE)
+    except signing.BadSignature:
+        raise Http404
+    try:
+        purchase = Purchase.objects.select_related(
+            "supplier", "warehouse", "branch", "business"
+        ).get(public_id=data.get("po"))
+    except (Purchase.DoesNotExist, ValueError):
+        raise Http404
+    return _render(request, "invoices/purchase_order.html",
+                   _po_context(purchase, shared_mode=True))
+
+
+@require_permission("purchases.view")
+def purchase_email(request, public_id):
+    """Email the PO PDF to the supplier (or a provided address)."""
+    from django.core import signing
+    from django.core.mail import EmailMessage
+
+    from apps.audit import services as audit
+    from apps.reports.pdf import render_pdf
+
+    purchase = get_tenant_object(
+        Purchase.objects.select_related("supplier", "business"),
+        request.business, public_id=public_id,
+    )
+    if request.method != "POST":
+        return redirect("purchases:detail", public_id=public_id)
+    to_email = (request.POST.get("email") or purchase.supplier.email or "").strip()
+    if not to_email:
+        messages.error(request, "The supplier has no email address — enter one "
+                                "in the email field or on the supplier profile.")
+        return redirect("purchases:detail", public_id=public_id)
+
+    token = signing.dumps({"po": str(purchase.public_id)}, salt=PO_SHARE_SALT)
+    share_url = request.build_absolute_uri(f"/purchases/shared/{token}/")
+    pdf = render_pdf("invoices/purchase_order.html",
+                     _po_context(purchase, pdf_mode=True))
+    email = EmailMessage(
+        subject=f"Purchase Order {purchase.purchase_number} from "
+                f"{request.business.name}",
+        body=(f"Dear {purchase.supplier.contact_person or purchase.supplier.name},\n\n"
+              f"Please find attached purchase order {purchase.purchase_number} "
+              f"dated {purchase.purchase_date}.\n\n"
+              f"You can also view it online: {share_url}\n\n"
+              f"Regards,\n{request.business.name}"),
+        to=[to_email],
+    )
+    email.attach(f"PO-{purchase.purchase_number}.pdf", pdf, "application/pdf")
+    try:
+        email.send(fail_silently=False)
+        audit.log("purchase.emailed", request=request, module="purchases",
+                  obj=purchase,
+                  description=f"PO {purchase.purchase_number} emailed to {to_email}.")
+        messages.success(request, f"Purchase order emailed to {to_email}.")
+    except Exception:
+        messages.error(request, "Email could not be sent — check the email "
+                                "settings (EMAIL_HOST) on the server.")
+    return redirect("purchases:detail", public_id=public_id)
+
+
 @require_permission("purchases.manage")
 def purchase_cancel(request, public_id):
     purchase = get_tenant_object(Purchase, request.business, public_id=public_id)

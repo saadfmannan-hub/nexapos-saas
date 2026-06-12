@@ -88,11 +88,11 @@ def product_form(request, public_id=None):
     if public_id:
         instance = get_tenant_object(Product, request.business, public_id=public_id)
     else:
-        try:
-            subscriptions.check_limit(request.business, "products")
-        except (subscriptions.LimitExceeded, subscriptions.SubscriptionInactive) as exc:
-            messages.warning(request, str(exc))
-            return redirect("catalog:product_list")
+        from apps.subscriptions.helpers import guard_limit
+
+        blocked = guard_limit(request, "products")
+        if blocked:
+            return blocked
 
     form = ProductForm(request.business, request.POST or None,
                        request.FILES or None, instance=instance)

@@ -5,6 +5,7 @@ from apps.audit import services as audit
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.helpers import guard_limit
 
 from .forms import BranchForm, WarehouseForm
 from .models import Branch, Warehouse
@@ -32,11 +33,9 @@ def branch_form(request, public_id=None):
     if public_id:
         instance = get_tenant_object(Branch, request.business, public_id=public_id)
     else:
-        try:
-            subscriptions.check_limit(request.business, "branches")
-        except (subscriptions.LimitExceeded, subscriptions.SubscriptionInactive) as exc:
-            messages.warning(request, str(exc))
-            return redirect("branches:list")
+        blocked = guard_limit(request, "branches")
+        if blocked:
+            return blocked
 
     form = BranchForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
@@ -57,11 +56,9 @@ def warehouse_form(request, public_id=None):
     if public_id:
         instance = get_tenant_object(Warehouse, request.business, public_id=public_id)
     else:
-        try:
-            subscriptions.check_limit(request.business, "warehouses")
-        except (subscriptions.LimitExceeded, subscriptions.SubscriptionInactive) as exc:
-            messages.warning(request, str(exc))
-            return redirect("branches:list")
+        blocked = guard_limit(request, "warehouses")
+        if blocked:
+            return blocked
 
     form = WarehouseForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():

@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Shift report — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -31,27 +32,27 @@
         <tr><th>Cashier</th><td>{{ shift.cashier.full_name }}</td></tr>
         <tr><th>Opened</th><td>{{ shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
         {% if shift.closed_at %}<tr><th>Closed</th><td>{{ shift.closed_at|date:"Y-m-d H:i" }}</td></tr>{% endif %}
-        <tr><th>Opening cash</th><td>{{ shift.opening_cash }}</td></tr>
-        <tr><th>+ Cash sales</th><td>{{ totals.cash_sales }}</td></tr>
-        <tr><th>+ Cash collections</th><td>{{ totals.customer_collections_cash }}</td></tr>
-        <tr><th>− Cash refunds</th><td>{{ totals.cash_refunds }}</td></tr>
-        <tr><th>− Cash expenses</th><td>{{ totals.cash_expenses }}</td></tr>
-        <tr class="table-light fw-bold"><th>Expected cash</th><td>{{ totals.expected_cash }}</td></tr>
+        <tr><th>Opening cash</th><td>{% money shift.opening_cash %}</td></tr>
+        <tr><th>+ Cash sales</th><td>{% money totals.cash_sales %}</td></tr>
+        <tr><th>+ Cash collections</th><td>{% money totals.customer_collections_cash %}</td></tr>
+        <tr><th>− Cash refunds</th><td>{% money totals.cash_refunds %}</td></tr>
+        <tr><th>− Cash expenses</th><td>{% money totals.cash_expenses %}</td></tr>
+        <tr class="table-light fw-bold"><th>Expected cash</th><td>{% money totals.expected_cash %}</td></tr>
         {% if shift.actual_cash is not None %}
-        <tr><th>Actual cash</th><td>{{ shift.actual_cash }}</td></tr>
+        <tr><th>Actual cash</th><td>{% money shift.actual_cash %}</td></tr>
         <tr class="fw-bold {% if shift.difference < 0 %}table-danger{% elif shift.difference > 0 %}table-warning{% else %}table-success{% endif %}">
-          <th>Difference</th><td>{{ shift.difference }}</td></tr>
+          <th>Difference</th><td>{% money shift.difference %}</td></tr>
         {% endif %}
       </table>
     </div></div>
     <div class="card mt-3"><div class="card-header">Sales by payment type</div><div class="card-body">
       <table class="table table-sm mb-0">
-        <tr><th>Cash</th><td class="text-end">{{ totals.cash_sales }}</td></tr>
-        <tr><th>Card</th><td class="text-end">{{ totals.card_sales }}</td></tr>
-        <tr><th>Bank transfer</th><td class="text-end">{{ totals.bank_sales }}</td></tr>
-        <tr><th>Customer credit</th><td class="text-end">{{ totals.credit_sales }}</td></tr>
-        <tr><th>Store credit</th><td class="text-end">{{ totals.store_credit_used }}</td></tr>
-        <tr><th>Other</th><td class="text-end">{{ totals.other_sales }}</td></tr>
+        <tr><th>Cash</th><td class="text-end">{% money totals.cash_sales %}</td></tr>
+        <tr><th>Card</th><td class="text-end">{% money totals.card_sales %}</td></tr>
+        <tr><th>Bank transfer</th><td class="text-end">{% money totals.bank_sales %}</td></tr>
+        <tr><th>Customer credit</th><td class="text-end">{% money totals.credit_sales %}</td></tr>
+        <tr><th>Store credit</th><td class="text-end">{% money totals.store_credit_used %}</td></tr>
+        <tr><th>Other</th><td class="text-end">{% money totals.other_sales %}</td></tr>
       </table>
     </div></div>
   </div>

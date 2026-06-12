@@ -1,0 +1,28 @@
+{% extends "layouts/base.html" %}
+{% block title %}Share PO {{ purchase.purchase_number }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-6">
+  <div class="card">
+    <div class="card-header">Share purchase order {{ purchase.purchase_number }}</div>
+    <div class="card-body">
+      <p class="small text-secondary">
+        Anyone with this link can view the purchase order (no login needed).
+        The link is cryptographically signed and expires after {{ days }} days.
+      </p>
+      <div class="input-group mb-3">
+        <input id="share-url" class="form-control" readonly value="{{ share_url }}">
+        <button class="btn btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('share-url').value); this.innerHTML='<i class=\'bi bi-check\'></i> Copied'">
+          <i class="bi bi-clipboard"></i> Copy</button>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-outline-success btn-sm" target="_blank"
+           href="https://wa.me/?text={{ share_url|urlencode }}">
+          <i class="bi bi-whatsapp"></i> Share via WhatsApp</a>
+        <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ share_url }}">
+          <i class="bi bi-box-arrow-up-right"></i> Preview</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{% url 'purchases:detail' purchase.public_id %}">Back</a>
+      </div>
+    </div>
+  </div>
+</div></div>
+{% endblock %}

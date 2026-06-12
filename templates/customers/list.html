@@ -1,11 +1,12 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Customers — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Customers</h1>
   <div class="d-flex gap-2 align-items-center">
     <span class="badge text-bg-light border">Outstanding receivables:
-      <strong>{{ receivables }} {{ current_business.currency_display }}</strong></span>
+      <strong>{% money receivables symbol=1 %}</strong></span>
     {% if "customers.manage" in business_perms %}
     <a href="{% url 'customers:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
     {% endif %}
@@ -41,9 +42,9 @@
           {% if c.is_walk_in %}<span class="badge text-bg-secondary ms-1">Walk-in</span>{% endif %}</td>
         <td class="small">{{ c.code }}</td>
         <td class="small">{{ c.mobile|default:"—" }}</td>
-        <td class="text-end {% if c.balance > 0 %}text-danger fw-semibold{% endif %}">{{ c.balance }}</td>
-        <td class="text-end">{{ c.store_credit }}</td>
-        <td class="text-end text-secondary">{{ c.credit_limit }}</td>
+        <td class="text-end {% if c.balance > 0 %}text-danger fw-semibold{% endif %}">{% money c.balance %}</td>
+        <td class="text-end">{% money c.store_credit %}</td>
+        <td class="text-end text-secondary">{% money c.credit_limit %}</td>
         <td>{% if c.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
         <td class="text-nowrap">
           {% if "customers.manage" in business_perms and not c.is_walk_in %}

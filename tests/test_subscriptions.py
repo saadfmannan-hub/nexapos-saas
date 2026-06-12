@@ -33,12 +33,58 @@ class LimitTests(TenantTestCase):
         self.plan.save()
         subscriptions.check_limit(self.business_a, "products")  # no raise
 
-    def test_branch_create_view_respects_limit(self):
+    def test_branch_create_view_shows_upgrade_page(self):
         self.plan.max_branches = 1
         self.plan.save()
         self.client.force_login(self.owner_a)
-        response = self.client.get(reverse("branches:branch_create"), follow=True)
-        self.assertContains(response, "Upgrade your plan")
+        response = self.client.get(reverse("branches:branch_create"))
+        self.assertContains(response, "Branches limit reached")
+        self.assertContains(response, "View plans")
+
+    def test_branch_create_post_blocked_when_over_limit(self):
+        """Bug #5 — limits must BLOCK creation, not just highlight red."""
+        from apps.branches.models import Branch
+
+        self.plan.max_branches = 1
+        self.plan.save()
+        self.client.force_login(self.owner_a)
+        before = Branch.objects.for_business(self.business_a).count()
+        response = self.client.post(reverse("branches:branch_create"), {
+            "name": "Sneaky Branch", "code": "SNK", "address": "", "phone": "",
+            "email": "", "invoice_prefix": "", "receipt_footer": "",
+            "is_active": "on",
+        })
+        self.assertContains(response, "limit reached")
+        self.assertEqual(Branch.objects.for_business(self.business_a).count(), before)
+
+    def test_user_create_post_blocked_when_over_limit(self):
+        from apps.accounts.models import Membership
+
+        self.plan.max_users = 2  # owner + cashier already exist
+        self.plan.save()
+        self.client.force_login(self.owner_a)
+        before = Membership.objects.for_business(self.business_a).count()
+        role = self.business_a.roles.get(name="Cashier")
+        response = self.client.post(reverse("accounts:user_create"), {
+            "full_name": "Extra", "email": "extra@example.com", "phone": "",
+            "password": "StrongPass123!", "role": role.id, "is_active": "on",
+        })
+        self.assertContains(response, "Users limit reached")
+        self.assertEqual(
+            Membership.objects.for_business(self.business_a).count(), before)
+
+    def test_warehouse_create_blocked_when_over_limit(self):
+        from apps.branches.models import Warehouse
+
+        self.plan.max_warehouses = 1
+        self.plan.save()
+        self.client.force_login(self.owner_a)
+        response = self.client.post(reverse("branches:warehouse_create"), {
+            "name": "Extra WH", "code": "XWH", "branch": self.branch_a.id,
+        })
+        self.assertContains(response, "Warehouses limit reached")
+        self.assertFalse(Warehouse.objects.for_business(self.business_a).filter(
+            code="XWH").exists())
 
     def test_monthly_invoice_limit(self):
         self.allow_no_shift()

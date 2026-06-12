@@ -1,7 +1,9 @@
 # Development Progress
 
-**Current phase:** 10/10 complete — commercially ready core delivered.
-**Test status:** 95/95 automated tests passing; full-page smoke test
+**Current phase:** v1.1 — production-ready upgrade sprint complete
+(all 6 reported bugs fixed, premium dashboard, PO documents, new
+financial reports). See CHANGELOG.md → 1.1.0.
+**Test status:** 112/112 automated tests passing; full-page smoke test
 passing (all major pages return 200 with demo data).
 
 ## Completed features

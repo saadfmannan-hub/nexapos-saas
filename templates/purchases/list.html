@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Purchases — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -35,9 +36,9 @@
         <td>{{ p.supplier.name }}</td>
         <td class="small">{{ p.purchase_date }}</td>
         <td class="small">{{ p.warehouse.name }}</td>
-        <td class="text-end">{{ p.total }}</td>
-        <td class="text-end">{{ p.amount_paid }}</td>
-        <td class="text-end {% if p.outstanding > 0 %}text-danger{% endif %}">{{ p.outstanding }}</td>
+        <td class="text-end">{% money p.total %}</td>
+        <td class="text-end">{% money p.amount_paid %}</td>
+        <td class="text-end {% if p.outstanding > 0 %}text-danger{% endif %}">{% money p.outstanding %}</td>
         <td><span class="badge badge-status bs-{{ p.status }}">{{ p.get_status_display }}</span></td>
       </tr>
       {% empty %}

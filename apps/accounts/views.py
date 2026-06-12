@@ -156,14 +156,11 @@ def user_list(request):
 
 @require_permission("users.manage")
 def user_create(request):
-    try:
-        subscriptions.check_limit(request.business, "users")
-    except subscriptions.LimitExceeded as exc:
-        messages.warning(request, str(exc))
-        return redirect("accounts:user_list")
-    except subscriptions.SubscriptionInactive as exc:
-        messages.error(request, str(exc))
-        return redirect("accounts:user_list")
+    from apps.subscriptions.helpers import guard_limit
+
+    blocked = guard_limit(request, "users")
+    if blocked:
+        return blocked
 
     form = EmployeeForm(request.business, request.POST or None)
     if request.method == "POST" and form.is_valid():

@@ -373,6 +373,151 @@ def shifts_report(business, f):
             "rows": rows, "totals": None}
 
 
+def profit_loss(business, f):
+    """Profit & Loss: revenue → COGS → gross profit → expenses by
+    category → estimated net profit."""
+    from apps.expenses.models import Expense
+
+    sales = _sales_base(business, f).aggregate(
+        revenue=Sum("subtotal"), cost=Sum("total_cost"),
+        profit=Sum("gross_profit"), tax=Sum("tax_amount"),
+        discount=Sum("discount_amount"))
+    exp_qs = Expense.objects.for_business(business).exclude(
+        status__in=["rejected", "cancelled"])
+    if f.get("date_from"):
+        exp_qs = exp_qs.filter(expense_date__gte=f["date_from"])
+    if f.get("date_to"):
+        exp_qs = exp_qs.filter(expense_date__lte=f["date_to"])
+    if f.get("branch_id"):
+        exp_qs = exp_qs.filter(branch_id=f["branch_id"])
+    by_category = exp_qs.values("category__name").annotate(
+        t=Sum("amount")).order_by("-t")
+
+    revenue = sales["revenue"] or ZERO
+    cost = sales["cost"] or ZERO
+    gross = sales["profit"] or ZERO
+    rows = [
+        ["INCOME", ""],
+        ["Revenue (net of tax)", revenue],
+        ["Sales discounts given", -(sales["discount"] or ZERO)],
+        ["Cost of goods sold", -cost],
+        ["GROSS PROFIT", gross],
+        ["", ""],
+        ["OPERATING EXPENSES", ""],
+    ]
+    total_expenses = ZERO
+    for row in by_category:
+        rows.append([f"  {row['category__name']}", -(row["t"] or ZERO)])
+        total_expenses += row["t"] or ZERO
+    rows += [
+        ["Total operating expenses", -total_expenses],
+        ["", ""],
+        ["ESTIMATED NET PROFIT", gross - total_expenses],
+    ]
+    return {"columns": ["Line", "Amount"], "rows": rows, "totals": None}
+
+
+def cash_flow(business, f):
+    """Cash in (sale payments + collections) vs cash out (supplier
+    payments, expenses, cash refunds), grouped by payment kind."""
+    from apps.customers.models import CustomerPayment
+    from apps.expenses.models import Expense
+    from apps.sales.models import SalePayment, SaleReturn
+    from apps.suppliers.models import SupplierPayment
+
+    def ranged(qs, field):
+        if f.get("date_from"):
+            qs = qs.filter(**{f"{field}__gte": f["date_from"]})
+        if f.get("date_to"):
+            qs = qs.filter(**{f"{field}__lte": f["date_to"]})
+        return qs
+
+    sale_pay = (
+        ranged(SalePayment.objects.for_business(business), "created_at__date")
+        .exclude(method__kind__in=["customer_credit", "store_credit"])
+        .values("method__name").annotate(t=Sum("amount")).order_by("-t")
+    )
+    collections = ranged(
+        CustomerPayment.objects.for_business(business).filter(kind="collection"),
+        "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
+    supplier_pay = ranged(
+        SupplierPayment.objects.for_business(business),
+        "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
+    expenses = ranged(
+        Expense.objects.for_business(business)
+        .exclude(status__in=["rejected", "cancelled"]),
+        "expense_date").aggregate(t=Sum("amount"))["t"] or ZERO
+    refunds = ranged(
+        SaleReturn.objects.for_business(business)
+        .filter(refund_method__in=["cash", "card", "bank"]),
+        "created_at__date").aggregate(t=Sum("refund_amount"))["t"] or ZERO
+
+    rows = [["CASH IN", ""]]
+    total_in = ZERO
+    for row in sale_pay:
+        rows.append([f"  Sales — {row['method__name']}", row["t"] or ZERO])
+        total_in += row["t"] or ZERO
+    rows.append(["  Customer collections", collections])
+    total_in += collections
+    rows += [
+        ["Total in", total_in],
+        ["", ""],
+        ["CASH OUT", ""],
+        ["  Supplier payments", -supplier_pay],
+        ["  Expenses", -expenses],
+        ["  Refunds paid out", -refunds],
+        ["Total out", -(supplier_pay + expenses + refunds)],
+        ["", ""],
+        ["NET CASH FLOW", total_in - supplier_pay - expenses - refunds],
+    ]
+    return {"columns": ["Line", "Amount"], "rows": rows, "totals": None}
+
+
+def expense_analysis(business, f):
+    from apps.expenses.models import Expense
+
+    qs = Expense.objects.for_business(business).exclude(
+        status__in=["rejected", "cancelled"])
+    if f.get("date_from"):
+        qs = qs.filter(expense_date__gte=f["date_from"])
+    if f.get("date_to"):
+        qs = qs.filter(expense_date__lte=f["date_to"])
+    if f.get("branch_id"):
+        qs = qs.filter(branch_id=f["branch_id"])
+    data = qs.values("category__name").annotate(
+        count=Count("id"), total=Sum("amount"), avg=Avg("amount")
+    ).order_by("-total")
+    grand = sum((r["total"] or ZERO) for r in data)
+    rows = []
+    for r in data:
+        share = (r["total"] / grand * 100) if grand else ZERO
+        rows.append([r["category__name"], r["count"], r["total"],
+                     round(r["avg"] or 0, 3), f"{share:.1f}%"])
+    return {"columns": ["Category", "Count", "Total", "Average", "Share"],
+            "rows": rows,
+            "totals": ["TOTAL", sum(r[1] for r in rows), grand, "", "100%"]
+                      if rows else None}
+
+
+def customer_sales(business, f):
+    qs = (
+        _sales_base(business, f)
+        .values("customer__full_name", "customer__code")
+        .annotate(invoices=Count("id"), total=Sum("total"),
+                  paid=Sum("amount_paid"), profit=Sum("gross_profit"))
+        .order_by("-total")
+    )
+    rows = [[r["customer__full_name"], r["customer__code"], r["invoices"],
+             r["total"], r["paid"], (r["total"] or ZERO) - (r["paid"] or ZERO),
+             r["profit"]] for r in qs[:1000]]
+    totals = ["TOTAL", "", sum(r[2] for r in rows),
+              sum((r[3] or ZERO) for r in rows), sum((r[4] or ZERO) for r in rows),
+              sum((r[5] or ZERO) for r in rows), sum((r[6] or ZERO) for r in rows)]
+    return {"columns": ["Customer", "Code", "Invoices", "Total", "Paid",
+                        "Balance", "Gross profit"],
+            "rows": rows, "totals": totals if rows else None}
+
+
 # Registry: key -> (title, function, default_permission)
 REPORTS = {
     "sales_summary": ("Daily sales summary", sales_summary, "reports.view"),
@@ -385,6 +530,10 @@ REPORTS = {
     "returns": ("Sales returns", returns_report, "reports.view"),
     "tax": ("Sales tax report", tax_report, "reports.financial"),
     "profit": ("Profit summary (estimated)", profit_summary, "reports.financial"),
+    "profit_loss": ("Profit & Loss (estimated)", profit_loss, "reports.financial"),
+    "cash_flow": ("Cash flow", cash_flow, "reports.financial"),
+    "expense_analysis": ("Expense analysis", expense_analysis, "reports.financial"),
+    "customer_sales": ("Sales by customer", customer_sales, "reports.view"),
     "current_stock": ("Current stock & valuation", current_stock, "reports.view"),
     "low_stock": ("Low stock / reorder", low_stock, "reports.view"),
     "stock_movements": ("Stock movements", stock_movements_report, "reports.view"),
@@ -398,10 +547,12 @@ REPORTS = {
 
 REPORT_GROUPS = [
     ("Sales", ["sales_summary", "sales_detailed", "product_sales", "category_sales",
-               "cashier_sales", "payment_methods", "voids", "returns", "tax"]),
+               "customer_sales", "cashier_sales", "payment_methods", "voids",
+               "returns", "tax"]),
     ("Inventory", ["current_stock", "low_stock", "stock_movements"]),
     ("Purchasing", ["purchases", "supplier_balances"]),
     ("Customers", ["receivables", "top_customers"]),
-    ("Financial", ["profit", "expenses"]),
+    ("Financial", ["profit_loss", "cash_flow", "expense_analysis", "profit",
+                   "expenses"]),
     ("Registers", ["shifts"]),
 ]

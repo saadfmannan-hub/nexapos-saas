@@ -76,6 +76,17 @@
             </template>
           </button>
           <div class="dropdown-menu p-2 w-100">
+            <template x-if="recentCustomers.length">
+              <div class="mb-1">
+                <div class="small fw-bold text-secondary px-1">Recent</div>
+                <template x-for="c in recentCustomers" :key="'r' + c.id">
+                  <button class="dropdown-item small py-1" @click="selectCustomer(c)">
+                    <i class="bi bi-clock-history me-1 text-secondary"></i><span x-text="c.name"></span>
+                  </button>
+                </template>
+                <hr class="my-1">
+              </div>
+            </template>
             <input type="search" class="form-control form-control-sm mb-2" placeholder="Search customers…"
                    x-model="customerSearch" @input.debounce.300ms="searchCustomers()" @click.stop>
             <template x-for="c in customerResults" :key="c.id">
@@ -134,9 +145,14 @@
         <div class="d-flex justify-content-between small"><span>Subtotal (excl. tax)</span><span x-text="fmt(totals.base)"></span></div>
         <div class="d-flex justify-content-between small"><span>Tax</span><span x-text="fmt(totals.tax)"></span></div>
         {% if can_discount %}
-        <div class="d-flex justify-content-between small align-items-center my-1">
+        <div class="d-flex justify-content-between small align-items-center my-1 gap-1">
           <span>Invoice discount</span>
-          <input type="number" step="any" min="0" class="form-control form-control-sm text-end" style="width:110px"
+          <div class="btn-group btn-group-sm">
+            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(5)" title="5% off">5%</button>
+            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(10)" title="10% off">10%</button>
+            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="invoiceDiscount = 0" title="Clear">×</button>
+          </div>
+          <input type="number" step="any" min="0" class="form-control form-control-sm text-end" style="width:100px"
                  x-model="invoiceDiscount">
         </div>
         {% endif %}
@@ -192,9 +208,13 @@
                 <button class="btn btn-sm btn-outline-danger" @click="payments.splice(i,1)"><i class="bi bi-x"></i></button>
               </div>
             </template>
-            <div class="d-flex gap-2 mb-3">
+            <div class="d-flex gap-2 mb-2 flex-wrap">
               <button class="btn btn-sm btn-outline-primary" @click="addPayment()"><i class="bi bi-plus"></i> Split payment</button>
               <button class="btn btn-sm btn-outline-secondary" @click="exactCash()">Exact amount</button>
+              <template x-for="amt in cashSuggestions" :key="amt">
+                <button class="btn btn-sm btn-outline-success" @click="quickCash(amt)"
+                        x-text="fmt(amt)" title="Quick cash tender"></button>
+              </template>
             </div>
             <div class="alert alert-danger py-2 small" x-show="payError" x-text="payError"></div>
             <button class="btn btn-success w-100 btn-pos-pay" @click="checkout()" :disabled="busy">
@@ -261,6 +281,7 @@ function pos() {
     cart: [], invoiceDiscount: 0, notes: '', busy: false, payError: '',
     customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0},
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
+    recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
     payments: [], lastSale: {}, heldSales: [], heldCount: {{ held_sales|length }},
     resumedHeldId: null,
 
@@ -313,18 +334,51 @@ function pos() {
           else { base += gross; tax += gross * rate; }
         } else base += gross;
       });
-      const total = Math.max(0, base + tax - (+this.invoiceDiscount || 0));
+      // Round the grand total to the business currency precision — this is
+      // exactly what the server charges (it stores the delta as rounding),
+      // so "Exact amount" and Remaining=0 always validate.
+      const raw = Math.max(0, base + tax - (+this.invoiceDiscount || 0));
+      const total = parseFloat(raw.toFixed(PREC));
       return {base, tax, discount: lineDisc + (+this.invoiceDiscount || 0), total};
     },
-    get paidTotal() { return this.payments.reduce((s, p) => s + (+p.amount || 0), 0); },
-    get remaining() { return this.totals.total - this.paidTotal; },
-    get changeDue() { return Math.max(0, this.paidTotal - this.totals.total); },
+    get paidTotal() {
+      return parseFloat(this.payments.reduce((s, p) => s + (+p.amount || 0), 0).toFixed(PREC));
+    },
+    get remaining() {
+      return parseFloat((this.totals.total - this.paidTotal).toFixed(PREC));
+    },
+    get changeDue() {
+      return Math.max(0, parseFloat((this.paidTotal - this.totals.total).toFixed(PREC)));
+    },
 
     async searchCustomers() {
       const r = await fetch("{% url 'sales:pos_customers' %}?q=" + encodeURIComponent(this.customerSearch));
       this.customerResults = (await r.json()).results;
     },
-    selectCustomer(c) { this.customer = c; },
+    selectCustomer(c) {
+      this.customer = c;
+      if (!c.is_walk_in) {
+        this.recentCustomers = [c, ...this.recentCustomers.filter(r => r.id !== c.id)].slice(0, 5);
+        localStorage.setItem('pos_recent_customers', JSON.stringify(this.recentCustomers));
+      }
+    },
+    quickDiscount(pct) {
+      let gross = 0;
+      this.cart.forEach(l => { gross += this.lineTotal(l); });
+      this.invoiceDiscount = (gross * pct / 100).toFixed(PREC);
+    },
+    get cashSuggestions() {
+      // Common round tender amounts above the total (e.g. 31.40 → 32, 35, 40)
+      const t = this.totals.total;
+      if (t <= 0) return [];
+      const ups = [Math.ceil(t), Math.ceil(t / 5) * 5, Math.ceil(t / 10) * 10];
+      return [...new Set(ups)].filter(v => v > t).slice(0, 3);
+    },
+    quickCash(amount) {
+      if (this.payments.length) {
+        this.payments[0].amount = (+amount).toFixed(PREC);
+      }
+    },
     async quickCustomer() {
       const body = new FormData();
       body.append('name', this.newCustomer.name); body.append('mobile', this.newCustomer.mobile);

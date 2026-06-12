@@ -11,7 +11,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
-from apps.core.money import D, money
+from apps.core.money import D, money, round_to_precision
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
@@ -193,8 +193,18 @@ def complete_sale(
                     f"Total discount {pct:.1f}% exceeds the allowed maximum of {cap}%."
                 )
 
-    total = money(subtotal + tax_total - invoice_discount)
-    precision_total = money(total)
+    # Grand total is rounded to the business's display precision so that
+    # what the cashier sees IS the amount owed (no hidden 3rd decimal that
+    # would make an exact payment look insufficient). The delta is stored
+    # on the sale as `rounding`.
+    raw_total = money(subtotal + tax_total - invoice_discount)
+    if settings_obj.price_rounding == "nearest":
+        precision_total = money(
+            round_to_precision(raw_total, business.currency_precision)
+        )
+    else:
+        precision_total = raw_total
+    rounding_delta = money(precision_total - raw_total)
 
     # ---- payments --------------------------------------------------------
     pay_total = ZERO
@@ -268,6 +278,7 @@ def complete_sale(
         subtotal=money(subtotal),
         discount_amount=total_discount,
         tax_amount=money(tax_total),
+        rounding=rounding_delta,
         total=precision_total,
         amount_paid=money(pay_total - change_due - credit_amount),
         change_due=change_due,

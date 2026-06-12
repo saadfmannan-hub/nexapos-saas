@@ -54,6 +54,14 @@ def stock_list(request):
     paginator = Paginator(qs, 30)
     page_obj = paginator.get_page(request.GET.get("page"))
     show_cost = request.membership.has_perm("cost.view")
+    if show_cost:
+        from apps.core.money import money as money_q
+
+        for lvl in page_obj:
+            target = lvl.variant or lvl.product
+            lvl.unit_cost = target.average_cost or getattr(
+                target, "purchase_price", 0)
+            lvl.stock_value = money_q(lvl.quantity * lvl.unit_cost)
 
     from apps.branches.models import Warehouse
 

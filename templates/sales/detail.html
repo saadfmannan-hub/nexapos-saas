@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}{{ sale.invoice_number }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -31,11 +32,11 @@
           <tr>
             <td>{{ item.product_name }}<br><span class="small text-secondary">{{ item.sku }}</span></td>
             <td class="text-end">{{ item.quantity }}</td>
-            <td class="text-end">{{ item.unit_price }}</td>
-            <td class="text-end">{{ item.discount_amount }}</td>
-            <td class="text-end">{{ item.tax_amount }}</td>
-            <td class="text-end fw-semibold">{{ item.line_total }}</td>
-            {% if show_profit %}<td class="text-end">{{ item.gross_profit }}</td>{% endif %}
+            <td class="text-end">{% money item.unit_price %}</td>
+            <td class="text-end">{% money item.discount_amount %}</td>
+            <td class="text-end">{% money item.tax_amount %}</td>
+            <td class="text-end fw-semibold">{% money item.line_total %}</td>
+            {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
           </tr>
           {% endfor %}
@@ -71,15 +72,16 @@
         <tr><th>Customer</th><td>{{ sale.customer.full_name }}</td></tr>
         <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
-        <tr><th>Subtotal</th><td>{{ sale.subtotal }}</td></tr>
-        <tr><th>Discount</th><td>{{ sale.discount_amount }}</td></tr>
-        <tr><th>Tax</th><td>{{ sale.tax_amount }}</td></tr>
-        <tr><th>Total</th><td class="fw-bold">{{ sale.total }} {{ current_business.currency_display }}</td></tr>
-        <tr><th>Paid</th><td>{{ sale.amount_paid }}</td></tr>
-        <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{{ sale.balance }}</td></tr>
+        <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
+        <tr><th>Discount</th><td>{% money sale.discount_amount %}</td></tr>
+        <tr><th>Tax</th><td>{% money sale.tax_amount %}</td></tr>
+        {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
+        <tr><th>Total</th><td class="fw-bold">{% money sale.total symbol=1 %}</td></tr>
+        <tr><th>Paid</th><td>{% money sale.amount_paid %}</td></tr>
+        <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>
         {% if show_profit %}
-        <tr><th>Cost</th><td>{{ sale.total_cost }}</td></tr>
-        <tr><th>Gross profit</th><td class="fw-bold text-success">{{ sale.gross_profit }}</td></tr>
+        <tr><th>Cost</th><td>{% money sale.total_cost %}</td></tr>
+        <tr><th>Gross profit</th><td class="fw-bold text-success">{% money sale.gross_profit %}</td></tr>
         {% endif %}
         {% if sale.status == "voided" %}
         <tr><th>Voided by</th><td>{{ sale.voided_by.full_name }} ({{ sale.voided_at|date:"Y-m-d H:i" }})</td></tr>

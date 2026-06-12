@@ -1,10 +1,11 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Inventory — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">Inventory</h1>
   {% if show_cost and total_value is not None %}
-  <span class="badge text-bg-light border fs-6">Stock value: {{ total_value }} {{ current_business.currency_display }}</span>
+  <span class="badge text-bg-light border fs-6">Stock value: {% money total_value symbol=1 %}</span>
   {% endif %}
 </div>
 {% include "inventory/_tabs.html" with tab="stock" %}
@@ -44,10 +45,8 @@
         <td class="text-end fw-semibold {% if level.quantity <= 0 %}text-danger{% elif level.product.reorder_level and level.quantity <= level.product.reorder_level %}text-warning{% endif %}">{{ level.quantity }}</td>
         <td class="text-end text-secondary">{{ level.product.reorder_level }}</td>
         {% if show_cost %}
-        {% with target=level.variant|default:level.product %}
-        <td class="text-end">{{ target.average_cost }}</td>
-        <td class="text-end">{% widthratio level.quantity 1 target.average_cost %}</td>
-        {% endwith %}
+        <td class="text-end">{% money level.unit_cost %}</td>
+        <td class="text-end">{% money level.stock_value %}</td>
         {% endif %}
       </tr>
       {% empty %}
