@@ -13,6 +13,7 @@ router.register("customers", views.CustomerViewSet, basename="customer")
 router.register("sales", views.SaleViewSet, basename="sale")
 
 urlpatterns = [
+    path("v1/health/", views.health, name="health"),
     path("v1/auth/token/", obtain_auth_token, name="token"),
     path("v1/me/", views.me, name="me"),
     path("v1/", include(router.urls)),

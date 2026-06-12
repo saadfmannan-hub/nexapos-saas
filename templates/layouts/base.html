@@ -183,6 +183,10 @@
 <script>
   // Auto-hide toasts
   setTimeout(() => document.querySelectorAll('.toast.show').forEach(t => t.classList.remove('show')), 6000);
+  // PWA: static-assets-only service worker (no financial data is cached)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 </script>
 {% block extra_js %}{% endblock %}
 </body>

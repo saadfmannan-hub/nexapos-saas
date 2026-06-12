@@ -46,7 +46,7 @@
           <td class="fw-semibold">{{ e.expense_number }}</td>
           <td class="small">{{ e.expense_date }}</td>
           <td>{{ e.category.name }}</td>
-          <td class="small">{{ e.payee|default:e.supplier.name|default:"—" }}</td>
+          <td class="small">{% if e.payee %}{{ e.payee }}{% elif e.supplier %}{{ e.supplier.name }}{% else %}—{% endif %}</td>
           <td class="small">{{ e.branch.name }}</td>
           <td class="text-end fw-semibold">{{ e.amount }}</td>
           <td><span class="badge badge-status bs-{{ e.status }}">{{ e.get_status_display }}</span></td>

@@ -37,6 +37,18 @@ def offline(request):
     return render(request, "errors/offline.html")
 
 
+def service_worker(request):
+    """Serve the service worker from the site root so its scope covers '/'."""
+    from django.contrib.staticfiles import finders
+    from django.http import HttpResponse
+
+    path = finders.find("js/sw.js")
+    if not path:
+        raise Http404
+    with open(path, "rb") as f:
+        return HttpResponse(f.read(), content_type="application/javascript")
+
+
 def protected_media(request, path):
     """Serve uploaded files with tenant checks in development.
 

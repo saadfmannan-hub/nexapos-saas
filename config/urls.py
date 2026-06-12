@@ -9,6 +9,7 @@ urlpatterns = [
     path("", core_views.home, name="home"),
     path("dashboard/", report_views.dashboard, name="dashboard"),
     path("manifest.webmanifest", core_views.manifest, name="manifest"),
+    path("sw.js", core_views.service_worker, name="service_worker"),
     path("offline/", core_views.offline, name="offline"),
     path("media/<path:path>", core_views.protected_media, name="protected_media"),
 
