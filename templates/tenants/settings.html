@@ -10,6 +10,10 @@
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Invoices &amp; receipts</div><div class="card-body">
       {% include "components/form_field.html" with field=form.invoice_prefix %}
+      <div class="form-check mb-3">{{ form.invoice_include_branch_code }}
+        <label class="form-check-label" for="{{ form.invoice_include_branch_code.id_for_label }}">
+          Include branch code in invoice numbers</label>
+        <div class="form-text">{{ form.invoice_include_branch_code.help_text }}</div></div>
       {% include "components/form_field.html" with field=form.invoice_footer %}
       {% include "components/form_field.html" with field=form.receipt_footer %}
       {% include "components/form_field.html" with field=form.terms_and_conditions %}

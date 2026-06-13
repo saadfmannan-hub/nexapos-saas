@@ -84,7 +84,15 @@ class BusinessSettings(TimeStampedModel):
     show_tax_on_receipt = models.BooleanField(default=True)
 
     # Invoice / receipt
-    invoice_prefix = models.CharField(max_length=10, default="INV")
+    invoice_prefix = models.CharField(
+        max_length=15, default="INV",
+        help_text="Used for all new invoice/receipt numbers, e.g. INV → INV-2026-000001.",
+    )
+    invoice_include_branch_code = models.BooleanField(
+        default=False,
+        help_text="Append the branch code to invoice numbers "
+                  "(e.g. INV-HK-2026-000001) and number each branch separately.",
+    )
     invoice_footer = models.TextField(blank=True)
     receipt_footer = models.TextField(blank=True, default="Thank you for your business!")
     terms_and_conditions = models.TextField(blank=True)

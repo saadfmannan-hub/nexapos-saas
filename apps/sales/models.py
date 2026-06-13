@@ -39,9 +39,15 @@ class PaymentMethod(TenantModel):
 
 
 class InvoiceSequence(TenantModel):
-    """Concurrency-safe invoice numbering per branch and year."""
+    """Concurrency-safe invoice numbering.
 
-    branch = models.ForeignKey("branches.Branch", on_delete=models.CASCADE)
+    branch is NULL for the global (per-business) scheme and set for the
+    per-branch scheme — controlled by BusinessSettings.invoice_include_branch_code.
+    """
+
+    branch = models.ForeignKey(
+        "branches.Branch", on_delete=models.CASCADE, null=True, blank=True
+    )
     year = models.PositiveIntegerField()
     last_number = models.PositiveIntegerField(default=0)
 
@@ -49,8 +55,14 @@ class InvoiceSequence(TenantModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["business", "branch", "year"],
-                name="uniq_invoice_sequence",
-            )
+                condition=models.Q(branch__isnull=False),
+                name="uniq_invoice_sequence_branch",
+            ),
+            models.UniqueConstraint(
+                fields=["business", "year"],
+                condition=models.Q(branch__isnull=True),
+                name="uniq_invoice_sequence_global",
+            ),
         ]
 
 

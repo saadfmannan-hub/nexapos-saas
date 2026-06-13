@@ -45,7 +45,9 @@ class SaleServiceTests(TenantTestCase):
         s1 = self.make_sale()
         s2 = self.make_sale()
         self.assertNotEqual(s1.invoice_number, s2.invoice_number)
-        self.assertTrue(s1.invoice_number.startswith("HO-"))
+        # Numbering uses the configurable Business Settings prefix (default
+        # "INV"), not the branch's prefix. See tests/test_invoice_prefix.py.
+        self.assertTrue(s1.invoice_number.startswith("INV-"))
         n1 = int(s1.invoice_number.rsplit("-", 1)[1])
         n2 = int(s2.invoice_number.rsplit("-", 1)[1])
         self.assertEqual(n2, n1 + 1)

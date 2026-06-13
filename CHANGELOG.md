@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.3.1 — 2026-06-13 — Fix: invoice prefix from Business Settings
+
+### Fixed
+- **Invoice numbering ignored the configured prefix.** Root cause: in
+  `next_invoice_number`, the per-branch `Branch.invoice_prefix` (e.g. the
+  demo "City Mall" branch = "ML") shadowed `BusinessSettings.invoice_prefix`
+  via `branch.invoice_prefix or settings.invoice_prefix`, so the value set
+  in Business Settings was never reached. New invoices/receipts now always
+  use the configured Business Settings prefix
+  (e.g. `INV` → `INV-2026-000001`).
+- All downstream views read the stored `Sale.invoice_number`, so receipts,
+  A4/PDF invoices, credit sales, returns references, customer statements
+  and reports now show the configured prefix consistently.
+
+### Added
+- **`BusinessSettings.invoice_include_branch_code`** (default off): choose
+  between global numbering (`INV-2026-000001`) and per-branch numbering
+  (`INV-HK-2026-000001`, each branch counted independently). Exposed in
+  Business Settings → Invoices & receipts.
+- `InvoiceSequence.branch` is now nullable to support a single global
+  per-business counter; switching to global continues above any existing
+  per-branch counter for the year so numbers can never collide. Invoice
+  numbers stay unique per business.
+
+### Database migrations
+- `sales/0003` — `InvoiceSequence.branch` nullable; replace the single
+  unique constraint with two conditional ones (branch-scoped + global).
+- `tenants/0002` — add `invoice_include_branch_code`; widen
+  `invoice_prefix` to 15 chars. Additive; **historical invoice numbers are
+  not modified** (they are immutable snapshots on each Sale).
+
+### Test status
+- 183/183 automated tests passing (8 new in
+  `tests/test_invoice_prefix.py`; one POS test updated to the corrected
+  expectation). Verified live: a new sale on the demo DB minted
+  `AK B-000011-2026-000012` (the configured prefix) while historical
+  `ML-`/`HK-` numbers were untouched.
+
 ## 1.3.0 — 2026-06-13 — Phase 2.1: Customer/Product/Inventory data tools
 
 ### Added
