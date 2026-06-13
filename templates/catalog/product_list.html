@@ -29,9 +29,10 @@
     </div>
     <div class="col-md-2">
       <select name="status" class="form-select form-select-sm">
-        <option value="">Any status</option>
-        <option value="active" {% if request.GET.status == "active" %}selected{% endif %}>Active</option>
+        <option value="">Active (default)</option>
         <option value="inactive" {% if request.GET.status == "inactive" %}selected{% endif %}>Inactive</option>
+        <option value="archived" {% if request.GET.status == "archived" %}selected{% endif %}>Archived</option>
+        <option value="all" {% if request.GET.status == "all" %}selected{% endif %}>All</option>
       </select>
     </div>
     <div class="col-auto">
@@ -69,7 +70,9 @@
               <span class="{% if p.total_stock <= p.reorder_level %}text-danger fw-bold{% endif %}">{{ p.total_stock|default:0 }}</span>
             {% else %}<span class="text-secondary">—</span>{% endif %}
           </td>
-          <td>{% if p.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+          <td>{% if p.is_archived %}<span class="badge badge-status bs-closed">Archived</span>
+              {% elif p.is_active %}<span class="badge badge-status bs-active">Active</span>
+              {% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
           <td class="text-nowrap">
             {% if "products.manage" in business_perms %}
             <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:product_edit' p.public_id %}" title="Edit"><i class="bi bi-pencil"></i></a>

@@ -54,6 +54,10 @@
       <h1>TAX INVOICE</h1>
       <div><strong>{{ sale.invoice_number }}</strong></div>
       <div class="muted">Date: {{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+      {% if sale.delivery_date %}
+      <div class="muted"><strong>Delivery date: {{ sale.delivery_date|date:"d-M-Y" }}</strong>
+        ({{ sale.get_delivery_status_display }})</div>
+      {% endif %}
       <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
       {% if is_reprint %}<div class="muted"><em>DUPLICATE COPY</em></div>{% endif %}
       {% if sale.status == "voided" %}<div class="badge-void">VOIDED</div>{% endif %}
@@ -96,13 +100,15 @@
 <table style="margin-top:10px">
   <tr>
     <td style="width:55%; vertical-align:top">
-      <div class="muted">PAYMENTS</div>
+      <div class="muted">PAYMENT HISTORY</div>
       {% for p in payments %}
-        <div>{{ p.method.name }}: {{ p.amount }} {{ business.currency_display }}
+        <div>{{ p.payment_date|default:p.created_at|date:"Y-m-d" }} —
+          {{ p.method.name }}: {{ p.amount }} {{ business.currency_display }}
           {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}</div>
       {% empty %}<div class="muted">No payments recorded</div>{% endfor %}
+      <div style="margin-top:4px">Total paid: <strong>{{ sale.amount_paid }} {{ business.currency_display }}</strong></div>
       {% if sale.balance > 0 %}
-        <div style="margin-top:4px"><strong>Balance due: {{ sale.balance }} {{ business.currency_display }}</strong></div>
+        <div><strong>BALANCE DUE: {{ sale.balance }} {{ business.currency_display }}</strong></div>
       {% endif %}
       {% if sale.notes %}<div class="muted" style="margin-top:8px">Notes: {{ sale.notes }}</div>{% endif %}
     </td>

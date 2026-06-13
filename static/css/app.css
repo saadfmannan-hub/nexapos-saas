@@ -125,6 +125,9 @@ body.app-body {
   { background: #fee2e2; color: #991b1b; }
 .bs-partially_returned, .bs-fully_returned, .bs-dispatched, .bs-closed
   { background: #dbeafe; color: #1e40af; }
+.bs-in_production { background: #e0e7ff; color: #3730a3; }
+.bs-ready { background: #dcfce7; color: #166534; }
+.bs-delivered { background: #d1fae5; color: #065f46; }
 
 /* ---------------- POS ---------------- */
 .pos-shell { display: grid; grid-template-columns: 1fr 420px; gap: 1rem;

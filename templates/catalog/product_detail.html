@@ -7,9 +7,23 @@
     <a href="{% url 'catalog:product_labels' product.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upc"></i> Print labels</a>
     {% if "products.manage" in business_perms %}
     <a href="{% url 'catalog:product_edit' product.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
-    <form method="post" action="{% url 'catalog:product_archive' product.public_id %}"
-          onsubmit="return confirm('Archive this product? It stays on old invoices but disappears from sale screens.')">
-      {% csrf_token %}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-archive"></i> Archive</button>
+    {% endif %}
+    {% if "products.archive" in business_perms %}
+      {% if product.is_archived %}
+      <form method="post" action="{% url 'catalog:product_restore' product.public_id %}">
+        {% csrf_token %}<button class="btn btn-success btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Restore</button>
+      </form>
+      {% else %}
+      <form method="post" action="{% url 'catalog:product_archive' product.public_id %}"
+            onsubmit="return confirm('Archive this product? It stays on old invoices but disappears from sale screens.')">
+        {% csrf_token %}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-archive"></i> Archive</button>
+      </form>
+      {% endif %}
+    {% endif %}
+    {% if "products.delete" in business_perms %}
+    <form method="post" action="{% url 'catalog:product_delete' product.public_id %}"
+          onsubmit="return confirm('Permanently delete this product? Only possible if it was never used in any transaction.')">
+      {% csrf_token %}<button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
     </form>
     {% endif %}
   </div>

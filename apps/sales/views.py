@@ -315,6 +315,17 @@ def pos_checkout(request):
         payments.append({"method": method, "amount": D(raw.get("amount")),
                          "reference": str(raw.get("reference", ""))[:120]})
 
+    delivery_date = None
+    raw_delivery = str(payload.get("delivery_date") or "").strip()
+    if raw_delivery:
+        import datetime as _dt
+
+        try:
+            delivery_date = _dt.date.fromisoformat(raw_delivery)
+        except ValueError:
+            return JsonResponse({"ok": False, "error": "Invalid delivery date."},
+                                status=400)
+
     try:
         sale = services.complete_sale(
             business=request.business,
@@ -329,6 +340,7 @@ def pos_checkout(request):
             shift=shift,
             invoice_discount=D(payload.get("invoice_discount")),
             notes=str(payload.get("notes", ""))[:1000],
+            delivery_date=delivery_date,
             request=request,
         )
     except (SaleError, subscriptions.LimitExceeded,
@@ -436,6 +448,21 @@ def sale_list(request):
     if date_to:
         qs = qs.filter(sale_date__date__lte=date_to)
 
+    # Delivery filters
+    from django.utils import timezone as _tz
+
+    today = _tz.localdate()
+    delivery = request.GET.get("delivery", "")
+    open_delivery = ~Q(delivery_status__in=["delivered", "cancelled"])
+    if delivery == "today":
+        qs = qs.filter(open_delivery, delivery_date=today)
+    elif delivery == "upcoming":
+        qs = qs.filter(open_delivery, delivery_date__gt=today)
+    elif delivery == "overdue":
+        qs = qs.filter(open_delivery, delivery_date__lt=today)
+    elif delivery == "scheduled":
+        qs = qs.filter(delivery_date__isnull=False)
+
     totals = qs.aggregate(total=Sum("total"), paid=Sum("amount_paid"))
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
@@ -453,12 +480,16 @@ def sale_detail(request, public_id):
         request.business, public_id=public_id,
     )
     items = sale.items.select_related("product", "variant")
-    payments = sale.payments.select_related("method")
+    payments = sale.payments.select_related("method", "received_by")
     returns = sale.returns.prefetch_related("items")
     show_profit = request.membership.has_perm("profit.view")
+    collect_methods = PaymentMethod.objects.for_business(request.business).filter(
+        is_active=True
+    ).exclude(kind__in=["customer_credit", "store_credit"])
     return render(request, "sales/detail.html", {
         "sale": sale, "items": items, "payments": payments, "returns": returns,
         "active_nav": "sales", "show_profit": show_profit,
+        "collect_methods": collect_methods,
     })
 
 
@@ -518,6 +549,66 @@ def sale_invoice_pdf(request, public_id):
         f'attachment; filename="invoice-{sale.invoice_number}.pdf"'
     )
     return response
+
+
+@require_POST
+@require_permission("customers.payments")
+def sale_payment_add(request, public_id):
+    """Record a later payment against a credit/partially-paid sale."""
+    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    try:
+        subscriptions.require_operational(request.business)
+        method = get_tenant_object(PaymentMethod, request.business,
+                                   pk=request.POST.get("method_id"))
+        payment_date = None
+        raw_date = request.POST.get("payment_date", "").strip()
+        if raw_date:
+            import datetime as _dt
+
+            payment_date = _dt.date.fromisoformat(raw_date)
+        shift = register_services.get_open_shift(request.business, request.user)
+        payment = services.add_sale_payment(
+            sale=sale, amount=D(request.POST.get("amount")), method=method,
+            user=request.user, payment_date=payment_date,
+            reference=request.POST.get("reference", ""),
+            notes=request.POST.get("notes", ""), shift=shift, request=request,
+        )
+        messages.success(
+            request,
+            f"Payment {payment.amount} recorded — balance is now {sale.balance}.",
+        )
+    except (SaleError, ValueError, subscriptions.SubscriptionInactive) as exc:
+        messages.error(request, str(exc))
+    return redirect("sales:detail", public_id=public_id)
+
+
+@require_POST
+@require_permission("sales.delete")
+def sale_delete(request, public_id):
+    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    try:
+        services.delete_sale(sale=sale, user=request.user, request=request)
+        messages.success(request, "Draft sale deleted.")
+        return redirect("sales:list")
+    except SaleError as exc:
+        messages.error(request, str(exc))
+        return redirect("sales:detail", public_id=public_id)
+
+
+@require_POST
+@require_permission("sales.create")
+def sale_set_delivery(request, public_id):
+    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    try:
+        services.set_delivery_status(
+            sale=sale, status=request.POST.get("delivery_status", ""),
+            user=request.user, request=request,
+        )
+        messages.success(request, f"Delivery status updated to "
+                                  f"{sale.get_delivery_status_display()}.")
+    except SaleError as exc:
+        messages.error(request, str(exc))
+    return redirect("sales:detail", public_id=public_id)
 
 
 @require_POST

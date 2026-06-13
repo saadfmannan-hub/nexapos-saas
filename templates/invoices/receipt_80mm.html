@@ -35,6 +35,7 @@
   <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
   <tr><td>Cashier</td><td class="r">{{ sale.cashier.full_name|truncatechars:18 }}</td></tr>
   {% if not sale.customer.is_walk_in %}<tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:18 }}</td></tr>{% endif %}
+  {% if sale.delivery_date %}<tr><td class="b">DELIVERY</td><td class="r b">{{ sale.delivery_date|date:"d-M-Y" }}</td></tr>{% endif %}
   {% if is_reprint %}<tr><td colspan="2" class="c b">*** DUPLICATE COPY ***</td></tr>{% endif %}
   {% if sale.status == "voided" %}<tr><td colspan="2" class="c b lg">*** VOIDED ***</td></tr>{% endif %}
 </table>

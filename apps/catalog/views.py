@@ -33,7 +33,6 @@ def product_list(request):
     qs = (
         Product.objects.for_business(request.business)
         .select_related("category", "brand", "unit", "tax_rate")
-        .filter(is_archived=False)
     )
     q = request.GET.get("q", "").strip()
     if q:
@@ -43,10 +42,16 @@ def product_list(request):
     if category_id.isdigit():
         qs = qs.filter(category_id=category_id)
     status = request.GET.get("status", "")
-    if status == "active":
-        qs = qs.filter(is_active=True)
+    if status == "archived":
+        qs = qs.filter(is_archived=True)
+    elif status == "all":
+        pass  # active + inactive + archived
     elif status == "inactive":
-        qs = qs.filter(is_active=False)
+        qs = qs.filter(is_active=False, is_archived=False)
+    else:  # default: everything not archived
+        qs = qs.filter(is_archived=False)
+        if status == "active":
+            qs = qs.filter(is_active=True)
     sort = request.GET.get("sort", "name")
     if sort in ("name", "-name", "sale_price", "-sale_price", "-created_at"):
         qs = qs.order_by(sort)
@@ -140,7 +145,7 @@ def product_detail(request, public_id):
     })
 
 
-@require_permission("products.manage")
+@require_permission("products.archive")
 def product_archive(request, public_id):
     product = get_tenant_object(Product, request.business, public_id=public_id)
     if request.method == "POST":
@@ -152,6 +157,39 @@ def product_archive(request, public_id):
                   description=f"Product '{product.name}' archived.")
         messages.success(request, f"'{product.name}' archived.")
     return redirect("catalog:product_list")
+
+
+@require_permission("products.archive")
+def product_restore(request, public_id):
+    from . import services as catalog_services
+
+    product = get_tenant_object(Product, request.business, public_id=public_id)
+    if request.method == "POST":
+        catalog_services.restore_product(product)
+        audit.log("product.restored", request=request, module="catalog", obj=product,
+                  description=f"Product '{product.name}' restored from archive.")
+        messages.success(request, f"'{product.name}' restored and active again.")
+    return redirect("catalog:product_detail", public_id=public_id)
+
+
+@require_permission("products.delete")
+def product_delete(request, public_id):
+    from . import services as catalog_services
+
+    product = get_tenant_object(Product, request.business, public_id=public_id)
+    if request.method == "POST":
+        name, ref = product.name, str(product.public_id)
+        try:
+            catalog_services.delete_product_if_safe(product)
+        except catalog_services.ProductInUse as exc:
+            messages.error(request, str(exc))
+            return redirect("catalog:product_detail", public_id=public_id)
+        audit.log("product.deleted", request=request, module="catalog",
+                  description=f"Product '{name}' ({ref}) hard-deleted "
+                              "(no transaction history).")
+        messages.success(request, f"'{name}' permanently deleted.")
+        return redirect("catalog:product_list")
+    return redirect("catalog:product_detail", public_id=public_id)
 
 
 @require_permission("products.manage")

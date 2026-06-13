@@ -15,6 +15,11 @@
     {% if "sales.void" in business_perms and sale.status != "voided" and not returns %}
       <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#voidModal"><i class="bi bi-x-octagon"></i> Void</button>
     {% endif %}
+    {% if "sales.delete" in business_perms and sale.status == "draft" %}
+      <form method="post" action="{% url 'sales:delete' sale.public_id %}"
+            onsubmit="return confirm('Permanently delete this draft sale?')">{% csrf_token %}
+        <button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete draft</button></form>
+    {% endif %}
   </div>
 </div>
 
@@ -77,7 +82,8 @@
         <tr><th>Tax</th><td>{% money sale.tax_amount %}</td></tr>
         {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
         <tr><th>Total</th><td class="fw-bold">{% money sale.total symbol=1 %}</td></tr>
-        <tr><th>Paid</th><td>{% money sale.amount_paid %}</td></tr>
+        <tr><th>Paid</th><td>{% money sale.amount_paid %}
+          <span class="badge text-bg-light border ms-1">{{ sale.payment_state }}</span></td></tr>
         <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>
         {% if show_profit %}
         <tr><th>Cost</th><td>{% money sale.total_cost %}</td></tr>
@@ -89,16 +95,83 @@
         {% endif %}
       </table>
     </div></div>
-    <div class="card mt-3"><div class="card-header">Payments</div>
+    {% if sale.delivery_date %}
+    <div class="card mt-3 {% if sale.is_delivery_overdue %}border-danger{% endif %}">
+      <div class="card-header"><i class="bi bi-truck me-1"></i>Delivery</div>
+      <div class="card-body">
+        <table class="table table-sm small mb-2">
+          <tr><th>Delivery date</th><td class="fw-bold">{{ sale.delivery_date }}</td></tr>
+          <tr><th>Status</th><td><span class="badge badge-status bs-{{ sale.delivery_status }}">{{ sale.get_delivery_status_display }}</span></td></tr>
+        </table>
+        {% if "sales.create" in business_perms and sale.status != "voided" %}
+        <form method="post" action="{% url 'sales:set_delivery' sale.public_id %}" class="d-flex gap-2">
+          {% csrf_token %}
+          <select name="delivery_status" class="form-select form-select-sm">
+            {% for value, label in sale.DeliveryStatus.choices %}
+              <option value="{{ value }}" {% if sale.delivery_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-sm btn-outline-primary text-nowrap">Update</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card mt-3"><div class="card-header">Payment history</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Date</th><th>Method</th><th>Ref</th>
+          <th class="text-end">Amount</th><th>Received by</th></tr></thead>
         <tbody>
           {% for p in payments %}
-          <tr><td>{{ p.method.name }}</td><td class="small text-secondary">{{ p.reference }}</td>
-              <td class="text-end fw-semibold">{{ p.amount }}</td></tr>
-          {% empty %}<tr><td class="text-center text-secondary py-3">No payments</td></tr>{% endfor %}
+          <tr>
+            <td class="small">{{ p.payment_date|default:p.created_at|date:"Y-m-d" }}</td>
+            <td class="small">{{ p.method.name }}</td>
+            <td class="small text-secondary">{{ p.reference|default:"—" }}</td>
+            <td class="text-end fw-semibold">{% money p.amount %}</td>
+            <td class="small">{{ p.received_by.full_name|default:"—" }}
+              {% if p.notes %}<br><span class="text-secondary">{{ p.notes }}</span>{% endif %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No payments</td></tr>{% endfor %}
         </tbody>
+        {% if payments %}
+        <tfoot>
+          <tr class="table-light fw-bold"><td colspan="3">Total paid</td>
+            <td class="text-end">{% money sale.amount_paid %}</td><td></td></tr>
+          {% if sale.balance > 0 %}
+          <tr class="text-danger fw-bold"><td colspan="3">Balance due</td>
+            <td class="text-end">{% money sale.balance %}</td><td></td></tr>
+          {% endif %}
+        </tfoot>
+        {% endif %}
       </table></div>
     </div>
+
+    {% if "customers.payments" in business_perms and sale.balance > 0 and sale.status != "voided" and sale.status != "draft" %}
+    <div class="card mt-3 border-primary"><div class="card-header text-primary">Record payment</div>
+      <div class="card-body">
+        <form method="post" action="{% url 'sales:payment_add' sale.public_id %}">{% csrf_token %}
+          <div class="row g-2">
+            <div class="col-6"><label class="form-label">Amount</label>
+              <input type="number" step="any" min="0" max="{{ sale.balance }}" name="amount"
+                     value="{{ sale.balance }}" class="form-control form-control-sm" required></div>
+            <div class="col-6"><label class="form-label">Payment date</label>
+              <input type="date" name="payment_date" value="{% now 'Y-m-d' %}" class="form-control form-control-sm"></div>
+            <div class="col-6"><label class="form-label">Method</label>
+              <select name="method_id" class="form-select form-select-sm">
+                {% for m in collect_methods %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
+              </select></div>
+            <div class="col-6"><label class="form-label">Reference</label>
+              <input name="reference" class="form-control form-control-sm"></div>
+            <div class="col-12"><label class="form-label">Notes</label>
+              <input name="notes" class="form-control form-control-sm"></div>
+            <div class="col-12"><button class="btn btn-primary btn-sm w-100">
+              <i class="bi bi-cash-coin"></i> Record payment</button></div>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% endif %}
   </div>
 </div>
 

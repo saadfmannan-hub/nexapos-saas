@@ -91,6 +91,20 @@ class Sale(TenantModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     sale_date = models.DateTimeField(db_index=True)
 
+    # Delivery / order fulfilment (optional — used by made-to-order and
+    # delivery businesses; empty for ordinary counter sales)
+    class DeliveryStatus(models.TextChoices):
+        PENDING = "pending", _("Pending")
+        IN_PRODUCTION = "in_production", _("In Production")
+        READY = "ready", _("Ready")
+        DELIVERED = "delivered", _("Delivered")
+        CANCELLED = "cancelled", _("Cancelled")
+
+    delivery_date = models.DateField(null=True, blank=True, db_index=True)
+    delivery_status = models.CharField(
+        max_length=15, choices=DeliveryStatus.choices, blank=True, default=""
+    )
+
     # Money snapshot (tax-exclusive subtotal)
     subtotal = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     discount_amount = models.DecimalField(max_digits=14, decimal_places=3, default=0)
@@ -135,6 +149,29 @@ class Sale(TenantModel):
         return self.total - self.amount_paid
 
     @property
+    def is_delivery_overdue(self):
+        from django.utils import timezone
+
+        return bool(
+            self.delivery_date
+            and self.delivery_date < timezone.localdate()
+            and self.delivery_status not in (
+                self.DeliveryStatus.DELIVERED, self.DeliveryStatus.CANCELLED,
+            )
+        )
+
+    @property
+    def payment_state(self):
+        """Unpaid / Partially Paid / Paid / Overpaid — derived, never stored."""
+        if self.amount_paid <= 0 and self.total > 0:
+            return "Unpaid"
+        if self.amount_paid > self.total:
+            return "Overpaid"
+        if self.amount_paid < self.total:
+            return "Partially Paid"
+        return "Paid"
+
+    @property
     def is_finalized(self):
         return self.status not in (self.Status.DRAFT,)
 
@@ -170,17 +207,27 @@ class SaleItem(TenantModel):
 
 
 class SalePayment(TenantModel):
+    """One payment against a sale. A sale may collect several payments on
+    different dates (multi-payment ledger); each keeps its own date,
+    method, reference and receiver."""
+
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="payments")
     method = models.ForeignKey(PaymentMethod, on_delete=models.PROTECT)
     amount = models.DecimalField(max_digits=14, decimal_places=3)
+    payment_date = models.DateField(null=True, blank=True, db_index=True)
     reference = models.CharField(max_length=120, blank=True)
+    notes = models.CharField(max_length=300, blank=True)
+    received_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="sale_payments_received",
+    )
     shift = models.ForeignKey(
         "registers.Shift", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="sale_payments",
     )
 
     class Meta:
-        ordering = ["created_at"]
+        ordering = ["payment_date", "created_at"]
 
     def __str__(self):
         return f"{self.method} {self.amount}"

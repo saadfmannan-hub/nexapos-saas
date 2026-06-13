@@ -162,39 +162,140 @@ def customer_payment(request, public_id):
     return redirect("customers:detail", public_id=public_id)
 
 
-@require_permission("customers.view")
-def customer_statement(request, public_id):
-    """Chronological statement with running balance."""
-    from apps.sales.models import Sale, SaleReturn
+def _statement_entries(business, customer, branch_id=None):
+    """Full chronological ledger for one customer.
 
-    customer = get_tenant_object(Customer, request.business, public_id=public_id)
+    Debits: opening balance, the unpaid (credit) portion of each sale.
+    Credits: standalone collections, per-sale settlement payments,
+    returns credited to the account.
+    """
+    from apps.sales.models import Sale, SalePayment, SaleReturn
+
     entries = []
     if customer.opening_balance:
         entries.append({"date": customer.created_at, "type": "Opening balance",
-                        "ref": "", "debit": customer.opening_balance, "credit": 0})
-    for s in Sale.objects.for_business(request.business).filter(
+                        "ref": "", "debit": customer.opening_balance,
+                        "credit": 0, "notes": ""})
+    sales_qs = Sale.objects.for_business(business).filter(
         customer=customer
-    ).exclude(status__in=[Sale.Status.DRAFT, Sale.Status.VOIDED]):
-        credit_part = s.total - s.amount_paid
+    ).exclude(status__in=[Sale.Status.DRAFT, Sale.Status.VOIDED])
+    if branch_id:
+        sales_qs = sales_qs.filter(branch_id=branch_id)
+    NON_CASH_KINDS = ("customer_credit", "store_credit")
+    for s in sales_qs.prefetch_related("payments__method"):
+        # Debit = the credit extended at sale time: total minus real money
+        # paid at the counter (credit/store-credit tenders are not money in)
+        real_payments = [p for p in s.payments.all()
+                         if p.method.kind not in NON_CASH_KINDS]
+        first_day_paid = sum(
+            (p.amount for p in real_payments
+             if p.payment_date == s.sale_date.date()), start=0
+        )
+        credit_part = s.total - first_day_paid
         if credit_part > 0:
             entries.append({"date": s.sale_date, "type": "Credit sale",
-                            "ref": s.invoice_number, "debit": credit_part, "credit": 0})
-    for p in CustomerPayment.objects.for_business(request.business).filter(
-        customer=customer, kind=CustomerPayment.Kind.COLLECTION
-    ):
+                            "ref": s.invoice_number, "debit": credit_part,
+                            "credit": 0, "notes": s.notes[:60]})
+        # Later settlement payments against this sale = credits on their dates
+        import datetime as _dt
+
+        from django.utils import timezone as _tz
+
+        for p in real_payments:
+            if p.payment_date and p.payment_date != s.sale_date.date():
+                when = _tz.make_aware(
+                    _dt.datetime.combine(p.payment_date, _dt.time(12, 0)))
+                entries.append({"date": when, "type": "Invoice payment",
+                                "ref": s.invoice_number, "debit": 0,
+                                "credit": p.amount, "notes": p.notes[:60]})
+    pay_qs = CustomerPayment.objects.for_business(business).filter(
+        customer=customer, kind=CustomerPayment.Kind.COLLECTION)
+    if branch_id:
+        pay_qs = pay_qs.filter(branch_id=branch_id)
+    for p in pay_qs:
         entries.append({"date": p.created_at, "type": "Payment received",
-                        "ref": p.receipt_number, "debit": 0, "credit": p.amount})
-    for r in SaleReturn.objects.for_business(request.business).filter(
-        customer=customer, refund_method="customer_account"
-    ):
+                        "ref": p.receipt_number, "debit": 0, "credit": p.amount,
+                        "notes": p.notes[:60]})
+    ret_qs = SaleReturn.objects.for_business(business).filter(
+        customer=customer, refund_method="customer_account")
+    if branch_id:
+        ret_qs = ret_qs.filter(branch_id=branch_id)
+    for r in ret_qs:
         entries.append({"date": r.created_at, "type": "Return credited",
-                        "ref": r.return_number, "debit": 0, "credit": r.refund_amount})
+                        "ref": r.return_number, "debit": 0,
+                        "credit": r.refund_amount, "notes": r.reason[:60]})
     entries.sort(key=lambda e: e["date"])
     balance = 0
     for e in entries:
         balance += e["debit"] - e["credit"]
         e["balance"] = balance
+    return entries, balance
+
+
+@require_permission("customers.view")
+def customer_statement(request, public_id):
+    """Date-filterable statement with running balance and exports."""
+    import datetime as _dt
+
+    customer = get_tenant_object(Customer, request.business, public_id=public_id)
+    branch_raw = request.GET.get("branch", "")
+    branch_id = int(branch_raw) if branch_raw.isdigit() else None
+    entries, closing_balance = _statement_entries(
+        request.business, customer, branch_id=branch_id)
+
+    # Period slice with brought-forward balance
+    date_from, date_to = request.GET.get("from", ""), request.GET.get("to", "")
+    brought_forward = None
+    if date_from:
+        cutoff = _dt.date.fromisoformat(date_from)
+        before = [e for e in entries if e["date"].date() < cutoff]
+        bf = before[-1]["balance"] if before else 0
+        entries = [e for e in entries if e["date"].date() >= cutoff]
+        brought_forward = bf
+    if date_to:
+        cutoff = _dt.date.fromisoformat(date_to)
+        entries = [e for e in entries if e["date"].date() <= cutoff]
+
+    export = request.GET.get("export", "")
+    if export in ("csv", "pdf"):
+        from apps.audit import services as audit
+        from apps.reports import exports
+
+        rows = []
+        if brought_forward is not None:
+            rows.append(["", "Balance brought forward", "", "", "", brought_forward, ""])
+        rows += [[e["date"].strftime("%Y-%m-%d"), e["type"], e["ref"],
+                  e["debit"] or "", e["credit"] or "", e["balance"],
+                  e["notes"]] for e in entries]
+        data = {
+            "columns": ["Date", "Type", "Reference", "Debit", "Credit",
+                        "Balance", "Notes"],
+            "rows": rows,
+            "totals": ["", "CLOSING BALANCE", "", "", "",
+                       entries[-1]["balance"] if entries else (brought_forward or 0),
+                       ""],
+        }
+        audit.log("customer.statement_exported", request=request,
+                  module="customers", obj=customer,
+                  description=f"Statement for {customer.full_name} exported "
+                              f"as {export} ({date_from or 'start'} → "
+                              f"{date_to or 'today'}).")
+        title = f"statement-{customer.code}"
+        if export == "csv":
+            return exports.export_csv(title, data)
+        return exports.export_pdf(
+            f"Customer statement — {customer.full_name}", data,
+            request.business, f"{date_from or 'start'} → {date_to or 'today'}")
+
+    from apps.branches.models import Branch
+
     return render(request, "customers/statement.html", {
         "customer": customer, "entries": entries, "active_nav": "customers",
-        "closing_balance": balance,
+        "closing_balance": entries[-1]["balance"] if entries
+                           else (brought_forward or 0),
+        "brought_forward": brought_forward,
+        "date_from": date_from, "date_to": date_to,
+        "branches": Branch.objects.for_business(request.business).filter(
+            is_active=True),
+        "branch_id": branch_id,
     })

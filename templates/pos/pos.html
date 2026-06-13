@@ -193,6 +193,11 @@
             <div class="small text-secondary" x-show="customer.store_credit > 0">
               Store credit available: <strong x-text="fmt(customer.store_credit)"></strong>
             </div>
+            <div class="mt-2">
+              <label class="form-label small mb-1"><i class="bi bi-truck me-1"></i>Delivery date (optional)</label>
+              <input type="date" class="form-control form-control-sm" x-model="deliveryDate"
+                     title="Leave empty for immediate counter sales">
+            </div>
           </div>
           <div class="col-md-7">
             <template x-for="(p, i) in payments" :key="i">
@@ -278,7 +283,7 @@ function pos() {
   const PREC = {{ precision }};
   return {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
-    cart: [], invoiceDiscount: 0, notes: '', busy: false, payError: '',
+    cart: [], invoiceDiscount: 0, notes: '', deliveryDate: '', busy: false, payError: '',
     customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0},
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
     recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
@@ -409,6 +414,7 @@ function pos() {
             payments: this.payments.filter(p => +p.amount > 0),
             invoice_discount: this.invoiceDiscount || 0,
             notes: this.notes,
+            delivery_date: this.deliveryDate || null,
             held_id: this.resumedHeldId,
           }),
         });
@@ -422,7 +428,7 @@ function pos() {
     },
     newSale() {
       this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
-      this.resumedHeldId = null;
+      this.deliveryDate = ''; this.resumedHeldId = null;
       this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0};
       this.$refs.barcode.focus();
     },

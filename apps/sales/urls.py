@@ -21,5 +21,8 @@ urlpatterns = [
     path("<uuid:public_id>/invoice.pdf", views.sale_invoice_pdf, name="invoice_pdf"),
     path("<uuid:public_id>/receipt/", views.sale_receipt, name="receipt"),
     path("<uuid:public_id>/void/", views.sale_void, name="void"),
+    path("<uuid:public_id>/payments/add/", views.sale_payment_add, name="payment_add"),
+    path("<uuid:public_id>/delete/", views.sale_delete, name="delete"),
+    path("<uuid:public_id>/delivery/", views.sale_set_delivery, name="set_delivery"),
     path("<uuid:public_id>/return/", views.return_create, name="return_create"),
 ]

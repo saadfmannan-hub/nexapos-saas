@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.2.0 — 2026-06-13 — Business Controls (delivery, ledger, statements, lifecycle, audit)
+
+### Added
+- **Delivery dates**: `Sale.delivery_date` + `delivery_status` (Pending /
+  In Production / Ready / Delivered / Cancelled). Optional date input in
+  the POS payment panel; shown on the sale detail (with a status-update
+  control), A4 invoice, 80mm receipt, and sales list. New sales-list
+  filters: today's / upcoming / overdue / all scheduled deliveries.
+  `Sale.is_delivery_overdue` drives red highlighting.
+- **Multi-payment ledger**: `SalePayment` gained `payment_date`,
+  `notes` and `received_by` (plus existing created/updated timestamps).
+  A new "Record payment" action on credit/partially-paid sales appends
+  dated payments, recomputes paid/balance, flips status
+  (Credit → Partially Paid → Completed) and reduces the customer
+  receivable — all Decimal-safe. `Sale.payment_state` exposes
+  Unpaid / Partially Paid / Paid / Overpaid.
+- **Dated payment history**: sale detail and the A4 invoice / 80mm
+  receipt now show a Date · Method · Reference · Amount · Received-by ·
+  Notes history with Total paid and Balance due.
+- **Customer account statement**: upgraded to a true running-balance
+  ledger (Date · Type · Reference · Debit · Credit · Balance · Notes)
+  with opening balance, credit sales as debits, payments/returns as
+  credits, date-range + branch filters, balance-brought-forward, and
+  PDF / CSV export (export is audited).
+- **Product archive / restore / delete**: hard delete only when a product
+  has zero history across sales, purchases, stock movements, transfers,
+  adjustments and counts (`products.delete` permission); otherwise
+  Archive (`products.archive`). Restore action added. Product list filter
+  is now Active / Inactive / Archived / All; archived products are hidden
+  from POS search, barcode lookup and the default list but stay on
+  historical invoices.
+- **Sale void / delete**: `sales.delete` allows hard-deleting only
+  drafts with no payments, returns or stock movements; everything else
+  must be voided (existing void already reverses stock + customer
+  balance, keeps the invoice number, records reason/voided_by/voided_at).
+- **Audit trail extended**: new audited actions — `sale.payment_added`,
+  `sale.deleted`, `sale.delivery_status`, `product.restored`,
+  `product.deleted`, `customer.statement_exported` (joining the existing
+  sale.completed/voided/returned, product.saved/archived,
+  stock, shift, auth and platform events). All viewable on the Audit Log
+  page; the log remains append-only.
+
+### Database migrations
+- `sales/0002_*` — additive only: `Sale.delivery_date`,
+  `Sale.delivery_status`, `SalePayment.payment_date`, `SalePayment.notes`,
+  `SalePayment.received_by`, and a `SalePayment` ordering change. No data
+  backfill required; existing sales have null delivery and keep working.
+
+### Test status
+- 145/145 automated tests passing (34 new in `tests/test_phase_update.py`).
+
 ## 1.1.0 — 2026-06-12 — Production-Ready Upgrade & Bug Fix Sprint
 
 ### Fixed

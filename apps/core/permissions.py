@@ -20,6 +20,7 @@ PERMISSIONS = {
     "sales.view": _("View sales"),
     "sales.create": _("Create sale"),
     "sales.void": _("Void sale"),
+    "sales.delete": _("Delete sale (only drafts with no business impact)"),
     "sales.refund": _("Refund / return sale"),
     "sales.discount": _("Apply discount"),
     "sales.price_override": _("Override price"),
@@ -28,6 +29,8 @@ PERMISSIONS = {
     "products.view": _("View products"),
     "products.manage": _("Manage products"),
     "products.import": _("Import products"),
+    "products.archive": _("Archive / restore products"),
+    "products.delete": _("Delete products (only without transaction history)"),
     # Inventory
     "inventory.view": _("View inventory"),
     "inventory.adjust": _("Adjust stock"),

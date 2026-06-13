@@ -127,6 +127,7 @@ def complete_sale(
     invoice_discount=ZERO,
     notes="",
     salesperson=None,
+    delivery_date=None,
     request=None,
 ):
     """Finalize a sale.
@@ -283,6 +284,8 @@ def complete_sale(
         amount_paid=money(pay_total - change_due - credit_amount),
         change_due=change_due,
         notes=notes,
+        delivery_date=delivery_date,
+        delivery_status=(Sale.DeliveryStatus.PENDING if delivery_date else ""),
     )
 
     total_cost = ZERO
@@ -333,7 +336,8 @@ def complete_sale(
                 continue
         SalePayment.objects.create(
             business=business, sale=sale, method=p["method"],
-            amount=amount, reference=p["reference"], shift=shift,
+            amount=amount, payment_date=timezone.localdate(),
+            reference=p["reference"], received_by=cashier, shift=shift,
         )
 
     if credit_amount > 0:
@@ -351,6 +355,108 @@ def complete_sale(
     audit.log("sale.completed", business=business, user=cashier, request=request,
               module="sales", obj=sale,
               description=f"Sale {sale.invoice_number} completed for {sale.total}.")
+    return sale
+
+
+@transaction.atomic
+def add_sale_payment(
+    *, sale, amount, method, user, payment_date=None, reference="", notes="",
+    shift=None, request=None,
+):
+    """Record a later payment against a credit / partially-paid sale.
+
+    Updates sale.amount_paid, the sale status, and (because the unpaid
+    portion of a sale sits on the customer's receivable balance) reduces
+    the customer balance by the same amount.
+    """
+    amount = money(amount)
+    if amount <= 0:
+        raise SaleError("Payment amount must be positive.")
+    if sale.status == Sale.Status.VOIDED:
+        raise SaleError("Voided sales cannot receive payments.")
+    if sale.status == Sale.Status.DRAFT:
+        raise SaleError("Draft sales cannot receive payments.")
+    if method.business_id != sale.business_id:
+        raise SaleError("Invalid payment method.")
+    if method.kind in (PaymentMethod.Kind.CUSTOMER_CREDIT,
+                       PaymentMethod.Kind.STORE_CREDIT):
+        raise SaleError("Use a real payment method to settle a balance.")
+    if amount > sale.balance:
+        raise SaleError(
+            f"Payment {amount} exceeds the outstanding balance {sale.balance}."
+        )
+
+    payment = SalePayment.objects.create(
+        business=sale.business,
+        sale=sale,
+        method=method,
+        amount=amount,
+        payment_date=payment_date or timezone.localdate(),
+        reference=reference[:120],
+        notes=notes[:300],
+        received_by=user,
+        shift=shift,
+    )
+    sale.amount_paid = money(sale.amount_paid + amount)
+    if sale.status in (Sale.Status.CREDIT, Sale.Status.PARTIAL):
+        sale.status = (
+            Sale.Status.COMPLETED if sale.balance <= 0 else Sale.Status.PARTIAL
+        )
+    sale.save(update_fields=["amount_paid", "status", "updated_at"])
+
+    # The unpaid balance was carried on the customer account — settle it.
+    customer_services.apply_balance_change(sale.customer_id, -amount)
+
+    audit.log("sale.payment_added", business=sale.business, user=user,
+              request=request, module="sales", obj=payment,
+              description=(f"Payment {amount} ({method.name}) received on "
+                           f"{sale.invoice_number}; balance now {sale.balance}."),
+              new_values={"amount": str(amount), "method": method.name,
+                          "payment_date": str(payment.payment_date)})
+    return payment
+
+
+@transaction.atomic
+def delete_sale(*, sale, user, request=None):
+    """Hard-delete a sale ONLY when it has zero business impact:
+    a draft with no payments, no stock movements and no returns.
+    Anything else must be voided so the audit trail survives."""
+    from apps.inventory.models import StockMovement
+
+    if sale.status != Sale.Status.DRAFT:
+        raise SaleError(
+            "Only draft sales can be deleted. Completed sales must be "
+            "voided so the invoice number and audit trail are preserved."
+        )
+    if sale.payments.exists():
+        raise SaleError("Sales with recorded payments cannot be deleted.")
+    if sale.returns.exists():
+        raise SaleError("Sales with returns cannot be deleted.")
+    if sale.invoice_number and StockMovement.objects.for_business(
+        sale.business
+    ).filter(reference_type="Sale", reference_id=sale.invoice_number).exists():
+        raise SaleError("Sales with stock movements cannot be deleted — void instead.")
+
+    description = f"Draft sale #{sale.pk} ({sale.invoice_number or 'no invoice'}) deleted."
+    audit.log("sale.deleted", business=sale.business, user=user, request=request,
+              module="sales", obj=sale, description=description)
+    sale.delete()
+
+
+def set_delivery_status(*, sale, status, user, request=None):
+    if status not in dict(Sale.DeliveryStatus.choices):
+        raise SaleError("Invalid delivery status.")
+    if sale.status == Sale.Status.VOIDED:
+        raise SaleError("Voided sales cannot change delivery status.")
+    old = sale.delivery_status
+    sale.delivery_status = status
+    sale.save(update_fields=["delivery_status", "updated_at"])
+    audit.log("sale.delivery_status", business=sale.business, user=user,
+              request=request, module="sales", obj=sale,
+              old_values={"delivery_status": old},
+              new_values={"delivery_status": status},
+              description=(f"Delivery status of {sale.invoice_number} "
+                           f"changed {old or '—'} → {status}."))
     return sale
 
 
