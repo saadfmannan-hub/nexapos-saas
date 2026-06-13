@@ -4,6 +4,16 @@
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Products</h1>
   <div class="d-flex gap-2">
+    {% if "products.export" in business_perms %}
+    <div class="btn-group btn-group-sm">
+      <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-download"></i> Export</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{% url 'catalog:product_export' %}?format=xlsx&{{ querystring }}">Excel (.xlsx)</a></li>
+        <li><a class="dropdown-item" href="{% url 'catalog:product_export' %}?format=csv&{{ querystring }}">CSV</a></li>
+      </ul>
+    </div>
+    {% endif %}
     {% if "products.import" in business_perms %}
     <a href="{% url 'catalog:product_import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
     {% endif %}

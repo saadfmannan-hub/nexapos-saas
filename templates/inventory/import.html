@@ -1,0 +1,59 @@
+{% extends "layouts/base.html" %}
+{% block title %}Import inventory — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Import inventory</h1>
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card"><div class="card-header">Upload file</div><div class="card-body">
+      <ol class="small text-secondary">
+        <li>Download the template
+          (<a href="{% url 'inventory:import_template' %}">CSV</a> ·
+           <a href="{% url 'inventory:import_template' %}?format=xlsx">Excel</a>).</li>
+        <li>Columns: {{ columns|join:", " }}. Match products by SKU or barcode;
+            warehouse by name (branch optional).</li>
+        <li>Every import is recorded in the audit log and writes the stock ledger.</li>
+      </ol>
+      <form method="post" enctype="multipart/form-data">{% csrf_token %}
+        <div class="mb-3">
+          <label class="form-label">File</label>
+          <input type="file" name="file" accept=".csv,.xlsx" class="form-control" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Import mode</label>
+          <div class="form-check"><input class="form-check-input" type="radio" name="mode" value="add" id="md-add" checked>
+            <label class="form-check-label" for="md-add"><strong>Add to existing stock</strong> — increases current quantity</label></div>
+          <div class="form-check"><input class="form-check-input" type="radio" name="mode" value="replace" id="md-rep">
+            <label class="form-check-label" for="md-rep"><strong>Replace current stock</strong> — sets the absolute quantity</label></div>
+          <div class="form-check"><input class="form-check-input" type="radio" name="mode" value="opening" id="md-open">
+            <label class="form-check-label" for="md-open"><strong>Set opening stock</strong> — records an opening-stock entry</label></div>
+          <div class="form-check"><input class="form-check-input" type="radio" name="mode" value="minimum" id="md-min">
+            <label class="form-check-label" for="md-min"><strong>Update minimum stock only</strong> — no stock change</label></div>
+        </div>
+        <button class="btn btn-primary">Validate &amp; import</button>
+        <a href="{% url 'inventory:stock_list' %}" class="btn btn-outline-secondary">Back</a>
+      </form>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    {% if results %}
+    <div class="card"><div class="card-header">Import result</div><div class="card-body">
+      <div class="d-flex gap-2 mb-3 flex-wrap">
+        <span class="badge text-bg-success fs-6">{{ results.summary.imported }} applied</span>
+        <span class="badge text-bg-primary fs-6">{{ results.summary.updated }} min-updated</span>
+        <span class="badge text-bg-secondary fs-6">{{ results.summary.skipped }} skipped</span>
+        <span class="badge text-bg-danger fs-6">{{ results.summary.failed }} failed</span>
+      </div>
+      {% if results.errors %}
+      <a href="{% url 'inventory:import' %}?errors=1" class="btn btn-sm btn-outline-danger mb-2">
+        <i class="bi bi-download"></i> Download error report</a>
+      <div class="border rounded p-2 bg-danger-subtle small" style="max-height:320px;overflow:auto">
+        {% for row_no, msg in results.errors %}<div>Row {{ row_no }}: {{ msg }}</div>{% endfor %}
+      </div>
+      {% else %}
+      <div class="alert alert-success py-2 mb-0">All rows processed without errors.</div>
+      {% endif %}
+    </div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

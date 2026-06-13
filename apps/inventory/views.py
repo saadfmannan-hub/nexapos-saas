@@ -74,6 +74,88 @@ def stock_list(request):
     })
 
 
+@require_permission("inventory.export")
+def inventory_export(request):
+    from apps.audit import services as audit
+    from apps.reports import exports
+
+    def _int(name):
+        v = request.GET.get(name, "")
+        return int(v) if v.isdigit() else None
+
+    filters = {"warehouse_id": _int("warehouse"), "branch_id": _int("branch")}
+    data = services.inventory_export_dataset(request.business, filters)
+    audit.log("inventory.exported", request=request, module="inventory",
+              description=f"Exported {len(data['rows'])} stock rows "
+                          f"({request.GET.get('format', 'csv')}).")
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("inventory", data)
+    return exports.export_csv("inventory", data)
+
+
+@require_permission("inventory.import")
+def inventory_import_template(request):
+    from apps.reports import exports
+
+    data = {
+        "columns": [c.title() for c in services.IMPORT_COLUMNS],
+        "rows": [["WID-A", "1000000000017", "Head Office", "Main Warehouse",
+                  "50", "10", "Opening count", "Initial load"]],
+        "totals": None,
+    }
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("inventory_import_template", data)
+    return exports.export_csv("inventory_import_template", data)
+
+
+@require_permission("inventory.import")
+def inventory_import(request):
+    from apps.audit import services as audit
+    from apps.core.imports import error_report_response, parse_tabular_file
+
+    if request.GET.get("errors") == "1":
+        errors = request.session.get("inventory_import_errors", [])
+        return error_report_response("inventory_import_errors.csv", errors)
+
+    results = None
+    if request.method == "POST":
+        try:
+            subscriptions.require_operational(request.business)
+        except subscriptions.SubscriptionInactive as exc:
+            messages.error(request, str(exc))
+            return redirect("inventory:stock_list")
+        upload = request.FILES.get("file")
+        mode = request.POST.get("mode", "add")
+        if not upload:
+            messages.error(request, "Choose a file to import.")
+        elif mode not in services.IMPORT_MODES:
+            messages.error(request, "Choose a valid import mode.")
+        else:
+            rows, parse_error = parse_tabular_file(upload)
+            if parse_error:
+                messages.error(request, parse_error)
+            else:
+                summary, errors = services.import_inventory(
+                    business=request.business, rows=rows, mode=mode,
+                    user=request.user)
+                request.session["inventory_import_errors"] = errors
+                results = {"summary": summary, "errors": errors,
+                           "total": len(rows)}
+                # Dedicated audit record with file/mode/counts
+                audit.log("inventory.imported", request=request,
+                          module="inventory",
+                          description=(f"Inventory import '{upload.name}' "
+                                       f"mode={mode}: {summary['imported']} applied, "
+                                       f"{summary['updated']} min-updated, "
+                                       f"{summary['failed']} failed."),
+                          new_values={"file": upload.name, "mode": mode,
+                                      **summary})
+    return render(request, "inventory/import.html", {
+        "results": results, "active_nav": "inventory",
+        "columns": [c.title() for c in services.IMPORT_COLUMNS],
+    })
+
+
 @require_permission("inventory.view")
 def movement_list(request):
     qs = (

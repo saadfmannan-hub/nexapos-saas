@@ -31,8 +31,11 @@ PERMISSIONS = {
     "products.import": _("Import products"),
     "products.archive": _("Archive / restore products"),
     "products.delete": _("Delete products (only without transaction history)"),
+    "products.export": _("Export products"),
     # Inventory
     "inventory.view": _("View inventory"),
+    "inventory.export": _("Export inventory"),
+    "inventory.import": _("Import / bulk-update inventory"),
     "inventory.adjust": _("Adjust stock"),
     "inventory.adjust_approve": _("Approve stock adjustments"),
     "inventory.transfer": _("Transfer stock"),
@@ -48,6 +51,8 @@ PERMISSIONS = {
     "customers.view": _("View customers"),
     "customers.manage": _("Manage customers"),
     "customers.payments": _("Record customer payments"),
+    "customers.export": _("Export customers"),
+    "customers.import": _("Import customers"),
     "credit.approve": _("Approve sales over credit limit"),
     # Expenses
     "expenses.view": _("View expenses"),
@@ -81,9 +86,11 @@ DEFAULT_ROLES = {
         "permissions": [
             "dashboard.view", "reports.view", "reports.export", "profit.view",
             "sales.view", "sales.create", "sales.void", "sales.refund",
-            "sales.discount", "sales.credit", "products.view", "inventory.view",
+            "sales.discount", "sales.credit", "products.view", "products.export",
+            "inventory.view", "inventory.export", "inventory.import",
             "inventory.adjust", "inventory.transfer", "inventory.count",
             "customers.view", "customers.manage", "customers.payments",
+            "customers.export", "customers.import",
             "expenses.view", "expenses.manage", "registers.manage",
             "shifts.open", "shifts.close", "shifts.approve",
             "notifications.view", "credit.approve",

@@ -2,11 +2,26 @@
 {% load money_tags %}
 {% block title %}Inventory — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Inventory</h1>
-  {% if show_cost and total_value is not None %}
-  <span class="badge text-bg-light border fs-6">Stock value: {% money total_value symbol=1 %}</span>
-  {% endif %}
+  <div class="d-flex gap-2 align-items-center">
+    {% if show_cost and total_value is not None %}
+    <span class="badge text-bg-light border fs-6">Stock value: {% money total_value symbol=1 %}</span>
+    {% endif %}
+    {% if "inventory.export" in business_perms %}
+    <div class="btn-group btn-group-sm">
+      <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-download"></i> Export</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{% url 'inventory:export' %}?format=xlsx&{{ querystring }}">Excel (.xlsx)</a></li>
+        <li><a class="dropdown-item" href="{% url 'inventory:export' %}?format=csv&{{ querystring }}">CSV</a></li>
+      </ul>
+    </div>
+    {% endif %}
+    {% if "inventory.import" in business_perms %}
+    <a href="{% url 'inventory:import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% endif %}
+  </div>
 </div>
 {% include "inventory/_tabs.html" with tab="stock" %}
 

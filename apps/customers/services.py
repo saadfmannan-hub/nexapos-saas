@@ -1,10 +1,25 @@
 """Customer helpers and balance maintenance."""
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import F
 
-from .models import Customer
+from apps.core.money import D
+
+from .models import Customer, CustomerGroup
+
+# Export column order ↔ model field mapping (reused by export + import template)
+EXPORT_COLUMNS = [
+    "Customer Code", "Customer Name", "Mobile", "WhatsApp", "Email", "Address",
+    "City", "Country", "Group", "Credit Limit", "Outstanding Balance",
+    "Store Credit", "Status", "Created Date",
+]
+IMPORT_COLUMNS = [
+    "customer code", "customer name", "mobile", "whatsapp", "email",
+    "address", "city", "country", "group", "credit limit",
+]
 
 
 def ensure_walk_in_customer(business):
@@ -33,3 +48,132 @@ def apply_balance_change(customer_id, delta: Decimal):
 @transaction.atomic
 def apply_store_credit_change(customer_id, delta: Decimal):
     Customer.objects.filter(pk=customer_id).update(store_credit=F("store_credit") + delta)
+
+
+# ---------------------------------------------------------------------------
+# Import / export
+# ---------------------------------------------------------------------------
+def export_dataset(business, queryset):
+    """Build {columns, rows} for customer export (CSV/XLSX)."""
+    rows = []
+    for c in queryset.select_related("group"):
+        rows.append([
+            c.code, c.full_name, c.mobile, c.whatsapp, c.email, c.address,
+            c.city, c.country, c.group.name if c.group else "",
+            c.credit_limit, c.balance, c.store_credit,
+            "Active" if c.is_active else "Inactive",
+            c.created_at.strftime("%Y-%m-%d"),
+        ])
+    return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
+
+
+@transaction.atomic
+def import_customers(*, business, rows, mode, user):
+    """Import customer rows. mode: 'skip' | 'update'.
+
+    Returns (summary, errors) where summary has imported/updated/skipped/
+    failed counts and errors is a list of (row_number, message).
+    Matching is by customer code, then mobile. Decimal-safe.
+    """
+    from apps.core.imports import normalize_row
+
+    summary = {"imported": 0, "updated": 0, "skipped": 0, "failed": 0}
+    errors = []
+    seen_codes, seen_mobiles = set(), set()
+
+    for idx, raw in enumerate(rows, start=2):  # row 1 = header
+        r = normalize_row(raw)
+        name = r.get("customer name", "")
+        code = r.get("customer code", "")
+        mobile = r.get("mobile", "")
+        email = r.get("email", "")
+
+        if not name:
+            errors.append((idx, "Missing required field: customer name."))
+            summary["failed"] += 1
+            continue
+        if email:
+            try:
+                validate_email(email)
+            except ValidationError:
+                errors.append((idx, f"Invalid email format: {email}"))
+                summary["failed"] += 1
+                continue
+        # In-file duplicates
+        if code and code in seen_codes:
+            errors.append((idx, f"Duplicate customer code in file: {code}"))
+            summary["failed"] += 1
+            continue
+        if mobile and mobile in seen_mobiles:
+            errors.append((idx, f"Duplicate mobile in file: {mobile}"))
+            summary["failed"] += 1
+            continue
+
+        existing = None
+        if code:
+            existing = Customer.objects.for_business(business).filter(code=code).first()
+        if existing is None and mobile:
+            existing = Customer.objects.for_business(business).filter(
+                mobile=mobile).first()
+
+        if existing and existing.is_walk_in:
+            errors.append((idx, "Cannot import over the walk-in customer."))
+            summary["failed"] += 1
+            continue
+
+        if existing:
+            if mode == "skip":
+                summary["skipped"] += 1
+                if code:
+                    seen_codes.add(code)
+                if mobile:
+                    seen_mobiles.add(mobile)
+                continue
+            # update mode
+            try:
+                _apply_fields(business, existing, r)
+                existing.save()
+                summary["updated"] += 1
+            except Exception as exc:
+                errors.append((idx, f"Update failed: {exc}"))
+                summary["failed"] += 1
+                continue
+        else:
+            try:
+                customer = Customer(business=business,
+                                    code=code or next_customer_code(business))
+                _apply_fields(business, customer, r)
+                customer.full_clean(exclude=["public_id"])
+                customer.save()
+                summary["imported"] += 1
+            except ValidationError as exc:
+                errors.append((idx, "; ".join(
+                    f"{k}: {', '.join(v)}" for k, v in exc.message_dict.items())))
+                summary["failed"] += 1
+                continue
+            except Exception as exc:
+                errors.append((idx, f"Import failed: {exc}"))
+                summary["failed"] += 1
+                continue
+        if code:
+            seen_codes.add(code)
+        if mobile:
+            seen_mobiles.add(mobile)
+    return summary, errors
+
+
+def _apply_fields(business, customer, r):
+    customer.full_name = r.get("customer name", customer.full_name)[:160]
+    if r.get("mobile"):
+        customer.mobile = r["mobile"][:30]
+    customer.whatsapp = r.get("whatsapp", customer.whatsapp)[:30]
+    customer.email = r.get("email", customer.email)
+    customer.address = r.get("address", customer.address)[:255]
+    customer.city = r.get("city", customer.city)[:100]
+    customer.country = r.get("country", customer.country)[:100]
+    if r.get("credit limit"):
+        customer.credit_limit = D(r["credit limit"])
+    group_name = r.get("group", "")
+    if group_name:
+        customer.group, _ = CustomerGroup.objects.get_or_create(
+            business=business, name=group_name[:80])

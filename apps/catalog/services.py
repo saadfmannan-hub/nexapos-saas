@@ -59,6 +59,80 @@ def restore_product(product):
     return product
 
 
+EXPORT_COLUMNS = [
+    "SKU", "Barcode", "Product Name", "Category", "Brand", "Unit",
+    "Purchase Price", "Selling Price", "Current Stock", "Minimum Stock",
+    "Warehouse", "Branch", "Status", "Created Date", "Updated Date",
+]
+
+
+def product_export_dataset(business, filters):
+    """Build {columns, rows} for product export.
+
+    Scales to large catalogs: stock is fetched in a single aggregated
+    query and joined in memory rather than per-row.
+    """
+    from django.db.models import Sum
+
+    from apps.inventory.models import StockLevel
+
+    qs = Product.objects.for_business(business).select_related(
+        "category", "brand", "unit")
+
+    if filters.get("category_id"):
+        qs = qs.filter(category_id=filters["category_id"])
+    if filters.get("brand_id"):
+        qs = qs.filter(brand_id=filters["brand_id"])
+    status = filters.get("status", "")
+    if status == "archived":
+        qs = qs.filter(is_archived=True)
+    elif status == "active":
+        qs = qs.filter(is_active=True, is_archived=False)
+    else:
+        qs = qs.filter(is_archived=False)
+
+    # Stock map, optionally scoped to a warehouse/branch
+    level_qs = StockLevel.objects.for_business(business)
+    warehouse = None
+    branch_name = ""
+    if filters.get("warehouse_id"):
+        level_qs = level_qs.filter(warehouse_id=filters["warehouse_id"])
+    if filters.get("branch_id"):
+        level_qs = level_qs.filter(warehouse__branch_id=filters["branch_id"])
+    stock_map = {
+        row["product_id"]: row["q"]
+        for row in level_qs.values("product_id").annotate(q=Sum("quantity"))
+    }
+    if filters.get("warehouse_id"):
+        from apps.branches.models import Warehouse
+
+        warehouse = Warehouse.objects.for_business(business).filter(
+            id=filters["warehouse_id"]).select_related("branch").first()
+        if warehouse:
+            branch_name = warehouse.branch.name if warehouse.branch else ""
+
+    rows = []
+    for p in qs.order_by("name"):
+        stock = stock_map.get(p.id, 0)
+        if status == "low" and not (p.reorder_level > 0 and stock <= p.reorder_level):
+            continue
+        if status == "out" and stock > 0:
+            continue
+        rows.append([
+            p.sku, p.barcode, p.name,
+            p.category.name if p.category else "",
+            p.brand.name if p.brand else "",
+            p.unit.name if p.unit else "",
+            p.purchase_price, p.sale_price, stock, p.reorder_level,
+            warehouse.name if warehouse else "All",
+            branch_name or "All",
+            "Archived" if p.is_archived else ("Active" if p.is_active else "Inactive"),
+            p.created_at.strftime("%Y-%m-%d"),
+            p.updated_at.strftime("%Y-%m-%d"),
+        ])
+    return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
+
+
 DEFAULT_UNITS = [
     ("Piece", "pc", False),
     ("Box", "box", False),

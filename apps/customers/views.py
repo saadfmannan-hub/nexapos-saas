@@ -1,14 +1,17 @@
+from django.conf import settings
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Avg, Count, Max, Q, Sum
 from django.shortcuts import redirect, render
+from django.utils import timezone
 
 from apps.audit import services as audit
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import money
 from apps.registers import services as register_services
+from apps.reports.pdf import render_pdf
 from apps.subscriptions import services as subscriptions
 
 from . import services
@@ -232,6 +235,90 @@ def _statement_entries(business, customer, branch_id=None):
     return entries, balance
 
 
+@require_permission("customers.export")
+def customer_export(request):
+    """Export the filtered customer list as CSV or Excel."""
+    from apps.reports import exports
+
+    qs = Customer.objects.for_business(request.business)
+    q = request.GET.get("q", "").strip()
+    if q:
+        qs = qs.filter(Q(full_name__icontains=q) | Q(mobile__icontains=q) |
+                       Q(code__icontains=q) | Q(email__icontains=q))
+    flt = request.GET.get("filter", "")
+    if flt == "credit":
+        qs = qs.filter(balance__gt=0)
+    elif flt == "inactive":
+        qs = qs.filter(is_active=False)
+    data = services.export_dataset(request.business, qs.order_by("full_name"))
+    audit.log("customer.exported", request=request, module="customers",
+              description=f"Exported {len(data['rows'])} customers "
+                          f"({request.GET.get('format', 'csv')}).")
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("customers", data)
+    return exports.export_csv("customers", data)
+
+
+@require_permission("customers.import")
+def customer_import_template(request):
+    from apps.reports import exports
+
+    data = {
+        "columns": [c.title() for c in services.IMPORT_COLUMNS],
+        "rows": [["CUST-00001", "Sample Customer", "99000000", "99000000",
+                  "sample@example.com", "123 Market St", "Muscat", "Oman",
+                  "Retail", "100.000"]],
+        "totals": None,
+    }
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("customer_import_template", data)
+    return exports.export_csv("customer_import_template", data)
+
+
+@require_permission("customers.import")
+def customer_import(request):
+    from apps.core.imports import error_report_response, parse_tabular_file
+
+    # Stash the last error report in session for download
+    if request.GET.get("errors") == "1":
+        errors = request.session.get("customer_import_errors", [])
+        return error_report_response("customer_import_errors.csv", errors)
+
+    results = None
+    if request.method == "POST":
+        try:
+            subscriptions.require_operational(request.business)
+        except subscriptions.SubscriptionInactive as exc:
+            messages.error(request, str(exc))
+            return redirect("customers:list")
+        upload = request.FILES.get("file")
+        mode = request.POST.get("mode", "skip")
+        if not upload:
+            messages.error(request, "Choose a file to import.")
+        else:
+            rows, parse_error = parse_tabular_file(upload)
+            if parse_error:
+                messages.error(request, parse_error)
+            else:
+                summary, errors = services.import_customers(
+                    business=request.business, rows=rows, mode=mode,
+                    user=request.user)
+                request.session["customer_import_errors"] = errors
+                results = {"summary": summary, "errors": errors,
+                           "total": len(rows)}
+                audit.log("customer.imported", request=request,
+                          module="customers",
+                          description=(f"Customer import ({mode}): "
+                                       f"{summary['imported']} new, "
+                                       f"{summary['updated']} updated, "
+                                       f"{summary['skipped']} skipped, "
+                                       f"{summary['failed']} failed."))
+    return render(request, "customers/import.html", {
+        "results": results, "active_nav": "customers",
+        "columns": [c.title() for c in services.IMPORT_COLUMNS],
+    })
+
+
 @require_permission("customers.view")
 def customer_statement(request, public_id):
     """Date-filterable statement with running balance and exports."""
@@ -256,25 +343,16 @@ def customer_statement(request, public_id):
         cutoff = _dt.date.fromisoformat(date_to)
         entries = [e for e in entries if e["date"].date() <= cutoff]
 
+    opening_balance = brought_forward if brought_forward is not None else 0
+    closing = entries[-1]["balance"] if entries else opening_balance
+    total_debits = sum((e["debit"] for e in entries), start=0)
+    total_credits = sum((e["credit"] for e in entries), start=0)
+
     export = request.GET.get("export", "")
     if export in ("csv", "pdf"):
         from apps.audit import services as audit
         from apps.reports import exports
 
-        rows = []
-        if brought_forward is not None:
-            rows.append(["", "Balance brought forward", "", "", "", brought_forward, ""])
-        rows += [[e["date"].strftime("%Y-%m-%d"), e["type"], e["ref"],
-                  e["debit"] or "", e["credit"] or "", e["balance"],
-                  e["notes"]] for e in entries]
-        data = {
-            "columns": ["Date", "Type", "Reference", "Debit", "Credit",
-                        "Balance", "Notes"],
-            "rows": rows,
-            "totals": ["", "CLOSING BALANCE", "", "", "",
-                       entries[-1]["balance"] if entries else (brought_forward or 0),
-                       ""],
-        }
         audit.log("customer.statement_exported", request=request,
                   module="customers", obj=customer,
                   description=f"Statement for {customer.full_name} exported "
@@ -282,10 +360,44 @@ def customer_statement(request, public_id):
                               f"{date_to or 'today'}).")
         title = f"statement-{customer.code}"
         if export == "csv":
+            rows = []
+            if brought_forward is not None:
+                rows.append(["", "Balance brought forward", "", "", "",
+                             brought_forward, ""])
+            rows += [[e["date"].strftime("%Y-%m-%d"), e["type"], e["ref"],
+                      e["debit"] or "", e["credit"] or "", e["balance"],
+                      e["notes"]] for e in entries]
+            data = {
+                "columns": ["Date", "Type", "Reference", "Debit", "Credit",
+                            "Balance", "Notes"],
+                "rows": rows,
+                "totals": ["", "CLOSING BALANCE", "", str(total_debits),
+                           str(total_credits), closing, ""],
+            }
             return exports.export_csv(title, data)
-        return exports.export_pdf(
-            f"Customer statement — {customer.full_name}", data,
-            request.business, f"{date_from or 'start'} → {date_to or 'today'}")
+
+        # Dedicated professional landscape statement PDF
+        branch = None
+        if branch_id:
+            from apps.branches.models import Branch as _Branch
+
+            branch = _Branch.objects.for_business(request.business).filter(
+                id=branch_id).first()
+        pdf = render_pdf("invoices/customer_statement_pdf.html", {
+            "business": request.business, "customer": customer, "branch": branch,
+            "entries": entries, "opening_balance": opening_balance,
+            "brought_forward": brought_forward, "closing_balance": closing,
+            "total_debits": total_debits, "total_credits": total_credits,
+            "date_from": date_from, "date_to": date_to,
+            "generated_at": timezone.localtime(),
+            "precision": request.business.currency_precision,
+            "PRODUCT_NAME": settings.PRODUCT_NAME,
+        })
+        from django.http import HttpResponse
+
+        response = HttpResponse(pdf, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{title}.pdf"'
+        return response
 
     from apps.branches.models import Branch
 

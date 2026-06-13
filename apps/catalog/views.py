@@ -87,6 +87,33 @@ def _qs_without_page(request):
     return f"{encoded}&" if encoded else ""
 
 
+@require_permission("products.export")
+def product_export(request):
+    """Export products (CSV/XLSX) honoring catalog + stock filters."""
+    from apps.reports import exports
+
+    from . import services as catalog_services
+
+    def _int(name):
+        v = request.GET.get(name, "")
+        return int(v) if v.isdigit() else None
+
+    filters = {
+        "category_id": _int("category"),
+        "brand_id": _int("brand"),
+        "branch_id": _int("branch"),
+        "warehouse_id": _int("warehouse"),
+        "status": request.GET.get("status", ""),
+    }
+    data = catalog_services.product_export_dataset(request.business, filters)
+    audit.log("product.exported", request=request, module="catalog",
+              description=f"Exported {len(data['rows'])} products "
+                          f"({request.GET.get('format', 'csv')}).")
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("products", data)
+    return exports.export_csv("products", data)
+
+
 @require_permission("products.manage")
 def product_form(request, public_id=None):
     instance = None

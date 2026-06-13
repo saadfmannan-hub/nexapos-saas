@@ -6,6 +6,9 @@ app_name = "inventory"
 
 urlpatterns = [
     path("stock/", views.stock_list, name="stock_list"),
+    path("export/", views.inventory_export, name="export"),
+    path("import/", views.inventory_import, name="import"),
+    path("import/template/", views.inventory_import_template, name="import_template"),
     path("movements/", views.movement_list, name="movement_list"),
     path("item-search/", views.item_search, name="item_search"),
     path("transfers/", views.transfer_list, name="transfer_list"),

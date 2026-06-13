@@ -7,6 +7,19 @@
   <div class="d-flex gap-2 align-items-center">
     <span class="badge text-bg-light border">Outstanding receivables:
       <strong>{% money receivables symbol=1 %}</strong></span>
+    {% if "customers.export" in business_perms %}
+    <div class="btn-group btn-group-sm">
+      <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+        <i class="bi bi-download"></i> Export</button>
+      <ul class="dropdown-menu dropdown-menu-end">
+        <li><a class="dropdown-item" href="{% url 'customers:export' %}?format=xlsx&{{ querystring }}">Excel (.xlsx)</a></li>
+        <li><a class="dropdown-item" href="{% url 'customers:export' %}?format=csv&{{ querystring }}">CSV</a></li>
+      </ul>
+    </div>
+    {% endif %}
+    {% if "customers.import" in business_perms %}
+    <a href="{% url 'customers:import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% endif %}
     {% if "customers.manage" in business_perms %}
     <a href="{% url 'customers:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
     {% endif %}
