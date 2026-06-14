@@ -29,7 +29,7 @@ def platform_admin_required(view_func):
     def wrapper(request, *args, **kwargs):
         if not request.user.is_authenticated:
             return redirect("accounts:login")
-        if not request.user.is_platform_admin:
+        if not request.user.is_platform_staff:
             raise PermissionDenied
         return view_func(request, *args, **kwargs)
 

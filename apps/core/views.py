@@ -12,7 +12,7 @@ def home(request):
     if request.user.is_authenticated:
         if getattr(request, "business", None):
             return redirect("dashboard")
-        if request.user.is_platform_admin:
+        if request.user.is_platform_staff:
             return redirect("platformadmin:dashboard")
         return redirect("tenants:no_business")
     return redirect("accounts:login")

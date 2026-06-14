@@ -70,6 +70,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     def is_locked(self):
         return bool(self.locked_until and self.locked_until > timezone.now())
 
+    @property
+    def is_platform_staff(self):
+        """May access the platform super-admin area. Django superusers
+        always qualify, even without an explicit platform flag and even
+        when they belong to no business workspace."""
+        return bool(self.is_platform_admin or self.is_superuser)
+
 
 class Role(TimeStampedModel):
     """A named permission bundle within one business.

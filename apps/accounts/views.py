@@ -30,6 +30,23 @@ from .models import LoginHistory, Membership, Role, User
 security_log = logging.getLogger("nexapos.security")
 
 
+def _post_login_url(user):
+    """Where to send a user right after login.
+
+    Business members land on their dashboard; platform staff (Django
+    superusers or flagged platform admins) without a workspace go to the
+    platform area instead of being trapped on /no-business/.
+    """
+    has_business = user.memberships.filter(
+        is_active=True, business__is_active=True
+    ).exists()
+    if has_business:
+        return "dashboard"
+    if user.is_platform_staff:
+        return "platformadmin:dashboard"
+    return "tenants:no_business"
+
+
 def login_view(request):
     if request.user.is_authenticated:
         return redirect("dashboard")
@@ -62,7 +79,7 @@ def login_view(request):
             record(True, user)
             audit.log("auth.login", user=user, request=request, module="accounts",
                       description=f"{user.email} signed in.")
-            return redirect(request.GET.get("next") or "dashboard")
+            return redirect(request.GET.get("next") or _post_login_url(user))
 
         # Failure path
         if user:

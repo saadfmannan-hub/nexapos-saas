@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.3.3 — 2026-06-13 — Fix: platform super-admin access without a workspace
+
+### Fixed
+- **Superusers were redirected to `/no-business/` and locked out of
+  `/platform/`.** Two causes: (1) login always redirected to `dashboard`,
+  which requires business membership, so any user without a workspace was
+  bounced to `/no-business/`; (2) the platform guard and home/redirect
+  logic checked only `is_platform_admin`, never `is_superuser`.
+- New `User.is_platform_staff` property (superuser **or** platform admin)
+  is now the single check used by the platform guard, the home router,
+  the post-login redirect, the `/no-business/` page and the nav link.
+  Django superusers always qualify — even with no business and no explicit
+  platform flag.
+- Login now routes platform staff without a workspace to `/platform/`;
+  `/no-business/` redirects them there too instead of dead-ending.
+  `/django-admin/` already worked for superusers (is_staff) and is covered
+  by a regression test.
+
+### Unchanged (verified)
+- Business users still require active workspace membership (a user with no
+  membership and no platform flag still lands on `/no-business/`); business
+  owners still go to their dashboard. Multi-tenant isolation is intact — a
+  superuser with no membership has no active business and cannot reach any
+  tenant's business data.
+
+### Notes
+- No database migration (property only; no model fields changed).
+
+### Test status
+- 198/198 tests passing (10 new in `tests/test_platform_access.py`).
+  Verified against the real account: `admin@nexapos.com`
+  (`is_superuser=True`) → `is_platform_staff=True`, post-login →
+  platform dashboard.
+
 ## 1.3.2 — 2026-06-13 — Fix: simplified invoice number format
 
 ### Changed

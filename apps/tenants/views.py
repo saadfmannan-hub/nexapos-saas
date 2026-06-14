@@ -53,6 +53,10 @@ def no_business_view(request):
         return redirect("accounts:login")
     if getattr(request, "business", None):
         return redirect("dashboard")
+    # Platform staff (superusers / platform admins) without a workspace
+    # belong in the platform area, not on this dead-end page.
+    if request.user.is_platform_staff:
+        return redirect("platformadmin:dashboard")
     return render(request, "tenants/no_business.html")
 
 

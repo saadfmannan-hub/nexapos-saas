@@ -146,7 +146,7 @@
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="{% url 'accounts:profile' %}"><i class="bi bi-person me-2"></i>My profile</a></li>
           <li><a class="dropdown-item" href="{% url 'accounts:change_password' %}"><i class="bi bi-key me-2"></i>Change password</a></li>
-          {% if request.user.is_platform_admin %}
+          {% if request.user.is_platform_staff %}
           <li><a class="dropdown-item" href="{% url 'platformadmin:dashboard' %}"><i class="bi bi-building-gear me-2"></i>Platform admin</a></li>
           {% endif %}
           <li><hr class="dropdown-divider"></li>
