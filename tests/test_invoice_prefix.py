@@ -98,8 +98,8 @@ class InvoicePrefixTests(TenantTestCase):
         self.assertIn("-HO-", s1.invoice_number)
         self.assertIn("-KHD-", s2.invoice_number)
         # each branch starts its own counter at 1
-        self.assertTrue(s1.invoice_number.endswith("000001"))
-        self.assertTrue(s2.invoice_number.endswith("000001"))
+        self.assertTrue(s1.invoice_number.endswith("-001"))
+        self.assertTrue(s2.invoice_number.endswith("-001"))
 
     def test_receipt_invoice_and_statement_show_configured_number(self):
         from apps.customers.models import Customer
@@ -133,3 +133,48 @@ class InvoicePrefixTests(TenantTestCase):
         self._set_prefix("INV")
         numbers = {self.make_sale().invoice_number for _ in range(5)}
         self.assertEqual(len(numbers), 5)
+
+    # ----- exact format required by the spec --------------------------------
+    def test_format_is_prefix_then_three_digit_sequence(self):
+        import re
+
+        self._set_prefix("INV B")
+        s1 = self.make_sale()
+        s2 = self.make_sale()
+        self.assertEqual(s1.invoice_number, "INV B-001")
+        self.assertEqual(s2.invoice_number, "INV B-002")
+        self.assertRegex(s1.invoice_number, r"^INV B-\d{3}$")
+
+    def test_abc_prefix_example(self):
+        self._set_prefix("ABC")
+        self.assertEqual(self.make_sale().invoice_number, "ABC-001")
+        self.assertEqual(self.make_sale().invoice_number, "ABC-002")
+
+    def test_number_has_no_year_or_second_sequence(self):
+        from django.utils import timezone
+
+        self._set_prefix("INV B")
+        number = self.make_sale().invoice_number
+        self.assertNotIn(str(timezone.now().year), number)
+        self.assertNotIn("-000", number)          # old 6-digit block gone
+        self.assertEqual(number.count("-"), 1)     # prefix + one sequence only
+
+    def test_sequence_continues_past_999(self):
+        from apps.sales.models import InvoiceSequence
+        from apps.sales.services import LIFETIME_SEQUENCE
+
+        self._set_prefix("INV B")
+        self.make_sale()  # creates the lifetime counter row
+        InvoiceSequence.objects.filter(
+            business=self.business_a, year=LIFETIME_SEQUENCE
+        ).update(last_number=999)
+        self.assertEqual(self.make_sale().invoice_number, "INV B-1000")
+        self.assertEqual(self.make_sale().invoice_number, "INV B-1001")
+
+    def test_counter_does_not_reset_across_years(self):
+        # The lifetime counter is year-independent, so two sales always
+        # advance the same sequence (no INV B-001 collision next year).
+        self._set_prefix("INV B")
+        n1 = int(self.make_sale().invoice_number.rsplit("-", 1)[1])
+        n2 = int(self.make_sale().invoice_number.rsplit("-", 1)[1])
+        self.assertEqual(n2, n1 + 1)

@@ -49,54 +49,45 @@ def create_default_payment_methods(business):
         )
 
 
+# Sentinel "year" for the lifetime (non-resetting) invoice counter. The
+# number format carries no year, so the counter must never reset — using a
+# fixed key keeps a single ongoing sequence per scope and guarantees the
+# 3-digit running number stays unique across years.
+LIFETIME_SEQUENCE = 0
+
+
 def next_invoice_number(business, branch):
     """Concurrency-safe invoice number driven by Business Settings.
 
-    The base prefix always comes from BusinessSettings.invoice_prefix
-    (the configurable value). When invoice_include_branch_code is on, the
-    branch code is inserted and each branch is numbered independently;
-    otherwise numbering is global per business.
+    Format is the configured prefix + a simple zero-padded running number
+    (minimum 3 digits, growing past 999 naturally). No year, no second
+    sequence:
 
-        INV-2026-000001                (global, default)
-        INV-HK-2026-000001             (per-branch)
+        INV B-001, INV B-002, ... INV B-999, INV B-1000   (default)
+        INV B-HK-001                                       (per-branch opt-in)
 
-    Historical invoice numbers are never touched — only new ones use the
-    current configuration.
+    The counter is lifetime (does not reset per year). Historical invoice
+    numbers are never touched — only new ones use this configuration.
     """
-    from django.db.models import Max
-
     settings_obj = business.settings
-    year = timezone.now().year
     base = (settings_obj.invoice_prefix or "INV").strip() or "INV"
     include_branch = settings_obj.invoice_include_branch_code
 
     seq_branch = branch if include_branch else None
-    seq, created = InvoiceSequence.objects.get_or_create(
-        business=business, branch=seq_branch, year=year
+    seq, _ = InvoiceSequence.objects.get_or_create(
+        business=business, branch=seq_branch, year=LIFETIME_SEQUENCE
     )
-    if created and seq_branch is None:
-        # When switching to global numbering, continue above any existing
-        # per-branch sequence for the year so a new global counter can't
-        # mint a number that an old branch sequence already used.
-        highest = (
-            InvoiceSequence.objects.for_business(business)
-            .filter(year=year).exclude(pk=seq.pk)
-            .aggregate(m=Max("last_number"))["m"]
-        )
-        if highest:
-            seq.last_number = highest
-            seq.save(update_fields=["last_number"])
-
     # select_for_update serializes concurrent finalizations on this counter
     seq = InvoiceSequence.objects.select_for_update().get(pk=seq.pk)
     seq.last_number += 1
     seq.save(update_fields=["last_number"])
 
+    number = f"{seq.last_number:03d}"  # 001..999, then 1000, 1001, ...
     if include_branch:
         segment = (branch.invoice_prefix or branch.code or "").strip()
         if segment:
-            return f"{base}-{segment}-{year}-{seq.last_number:06d}"
-    return f"{base}-{year}-{seq.last_number:06d}"
+            return f"{base}-{segment}-{number}"
+    return f"{base}-{number}"
 
 
 def _resolve_price(product, variant):

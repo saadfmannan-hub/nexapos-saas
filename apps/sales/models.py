@@ -39,10 +39,13 @@ class PaymentMethod(TenantModel):
 
 
 class InvoiceSequence(TenantModel):
-    """Concurrency-safe invoice numbering.
+    """Concurrency-safe invoice numbering counter.
 
     branch is NULL for the global (per-business) scheme and set for the
     per-branch scheme — controlled by BusinessSettings.invoice_include_branch_code.
+    `year` holds the sentinel 0 (services.LIFETIME_SEQUENCE): invoice
+    numbers carry no year, so a single ongoing counter is kept per scope
+    and never resets. Legacy rows with real year values are left intact.
     """
 
     branch = models.ForeignKey(

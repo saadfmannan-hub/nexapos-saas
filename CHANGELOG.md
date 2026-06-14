@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.3.2 — 2026-06-13 — Fix: simplified invoice number format
+
+### Changed
+- **Invoice numbers are now `PREFIX-NNN`** (configured prefix + a simple
+  zero-padded running number, min 3 digits). The year and the second
+  6-digit sequence were removed:
+  `INV B-2026-000010` → `INV B-001`, `INV B-002`, … `INV B-999`,
+  `INV B-1000`, `INV B-1001`. `ABC` → `ABC-001`. The per-branch opt-in
+  becomes `PREFIX-BRANCH-NNN`.
+- The counter is now **lifetime** (year-independent): `InvoiceSequence`
+  uses a sentinel `year=0` (`services.LIFETIME_SEQUENCE`) so a single
+  ongoing sequence per scope never resets — this is what guarantees the
+  short, year-less numbers stay unique across years.
+- Receipt, A4/PDF invoice, sale detail, sales list, customer statement,
+  returns and reports all read the stored `Sale.invoice_number`, so they
+  show the identical new format automatically.
+
+### Notes
+- **No schema migration** — `year=0` is a valid value of the existing
+  field; legacy `InvoiceSequence` rows (real years) are left intact.
+- **Historical invoice numbers are unchanged** (immutable per-sale
+  snapshots); only new sales use the simplified format.
+
+### Test status
+- 188/188 tests passing (5 new format tests incl. the `INV B-001`/`ABC-001`
+  examples and the >999 → 1000 rollover; one per-branch test updated to the
+  3-digit format). Verified live: a new demo sale minted `AK B-000011-001`
+  (no year), shown identically on the receipt, PDF, detail and list, while
+  historical `ML-2026-000004` was untouched.
+
 ## 1.3.1 — 2026-06-13 — Fix: invoice prefix from Business Settings
 
 ### Fixed
