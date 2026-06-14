@@ -20,6 +20,7 @@
       <a class="nav-link {% if pa_nav == 'coupons' %}active{% endif %}" href="{% url 'platformadmin:coupon_list' %}"><i class="bi bi-ticket-perforated"></i> Coupons</a>
       <a class="nav-link {% if pa_nav == 'announcements' %}active{% endif %}" href="{% url 'platformadmin:announcements' %}"><i class="bi bi-megaphone"></i> Announcements</a>
       <a class="nav-link {% if pa_nav == 'audit' %}active{% endif %}" href="{% url 'platformadmin:audit' %}"><i class="bi bi-shield-check"></i> Platform audit</a>
+      <a class="nav-link {% if pa_nav == 'settings' %}active{% endif %}" href="{% url 'platformadmin:settings' %}"><i class="bi bi-gear"></i> Platform settings</a>
       <div class="nav-section">Other</div>
       <a class="nav-link" href="{% url 'dashboard' %}"><i class="bi bi-arrow-left"></i> Back to app</a>
     </nav>
@@ -45,5 +46,6 @@
   </main>
 </div>
 <script src="{% static 'js/bootstrap.bundle.min.js' %}"></script>
+{% block extra_js %}{% endblock %}
 </body>
 </html>

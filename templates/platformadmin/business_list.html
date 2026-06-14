@@ -1,4 +1,5 @@
 {% extends "platformadmin/_base.html" %}
+{% load platform_tags %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">Businesses</h1>
@@ -22,7 +23,7 @@
         <td class="fw-semibold">{{ b.name }}</td>
         <td class="small">{{ b.owner.email }}</td>
         <td class="small">{{ b.subscription.plan.name|default:"—" }}</td>
-        <td>{% if b.subscription %}<span class="badge badge-status bs-{{ b.subscription.effective_status }}">{{ b.subscription.effective_status }}</span>{% endif %}</td>
+        <td>{% sub_status_badge b.subscription %}</td>
         <td class="text-end">{{ b.member_count }}</td>
         <td>{% if b.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Suspended</span>{% endif %}</td>
         <td class="small">{{ b.created_at|date:"Y-m-d" }}</td>

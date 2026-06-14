@@ -47,7 +47,16 @@ class Business(TimeStampedModel):
 
     is_active = models.BooleanField(default=True)
     suspended_at = models.DateTimeField(null=True, blank=True)
+    suspended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="businesses_suspended",
+    )
     suspension_reason = models.CharField(max_length=255, blank=True)
+    reactivated_at = models.DateTimeField(null=True, blank=True)
+    reactivated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="businesses_reactivated",
+    )
     onboarding_completed = models.BooleanField(default=False)
 
     class Meta:

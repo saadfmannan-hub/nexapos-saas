@@ -29,16 +29,29 @@ class SubscriptionMiddleware(MiddlewareMixin):
         sub = getattr(request, "subscription", None)
         if sub is None or sub.is_operational:
             return None
-        if request.method not in WRITE_METHODS:
-            return None
+
         try:
             match = resolve(request.path_info)
         except Exception:
             return None
         if match.namespace in ALLOWED_NAMESPACES or match.url_name in ALLOWED_URL_NAMES:
             return None
+
+        # Platform-configurable behaviour on expiry:
+        #   read_only (default) — block writes only, data stays viewable
+        #   suspend             — block all access until renewed
+        from apps.platformadmin.models import PlatformConfig
+
+        full_suspend = (
+            PlatformConfig.get_solo().expiry_mode == PlatformConfig.ExpiryMode.SUSPEND
+        )
+        if not full_suspend and request.method not in WRITE_METHODS:
+            return None
+
         messages.error(
             request,
+            "Subscription expired. Please contact support."
+            if full_suspend else
             "Your subscription is not active. Data is read-only until the "
             "subscription is renewed.",
         )

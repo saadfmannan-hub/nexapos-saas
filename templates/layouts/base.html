@@ -98,6 +98,16 @@
 </aside>
 
 <div class="np-main">
+  {% if request.support_session %}
+  <div class="support-banner no-print">
+    <i class="bi bi-shield-lock"></i>
+    <span>Support session active — viewing <strong>{{ request.support_session.business_name }}</strong>
+      as owner{% if request.support_admin %} (admin: {{ request.support_admin.email }}){% endif %}.</span>
+    <form method="post" action="{% url 'platformadmin:support_exit' %}" class="ms-auto">{% csrf_token %}
+      <button class="btn btn-light btn-sm fw-semibold"><i class="bi bi-box-arrow-left"></i> Exit support session</button>
+    </form>
+  </div>
+  {% endif %}
   <!-- Topbar -->
   <header class="np-topbar">
     <button class="btn btn-light d-lg-none" onclick="document.getElementById('sidebar').classList.toggle('show')">

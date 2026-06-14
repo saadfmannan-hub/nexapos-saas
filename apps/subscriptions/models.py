@@ -102,9 +102,46 @@ class Subscription(TimeStampedModel):
             return self.Status.ACTIVE
         return self.status
 
+    EXPIRING_SOON_DAYS = 7
+
+    @property
+    def period_ends_on(self):
+        """The date this subscription lapses (trial end or period end)."""
+        if self.status == self.Status.TRIAL:
+            return self.trial_ends_at
+        return self.current_period_end
+
+    @property
+    def days_until_expiry(self):
+        end = self.period_ends_on
+        if not end:
+            return None
+        return (end - timezone.now()).days
+
+    @property
+    def is_expiring_soon(self) -> bool:
+        """Operational but lapses within EXPIRING_SOON_DAYS."""
+        if self.effective_status not in (self.Status.TRIAL, self.Status.ACTIVE):
+            return False
+        days = self.days_until_expiry
+        return days is not None and 0 <= days <= self.EXPIRING_SOON_DAYS
+
+    @property
+    def display_status(self) -> str:
+        """Status used for badges across the platform admin. Layers
+        manual suspension and 'expiring soon' on top of effective_status:
+        suspended > expiring_soon > effective_status."""
+        if self.business_id and not self.business.is_active:
+            return "suspended"
+        if self.is_expiring_soon:
+            return "expiring_soon"
+        return self.effective_status
+
     @property
     def is_operational(self) -> bool:
         """Can the business create new transactions?"""
+        if self.business_id and not self.business.is_active:
+            return False
         return self.effective_status in (
             self.Status.TRIAL, self.Status.ACTIVE, self.Status.GRACE,
         )

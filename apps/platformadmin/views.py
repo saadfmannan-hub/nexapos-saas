@@ -38,30 +38,90 @@ def platform_admin_required(view_func):
 
 @platform_admin_required
 def dashboard(request):
+    from decimal import Decimal
+
     now = timezone.now()
+    today = timezone.localdate()
+    month_start = today.replace(day=1)
+    last_month_end = month_start - timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+
     businesses = Business.objects.all()
-    subs = Subscription.objects.select_related("plan", "business")
+    subs = list(Subscription.objects.select_related("plan", "business"))
+
+    # ---- business metrics by display status -------------------------------
     status_counts = {}
+    mrr = Decimal("0")
     for sub in subs:
-        status_counts[sub.effective_status] = status_counts.get(
-            sub.effective_status, 0) + 1
-    revenue = SubscriptionPayment.objects.aggregate(t=Sum("amount"))["t"] or 0
+        st = sub.display_status
+        status_counts[st] = status_counts.get(st, 0) + 1
+        # MRR: monthly-equivalent price of currently operational paid subs
+        if sub.is_operational and sub.effective_status != Subscription.Status.TRIAL:
+            price = sub.plan.monthly_price or Decimal("0")
+            if sub.billing_cycle == "annual" and sub.plan.annual_price:
+                price = (sub.plan.annual_price / Decimal("12"))
+            mrr += price
+
+    biz_metrics = {
+        "total": businesses.count(),
+        "active": businesses.filter(is_active=True).count(),
+        "suspended": businesses.filter(is_active=False).count(),
+        "trial": status_counts.get("trial", 0),
+        "expiring_soon": status_counts.get("expiring_soon", 0),
+        "expired": status_counts.get("expired", 0),
+        "paid_active": status_counts.get("active", 0),
+    }
+
+    # ---- revenue metrics ---------------------------------------------------
+    payments = SubscriptionPayment.objects
+    revenue_total = payments.aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    revenue_this_month = payments.filter(
+        created_at__date__gte=month_start).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    revenue_last_month = payments.filter(
+        created_at__date__gte=last_month_start,
+        created_at__date__lte=last_month_end).aggregate(
+        t=Sum("amount"))["t"] or Decimal("0")
+
+    # ---- user metrics ------------------------------------------------------
+    active_user_ids = LoginHistory.objects.filter(
+        success=True, created_at__gte=now - timedelta(days=30)
+    ).values_list("user_id", flat=True).distinct()
+    user_metrics = {
+        "total": User.objects.count(),
+        "active": User.objects.filter(pk__in=list(active_user_ids)).count(),
+    }
+
+    # ---- plan distribution (chart) ----------------------------------------
+    plan_dist = (
+        Subscription.objects.values("plan__name")
+        .annotate(c=Count("id")).order_by("-c")
+    )
+    chart_plans = {
+        "labels": [r["plan__name"] for r in plan_dist],
+        "data": [r["c"] for r in plan_dist],
+    }
+    chart_status = {
+        "labels": list(status_counts.keys()),
+        "data": list(status_counts.values()),
+    }
+
+    expiring = [s for s in subs if s.is_expiring_soon][:10]
     recent_failed_logins = LoginHistory.objects.filter(
-        success=False, created_at__gte=now - timedelta(days=1)
-    ).count()
-    recent_businesses = businesses.order_by("-created_at")[:8]
-    expiring = [
-        s for s in subs
-        if s.effective_status in ("trial", "grace")
-    ][:10]
+        success=False, created_at__gte=now - timedelta(days=1)).count()
+
     return render(request, "platformadmin/dashboard.html", {
-        "total_businesses": businesses.count(),
-        "active_businesses": businesses.filter(is_active=True).count(),
-        "total_users": User.objects.count(),
+        "biz": biz_metrics,
+        "mrr": mrr,
+        "revenue_total": revenue_total,
+        "revenue_this_month": revenue_this_month,
+        "revenue_last_month": revenue_last_month,
+        "user_metrics": user_metrics,
         "status_counts": status_counts,
-        "revenue": revenue,
+        "chart_plans": chart_plans,
+        "chart_status": chart_status,
         "recent_failed_logins": recent_failed_logins,
-        "recent_businesses": recent_businesses,
+        "recent_businesses": businesses.select_related(
+            "owner", "subscription__plan").order_by("-created_at")[:8],
         "expiring": expiring,
         "active_grants": SupportAccessGrant.objects.filter(
             revoked_at__isnull=True, expires_at__gt=now).count(),
@@ -136,7 +196,10 @@ def business_action(request, public_id, action):
         reason = request.POST.get("reason", "")[:255]
         business.is_active = False
         business.suspended_at = timezone.now()
+        business.suspended_by = request.user
         business.suspension_reason = reason
+        business.reactivated_at = None
+        business.reactivated_by = None
         business.save()
         if sub:
             sub.status = Subscription.Status.SUSPENDED
@@ -149,6 +212,8 @@ def business_action(request, public_id, action):
         business.is_active = True
         business.suspended_at = None
         business.suspension_reason = ""
+        business.reactivated_at = timezone.now()
+        business.reactivated_by = request.user
         business.save()
         if sub and sub.status == Subscription.Status.SUSPENDED:
             sub.status = Subscription.Status.ACTIVE
@@ -156,10 +221,10 @@ def business_action(request, public_id, action):
                 sub.current_period_start = timezone.now()
                 sub.current_period_end = timezone.now() + timedelta(days=30)
             sub.save()
-        audit.log("platform.business_activated", business=business,
+        audit.log("platform.business_reactivated", business=business,
                   user=request.user, request=request, module="platformadmin",
-                  obj=business, description="Business reactivated.")
-        messages.success(request, f"{business.name} activated.")
+                  obj=business, description="Business reactivated — access restored.")
+        messages.success(request, f"{business.name} reactivated. Access restored immediately.")
     elif action == "extend" and sub:
         days = int(request.POST.get("days", 30))
         plan_id = request.POST.get("plan_id")
@@ -249,6 +314,121 @@ def support_access(request, public_id):
                            severity="high", category="support_access")
                 messages.success(request, "Support access granted and audited.")
     return redirect("platformadmin:business_detail", public_id=public_id)
+
+
+# ---------------------------------------------------------------------------
+# Login As Owner — support-mode impersonation
+# ---------------------------------------------------------------------------
+@platform_admin_required
+def support_login_as(request, public_id):
+    """Start a support session impersonating the business owner."""
+    from apps.platformadmin.middleware import SESSION_KEY
+
+    try:
+        business = Business.objects.select_related("owner").get(public_id=public_id)
+    except Business.DoesNotExist:
+        from django.http import Http404
+        raise Http404
+    if request.method != "POST":
+        return redirect("platformadmin:business_detail", public_id=public_id)
+    reason = request.POST.get("reason", "").strip()
+    if not reason:
+        messages.error(request, "A reason is required to start a support session.")
+        return redirect("platformadmin:business_detail", public_id=public_id)
+    if not business.is_active:
+        messages.error(request, "Reactivate the business before opening a support session.")
+        return redirect("platformadmin:business_detail", public_id=public_id)
+
+    grant = SupportAccessGrant.objects.create(
+        business=business, granted_to=request.user, reason=reason[:300],
+        expires_at=timezone.now() + timedelta(hours=2),
+    )
+    request.session[SESSION_KEY] = {
+        "admin_id": request.user.pk,
+        "owner_id": business.owner_id,
+        "business_id": business.id,
+        "business_name": business.name,
+        "grant_id": grant.pk,
+        "reason": reason[:300],
+        "started": timezone.now().isoformat(),
+    }
+    # Pin the active business to the impersonated tenant
+    from apps.core.middleware import SESSION_BUSINESS_KEY
+
+    request.session[SESSION_BUSINESS_KEY] = business.id
+    audit.log("platform.login_as_owner", business=business, user=request.user,
+              request=request, module="platformadmin", obj=business,
+              description=f"Support session started as owner "
+                          f"{business.owner.email}: {reason}")
+    if business.settings.notify_support_access:
+        from apps.notifications.services import notify
+
+        notify(business, business.owner,
+               "A support session was started on your account",
+               body=f"Reason: {reason}", severity="high",
+               category="support_access")
+    messages.warning(request, f"Support session active — you are now viewing "
+                              f"{business.name} as its owner.")
+    return redirect("dashboard")
+
+
+def support_exit(request):
+    """End the active support session and return to the platform panel.
+
+    Available to the impersonated request (request.user is the owner here),
+    so this is gated on the session context, not platform_admin_required.
+    """
+    from apps.platformadmin.middleware import SESSION_KEY
+
+    data = request.session.get(SESSION_KEY)
+    if not data:
+        return redirect("platformadmin:dashboard")
+    started = data.get("started")
+    duration = ""
+    if started:
+        from django.utils.dateparse import parse_datetime
+
+        start_dt = parse_datetime(started)
+        if start_dt:
+            secs = int((timezone.now() - start_dt).total_seconds())
+            duration = f"{secs // 60}m {secs % 60}s"
+    business = Business.objects.filter(pk=data.get("business_id")).first()
+    audit.log("platform.support_session_ended", business=business,
+              user=getattr(request, "support_admin", None),
+              request=request, module="platformadmin",
+              description=f"Support session on "
+                          f"{data.get('business_name')} ended (duration {duration}).")
+    request.session.pop(SESSION_KEY, None)
+    from apps.core.middleware import SESSION_BUSINESS_KEY
+
+    request.session.pop(SESSION_BUSINESS_KEY, None)
+    messages.success(request, "Support session ended.")
+    return redirect("platformadmin:dashboard")
+
+
+# ---------------------------------------------------------------------------
+# Platform settings
+# ---------------------------------------------------------------------------
+@platform_admin_required
+def platform_settings(request):
+    from .models import PlatformConfig
+
+    config = PlatformConfig.get_solo()
+    if request.method == "POST":
+        mode = request.POST.get("expiry_mode", "")
+        if mode in PlatformConfig.ExpiryMode.values:
+            old = config.expiry_mode
+            config.expiry_mode = mode
+            config.save(update_fields=["expiry_mode", "updated_at"])
+            audit.log("platform.settings_changed", user=request.user,
+                      request=request, module="platformadmin", obj=config,
+                      old_values={"expiry_mode": old},
+                      new_values={"expiry_mode": mode},
+                      description=f"Expiry mode changed {old} → {mode}.")
+            messages.success(request, "Platform settings saved.")
+        return redirect("platformadmin:settings")
+    return render(request, "platformadmin/settings.html",
+                  {"config": config, "modes": PlatformConfig.ExpiryMode.choices})
 
 
 # ---------------------------------------------------------------------------

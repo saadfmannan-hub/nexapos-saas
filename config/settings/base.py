@@ -94,6 +94,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.platformadmin.middleware.SupportSessionMiddleware",
     "apps.core.middleware.BusinessMiddleware",
     "apps.subscriptions.middleware.SubscriptionMiddleware",
 ]

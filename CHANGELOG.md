@@ -1,5 +1,59 @@
 # Changelog
 
+## 1.4.0 — 2026-06-14 — Platform: reactivation, status system, SaaS metrics, support mode, expiry control
+
+### Added
+- **Business reactivation** — suspend/reactivate now record `suspended_by`,
+  `suspended_at`, `suspension_reason`, `reactivated_by`, `reactivated_at`,
+  shown on the business detail page. Both actions audited; reactivation
+  restores access immediately. (Suspension already blocks login/access.)
+- **Subscription status system** — `Subscription.display_status` +
+  `is_expiring_soon` (lapses within 7 days) drive colour-coded badges:
+  Trial (yellow), Active (green), Expiring soon (orange), Expired (red),
+  Suspended (dark red). Applied on the overview, business list and detail
+  via the `sub_status_badge` template tag.
+- **Advanced SaaS metrics** on Platform Overview — MRR (monthly-equivalent
+  of paid active subs), revenue this/last month, total revenue, business
+  counts by status (total/active/trial/expiring/expired/suspended), user
+  metrics (total + active 30d), plan-distribution doughnut and
+  status bar chart (Chart.js).
+- **Login As Owner (support mode)** — a platform admin can open a tenant as
+  its owner via session impersonation (`SupportSessionMiddleware`). Reason
+  required; owner notified; audited on enter and exit (with duration). A
+  sticky "Support session active" banner with an **Exit** button shows
+  throughout; exit returns to the platform panel.
+- **Configurable expiry behaviour** — `PlatformConfig.expiry_mode`
+  (`read_only` default | `suspend`), editable on the new Platform Settings
+  page. Read-only keeps data viewable but blocks new transactions;
+  suspend blocks all access with "Subscription expired. Please contact
+  support." Enforced in `SubscriptionMiddleware`.
+- **Audit** — new actions: `platform.business_reactivated`,
+  `platform.login_as_owner`, `platform.support_session_ended`,
+  `platform.settings_changed` (joining existing suspend/extend/support
+  events; all carry user, tenant, timestamp, IP).
+
+### New models / fields / endpoints
+- Models: `platformadmin.PlatformConfig` (singleton; `expiry_mode`).
+- Fields: `tenants.Business.suspended_by`, `reactivated_at`,
+  `reactivated_by`.
+- Endpoints: `/platform/businesses/<id>/login-as/`,
+  `/platform/support/exit/`, `/platform/settings/`.
+
+### Database migrations
+- `tenants/0003` — add `suspended_by`, `reactivated_at`, `reactivated_by`
+  (nullable FKs / datetime; additive, no data change).
+- `platformadmin/0002` — create `PlatformConfig`.
+
+### Unchanged (verified)
+- Multi-tenant isolation, existing business-owner functionality and
+  permissions are intact; suspended/expired handling builds on the
+  existing subscription enforcement.
+
+### Test status
+- 217/217 tests passing (19 new in `tests/test_platform_enhancements.py`).
+  Verified live: platform dashboard with charts, status badges, full
+  Login-As-Owner enter/banner/exit cycle, and both expiry modes.
+
 ## 1.3.3 — 2026-06-13 — Fix: platform super-admin access without a workspace
 
 ### Fixed

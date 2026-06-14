@@ -40,6 +40,31 @@ class SupportAccessGrant(TimeStampedModel):
         return f"Support access to {self.business} for {self.granted_to}"
 
 
+class PlatformConfig(TimeStampedModel):
+    """Singleton platform-wide settings (row pk=1)."""
+
+    class ExpiryMode(models.TextChoices):
+        READ_ONLY = "read_only", "Read-only (view data, block new transactions)"
+        SUSPEND = "suspend", "Full suspension (block all access)"
+
+    expiry_mode = models.CharField(
+        max_length=12, choices=ExpiryMode.choices, default=ExpiryMode.READ_ONLY,
+        help_text="What happens to a business when its subscription expires.",
+    )
+
+    class Meta:
+        verbose_name = "platform configuration"
+        verbose_name_plural = "platform configuration"
+
+    def __str__(self):
+        return "Platform configuration"
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 class Announcement(TimeStampedModel):
     """Platform-wide announcement shown to business users."""
 

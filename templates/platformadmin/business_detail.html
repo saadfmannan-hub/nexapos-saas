@@ -1,9 +1,15 @@
 {% extends "platformadmin/_base.html" %}
+{% load platform_tags %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h1 class="page-title">{{ business.name }}
-    {% if not business.is_active %}<span class="badge badge-status bs-suspended ms-2 fs-6">Suspended</span>{% endif %}</h1>
-  <a href="{% url 'platformadmin:business_list' %}" class="btn btn-outline-secondary btn-sm">Back</a>
+<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+  <h1 class="page-title">{{ business.name }} {% sub_status_badge sub %}</h1>
+  <div class="d-flex gap-2">
+    {% if business.is_active %}
+    <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#loginAsModal">
+      <i class="bi bi-box-arrow-in-right"></i> Login as owner</button>
+    {% endif %}
+    <a href="{% url 'platformadmin:business_list' %}" class="btn btn-outline-secondary btn-sm">Back</a>
+  </div>
 </div>
 
 <div class="row g-3">
@@ -17,7 +23,14 @@
         <tr><th>Registered</th><td>{{ business.created_at|date:"Y-m-d" }}</td></tr>
         <tr><th>Usage</th><td>{{ usage.branches }} branches · {{ usage.users }} users ·
             {{ usage.products }} products · {{ usage.invoices }} invoices</td></tr>
-        {% if business.suspension_reason %}<tr><th>Suspension reason</th><td>{{ business.suspension_reason }}</td></tr>{% endif %}
+        {% if not business.is_active %}
+        <tr><th>Suspended</th><td>{{ business.suspended_at|date:"Y-m-d H:i" }}
+            {% if business.suspended_by %}by {{ business.suspended_by.email }}{% endif %}</td></tr>
+        {% if business.suspension_reason %}<tr><th>Reason</th><td>{{ business.suspension_reason }}</td></tr>{% endif %}
+        {% elif business.reactivated_at %}
+        <tr><th>Reactivated</th><td>{{ business.reactivated_at|date:"Y-m-d H:i" }}
+            {% if business.reactivated_by %}by {{ business.reactivated_by.email }}{% endif %}</td></tr>
+        {% endif %}
       </table>
     </div></div>
 
@@ -25,7 +38,7 @@
       {% if sub %}
       <div class="d-flex justify-content-between mb-2">
         <strong>{{ sub.plan.name }}</strong>
-        <span class="badge badge-status bs-{{ sub.effective_status }}">{{ sub.effective_status }}</span>
+        {% sub_status_badge sub %}
       </div>
       <div class="small text-secondary mb-3">
         {% if sub.trial_ends_at %}Trial ends {{ sub.trial_ends_at|date:"Y-m-d" }} · {% endif %}
@@ -133,5 +146,29 @@
       </table></div>
     </div>
   </div>
+</div>
+
+<!-- Login As Owner modal -->
+<div class="modal fade" id="loginAsModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post" action="{% url 'platformadmin:login_as' business.public_id %}">{% csrf_token %}
+      <div class="modal-header py-2"><h5 class="modal-title">Login as owner — support mode</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <div class="alert alert-warning py-2 small">
+          You will enter <strong>{{ business.name }}</strong> as its owner
+          ({{ business.owner.email }}). The session is audited and the owner is
+          notified. A banner with an exit button stays visible throughout.
+        </div>
+        <label class="form-label required-star">Reason</label>
+        <input type="text" name="reason" class="form-control" required
+               placeholder="e.g. investigating reported invoice issue">
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-warning"><i class="bi bi-box-arrow-in-right"></i> Start support session</button>
+      </div>
+    </form>
+  </div></div>
 </div>
 {% endblock %}

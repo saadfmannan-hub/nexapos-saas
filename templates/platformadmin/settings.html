@@ -1,0 +1,26 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<h1 class="page-title mb-3">Platform settings</h1>
+<div class="row justify-content-center"><div class="col-lg-7">
+  <div class="card">
+    <div class="card-header">Subscription expiry behaviour</div>
+    <div class="card-body">
+      <p class="small text-secondary">
+        What happens to a business when its subscription expires. Manual
+        suspension always blocks all access regardless of this setting.
+      </p>
+      <form method="post">{% csrf_token %}
+        {% for value, label in modes %}
+        <div class="form-check mb-2">
+          <input class="form-check-input" type="radio" name="expiry_mode"
+                 value="{{ value }}" id="m-{{ value }}"
+                 {% if config.expiry_mode == value %}checked{% endif %}>
+          <label class="form-check-label" for="m-{{ value }}">{{ label }}</label>
+        </div>
+        {% endfor %}
+        <button class="btn btn-primary mt-2">Save settings</button>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}
