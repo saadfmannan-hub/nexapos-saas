@@ -1,7 +1,51 @@
 {% extends "layouts/base.html" %}
 {% load static humanize money_tags %}
 {% block title %}Dashboard — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}
+<style>
+  .owner-dashboard .chart-card {
+    border-radius: 1rem;
+    height: 100%;
+    transition: none;
+  }
+  .owner-dashboard .chart-card:hover {
+    transform: none;
+  }
+  .owner-dashboard .chart-card .card-header {
+    border-bottom: 1px solid #eef2f7;
+    padding: .8rem 1rem;
+  }
+  .owner-dashboard .chart-card .card-body {
+    padding: 1rem 1rem 1.1rem;
+  }
+  .owner-dashboard .chart-frame {
+    position: relative;
+    width: 100%;
+  }
+  .owner-dashboard .chart-frame canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .owner-dashboard .chart-frame-trend { height: clamp(260px, 30vh, 320px); }
+  .owner-dashboard .chart-frame-method { height: 260px; }
+  .owner-dashboard .chart-frame-products,
+  .owner-dashboard .chart-frame-customers,
+  .owner-dashboard .chart-frame-branches { height: 240px; }
+  .owner-dashboard .chart-frame-compact { height: 220px; }
+  @media (max-width: 575.98px) {
+    .owner-dashboard .chart-card .card-body { padding: .85rem; }
+    .owner-dashboard .chart-frame-trend { height: 280px; }
+    .owner-dashboard .chart-frame-method { height: 260px; }
+    .owner-dashboard .chart-frame-products,
+    .owner-dashboard .chart-frame-customers,
+    .owner-dashboard .chart-frame-branches,
+    .owner-dashboard .chart-frame-compact { height: 250px; }
+  }
+</style>
+{% endblock %}
 {% block content %}
+<div class="owner-dashboard">
 {% if onboarding_pending %}
 <div class="alert alert-info d-flex justify-content-between align-items-center">
   <div><i class="bi bi-stars me-2"></i>Finish setting up your business to get the most out of {{ PRODUCT_NAME }}.</div>
@@ -141,31 +185,31 @@
 <div class="row g-3 mb-3">
   <div class="col-lg-8">
     <div class="card chart-card"><div class="card-header">Revenue &amp; profit trend</div>
-      <div class="card-body"><canvas id="trendChart" height="110"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-trend"><canvas id="trendChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Payment methods</div>
-      <div class="card-body"><canvas id="methodChart" height="220"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-method"><canvas id="methodChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Best-selling products</div>
-      <div class="card-body"><canvas id="productChart" height="200"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-products"><canvas id="productChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Top customers</div>
-      <div class="card-body"><canvas id="customerChart" height="200"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-customers"><canvas id="customerChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Sales by branch</div>
-      <div class="card-body"><canvas id="branchChart" height="200"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-branches"><canvas id="branchChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-6">
     <div class="card chart-card"><div class="card-header">Hourly sales pattern</div>
-      <div class="card-body"><canvas id="hourlyChart" height="130"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-compact"><canvas id="hourlyChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-6">
     <div class="card chart-card"><div class="card-header">Inventory movement (14 days)</div>
-      <div class="card-body"><canvas id="movementChart" height="130"></canvas></div></div>
+      <div class="card-body"><div class="chart-frame chart-frame-compact"><canvas id="movementChart"></canvas></div></div></div>
   </div>
 </div>
 
@@ -244,6 +288,7 @@
     </div>
   </div>
 </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -266,6 +311,45 @@
   const CURR = "{{ current_business.currency_display|escapejs }}";
   const fmtMoney = v => (+v).toLocaleString(undefined,
     {minimumFractionDigits: PREC, maximumFractionDigits: PREC}) + ' ' + CURR;
+  Chart.defaults.font.family = '"Segoe UI", system-ui, -apple-system, sans-serif';
+  Chart.defaults.color = '#475569';
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
+
+  const cleanLegend = {
+    labels: {
+      boxWidth: 10,
+      boxHeight: 10,
+      padding: 14,
+      usePointStyle: true,
+      pointStyle: 'rectRounded',
+      font: {size: 12, weight: '600'}
+    }
+  };
+  const chartLayout = extra => ({
+    padding: Object.assign({top: 8, right: 14, bottom: 6, left: 8}, extra || {})
+  });
+  const splitLabel = label => {
+    const text = String(label || '');
+    if (text.length <= 18) return text;
+    const words = text.split(/\s+/);
+    const lines = [];
+    let line = '';
+    words.forEach(word => {
+      const next = line ? `${line} ${word}` : word;
+      if (next.length > 18 && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = next;
+      }
+    });
+    if (line) lines.push(line);
+    return lines.slice(0, 2);
+  };
+  const tickLabel = function(value) {
+    return splitLabel(this.getLabelForValue ? this.getLabelForValue(value) : value);
+  };
 
   // Sparklines inside KPI cards (canvas lives in a fixed-height .spark box)
   const sparks = get('spark-data');
@@ -296,28 +380,37 @@
       backgroundColor: 'transparent', tension: .35, pointRadius: 2, borderDash: [5, 4]});
   new Chart(tctx, {type: 'line', data: {labels: trend.labels, datasets},
     options: {interaction: {mode: 'index', intersect: false},
-              plugins: {legend: {position: 'bottom'},
+              animation: false,
+              layout: chartLayout({right: 18, left: 10}),
+              plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend),
                         tooltip: {callbacks: {
                           label: ctx => `${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`}}},
               scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'},
-                           ticks: {maxTicksLimit: 6}},
+                           ticks: {maxTicksLimit: 6, padding: 8}},
                        x: {grid: {display: false},
-                           ticks: {maxTicksLimit: 14, maxRotation: 0}}}}});
+                           ticks: {maxTicksLimit: 12, maxRotation: 0, padding: 8}}}}});
 
   const methods = get('method-data');
   new Chart(document.getElementById('methodChart'), {
     type: 'doughnut',
     data: {labels: methods.labels, datasets: [{data: methods.data,
-      backgroundColor: palette, borderWidth: 2, borderColor: '#fff'}]},
-    options: {cutout: '62%', plugins: {legend: {position: 'bottom'}}}});
+      backgroundColor: palette, borderWidth: 2, borderColor: '#fff',
+      hoverOffset: 0, hoverBorderWidth: 2}]},
+    options: {animation: false, cutout: '64%', radius: '82%',
+      layout: chartLayout({top: 2, right: 8, bottom: 0, left: 8}),
+      plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend)}}});
 
   const hbar = (id, labels, data, color, label) => new Chart(
     document.getElementById(id), {type: 'bar',
       data: {labels, datasets: [{label, data, backgroundColor: color,
-                                 borderRadius: 6}]},
-      options: {indexAxis: 'y', plugins: {legend: {display: false}},
+                                 borderRadius: 6, hoverBackgroundColor: color}]},
+      options: {animation: false, indexAxis: 'y',
+                layout: chartLayout({right: 18, left: 4}),
+                plugins: {legend: {display: false}},
                 scales: {x: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                         y: {grid: {display: false}}}}});
+                         y: {grid: {display: false},
+                             ticks: {callback: tickLabel, autoSkip: false,
+                                     padding: 8, font: {size: 11}}}}}});
   const products = get('product-data');
   hbar('productChart', products.labels, products.data, '#0d6efd', 'Revenue');
   const customers = get('customer-data');
@@ -326,17 +419,23 @@
   const branchesData = get('branch-data');
   new Chart(document.getElementById('branchChart'), {type: 'bar',
     data: {labels: branchesData.labels, datasets: [{label: 'Sales',
-      data: branchesData.data, backgroundColor: '#0ea5a4', borderRadius: 6}]},
-    options: {plugins: {legend: {display: false}},
+      data: branchesData.data, backgroundColor: '#0ea5a4',
+      hoverBackgroundColor: '#0ea5a4', borderRadius: 6}]},
+    options: {animation: false, layout: chartLayout({right: 14, left: 8}),
+              plugins: {legend: {display: false}},
               scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                       x: {grid: {display: false}}}}});
+                       x: {grid: {display: false},
+                           ticks: {callback: tickLabel, autoSkip: false,
+                                   maxRotation: 0, padding: 8, font: {size: 11}}}}}});
 
   const hourly = get('hourly-data');
   new Chart(document.getElementById('hourlyChart'), {type: 'bar',
     data: {labels: hourly.labels, datasets: [{label: 'Sales', data: hourly.data,
       backgroundColor: hourly.data.map(v => v > 0 ? '#0d6efd' : '#e2e8f0'),
       borderRadius: 4}]},
-    options: {plugins: {legend: {display: false}},
+    options: {animation: false,
+              layout: chartLayout({right: 12, left: 8}),
+              plugins: {legend: {display: false}},
               scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
                        x: {grid: {display: false}}}}});
 
@@ -345,7 +444,9 @@
     data: {labels: movement.labels, datasets: [
       {label: 'Stock in', data: movement.stock_in, backgroundColor: '#16a34a', borderRadius: 4},
       {label: 'Stock out', data: movement.stock_out, backgroundColor: '#dc2626', borderRadius: 4}]},
-    options: {plugins: {legend: {position: 'bottom'}},
+    options: {animation: false,
+              layout: chartLayout({right: 12, left: 8}),
+              plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend)},
               scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
                        x: {grid: {display: false}, stacked: false}}}});
 })();
