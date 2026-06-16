@@ -125,6 +125,11 @@ docker compose up --build
 Services: `web` (Gunicorn, migrations on boot), `db` (PostgreSQL 16),
 `redis`, `worker` (Celery), `beat`. Health check: `/api/v1/health/`.
 
+### Render persistence note
+
+SQLite on Render Free is not persistent. PostgreSQL is required for permanent accounts/data.
+If `DATABASE_URL` is not set, the app falls back to SQLite for development convenience only.
+
 ## Environment variables
 
 See `.env.example`. Key ones:
