@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Workshop Job Card {{ sale.invoice_number }}</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    color: #111827;
+    font-size: 10pt;
+    margin: 0;
+  }
+  .card {
+    max-width: 92mm;
+    margin: 0 auto;
+    border: 1px solid #111827;
+    padding: 8px;
+  }
+  h1 {
+    font-size: 15pt;
+    text-align: center;
+    margin: 0 0 8px;
+    text-transform: uppercase;
+  }
+  .business {
+    text-align: center;
+    font-size: 11pt;
+    font-weight: bold;
+    margin-bottom: 8px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  td, th {
+    padding: 4px 0;
+    vertical-align: top;
+  }
+  th {
+    text-align: left;
+    font-size: 8.5pt;
+    text-transform: uppercase;
+    border-bottom: 1px solid #111827;
+  }
+  .label {
+    width: 34%;
+    color: #374151;
+    font-weight: bold;
+  }
+  .section {
+    border-top: 1px dashed #111827;
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+  .item-row td {
+    border-bottom: 1px dotted #9ca3af;
+    padding: 5px 0;
+  }
+  .qty {
+    width: 24%;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .muted {
+    color: #6b7280;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Workshop Job Card</h1>
+  <div class="business">{{ business.name }}</div>
+
+  <table>
+    <tr><td class="label">Branch</td><td>{{ sale.branch.name }}</td></tr>
+    <tr><td class="label">Bill No</td><td>{{ sale.invoice_number }}</td></tr>
+    <tr><td class="label">Order Date</td><td>{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
+    <tr><td class="label">Delivery Date</td><td>{{ sale.delivery_date|date:"Y-m-d"|default:"Not set" }}</td></tr>
+    <tr><td class="label">Customer</td><td>{{ sale.customer.full_name }}</td></tr>
+    <tr><td class="label">Phone</td><td>{{ sale.customer.mobile|default:"No phone number" }}</td></tr>
+  </table>
+
+  {% if more_options %}
+  <div class="section">
+    <table>
+      {% for item in more_options %}
+      <tr><td class="label">{{ item.label }}</td><td>{{ item.value }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  <div class="section">
+    <table>
+      <thead>
+        <tr><th>Item</th><th class="qty">Qty</th></tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr class="item-row">
+          <td>{{ item.product_name }}</td>
+          <td class="qty">{{ item.quantity|floatformat:"-3" }} {{ item.product.unit.abbreviation|default:"Pcs" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="2" class="muted">No items</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>

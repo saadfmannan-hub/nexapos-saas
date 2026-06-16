@@ -571,6 +571,31 @@ def sale_invoice_pdf(request, public_id):
     return response
 
 
+@require_permission("sales.view")
+def sale_workshop_job_card_pdf(request, public_id):
+    from apps.reports.pdf import render_pdf
+
+    sale = get_tenant_object(
+        Sale.objects.select_related("customer", "branch", "business"),
+        request.business,
+        public_id=public_id,
+    )
+    items = sale.items.select_related("product__unit", "variant")
+    pdf = render_pdf("invoices/workshop_job_card.html", {
+        "sale": sale,
+        "items": items,
+        "business": sale.business,
+        "more_options": customer_services.more_option_values(
+            request.business, sale.customer
+        ),
+    })
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="workshop-job-card-{sale.invoice_number}.pdf"'
+    )
+    return response
+
+
 @require_POST
 @require_permission("customers.payments")
 def sale_payment_add(request, public_id):

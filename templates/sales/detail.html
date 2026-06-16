@@ -9,6 +9,7 @@
     <a href="{% url 'sales:receipt' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Receipt</a>
     <a href="{% url 'sales:invoice' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> A4 invoice</a>
     <a href="{% url 'sales:invoice_pdf' sale.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
+    <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-clipboard-check"></i> Workshop Job Card</a>
     {% if "sales.refund" in business_perms and sale.status != "voided" %}
       <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
     {% endif %}
