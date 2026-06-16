@@ -99,6 +99,14 @@ Demo logins (local development only):
 | Manager | demo-manager@example.com  | DemoPass123!  |
 | Cashier | demo-cashier@example.com  | DemoPass123!  |
 
+### Temporary client demo login
+
+The deployment seeds a temporary demo tenant when `Demo Tailoring` is missing.
+
+| Role           | Email              | Password   |
+|----------------|--------------------|------------|
+| Business Owner | demo@tailoring.com | Demo@2026  |
+
 ### Running tests
 
 ```bash
