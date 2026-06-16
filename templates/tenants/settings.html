@@ -19,14 +19,27 @@
       {% include "components/form_field.html" with field=form.terms_and_conditions %}
       <div class="form-check mb-2">{{ form.show_logo_on_invoice }}
         <label class="form-check-label" for="{{ form.show_logo_on_invoice.id_for_label }}">Show logo on invoice</label></div>
-      <div class="form-check mb-2">{{ form.show_tax_on_receipt }}
-        <label class="form-check-label" for="{{ form.show_tax_on_receipt.id_for_label }}">Show tax breakdown on receipt</label></div>
     </div></div>
     <div class="card mt-3"><div class="card-header">Tax &amp; pricing</div><div class="card-body">
+      <div class="form-check mb-2">{{ form.vat_enabled }}
+        <label class="form-check-label" for="{{ form.vat_enabled.id_for_label }}">VAT Enabled</label></div>
+      {% include "components/form_field.html" with field=form.vat_percentage %}
+      {% include "components/form_field.html" with field=form.vat_registration_number %}
+      <div class="form-check mb-2">{{ form.show_vat_on_invoice_receipt }}
+        <label class="form-check-label" for="{{ form.show_vat_on_invoice_receipt.id_for_label }}">Show VAT on Invoice/Receipt</label></div>
       <div class="form-check mb-2">{{ form.prices_include_tax }}
         <label class="form-check-label" for="{{ form.prices_include_tax.id_for_label }}">Product prices include tax</label></div>
       {% include "components/form_field.html" with field=form.price_rounding %}
       {% include "components/form_field.html" with field=form.max_discount_percent %}
+    </div></div>
+    <div class="card mt-3"><div class="card-header">More Options Fields</div><div class="card-body">
+      <div class="row g-2">
+        {% for field in form %}
+          {% if field.name|slice:":17" == "more_option_label" %}
+          <div class="col-md-6">{% include "components/form_field.html" with field=field %}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
     </div></div>
   </div>
   <div class="col-lg-6">

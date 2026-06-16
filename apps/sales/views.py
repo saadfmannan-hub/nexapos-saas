@@ -10,6 +10,7 @@ from django.views.decorators.http import require_POST
 from apps.core.decorators import business_required, require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
+from apps.customers import services as customer_services
 from apps.customers.models import Customer
 from apps.inventory.models import StockLevel
 from apps.registers import services as register_services
@@ -75,6 +76,7 @@ def pos_view(request):
     ).first()
     settings_obj = request.business.settings
     can_sell_without_shift = settings_obj.allow_sale_without_shift
+    vat_rate = settings_obj.effective_vat_rate
 
     return render(request, "pos/pos.html", {
         "active_nav": "pos",
@@ -92,6 +94,9 @@ def pos_view(request):
         "can_discount": request.membership.has_perm("sales.discount"),
         "can_override_price": request.membership.has_perm("sales.price_override"),
         "can_credit": request.membership.has_perm("sales.credit"),
+        "vat_enabled": settings_obj.vat_enabled,
+        "vat_rate": vat_rate,
+        "show_vat_on_invoice_receipt": settings_obj.show_vat_on_invoice_receipt,
     })
 
 
@@ -124,6 +129,7 @@ def pos_products(request):
             stock_map[(row["product_id"], row["variant_id"])] = float(row["quantity"])
 
     items = []
+    vat_rate = request.business.settings.effective_vat_rate
     for p in qs:
         if p.has_variants:
             for v in p.variants.all():
@@ -134,7 +140,7 @@ def pos_products(request):
                     "name": f"{p.name} — {v.name}",
                     "price": str(v.sale_price if v.sale_price > 0 else p.sale_price),
                     "sku": v.sku or p.sku,
-                    "tax_rate": str(p.effective_tax_rate()),
+                    "tax_rate": str(vat_rate),
                     "stocked": p.is_stocked,
                     "allow_discount": p.allow_discount,
                     "min_price": str(p.minimum_sale_price),
@@ -147,7 +153,7 @@ def pos_products(request):
                 "name": p.name,
                 "price": str(p.sale_price),
                 "sku": p.sku,
-                "tax_rate": str(p.effective_tax_rate()),
+                "tax_rate": str(vat_rate),
                 "stocked": p.is_stocked,
                 "allow_discount": p.allow_discount,
                 "min_price": str(p.minimum_sale_price),
@@ -165,6 +171,7 @@ def pos_barcode(request):
     code = request.GET.get("code", "").strip()
     if not code:
         return JsonResponse({"found": False})
+    vat_rate = request.business.settings.effective_vat_rate
     variant = (
         ProductVariant.objects.for_business(request.business)
         .filter(Q(barcode=code) | Q(sku=code), is_active=True)
@@ -177,7 +184,7 @@ def pos_barcode(request):
             "product_id": p.id, "variant_id": variant.id,
             "name": f"{p.name} — {variant.name}",
             "price": str(variant.sale_price if variant.sale_price > 0 else p.sale_price),
-            "sku": variant.sku or p.sku, "tax_rate": str(p.effective_tax_rate()),
+            "sku": variant.sku or p.sku, "tax_rate": str(vat_rate),
             "stocked": p.is_stocked, "allow_discount": p.allow_discount,
             "min_price": str(p.minimum_sale_price),
         }})
@@ -191,7 +198,7 @@ def pos_barcode(request):
         return JsonResponse({"found": True, "item": {
             "product_id": product.id, "variant_id": None,
             "name": product.name, "price": str(product.sale_price),
-            "sku": product.sku, "tax_rate": str(product.effective_tax_rate()),
+            "sku": product.sku, "tax_rate": str(vat_rate),
             "stocked": product.is_stocked, "allow_discount": product.allow_discount,
             "min_price": str(product.minimum_sale_price),
         }})
@@ -209,6 +216,7 @@ def pos_customers(request):
         "id": c.id, "name": c.full_name, "mobile": c.mobile,
         "balance": str(c.balance), "store_credit": str(c.store_credit),
         "credit_limit": str(c.credit_limit), "is_walk_in": c.is_walk_in,
+        "more_options": customer_services.more_option_values(request.business, c),
     } for c in qs.order_by("-is_walk_in", "full_name")[:15]]
     return JsonResponse({"results": results})
 
@@ -241,6 +249,7 @@ def pos_quick_customer(request):
     return JsonResponse({"ok": True, "customer": {
         "id": customer.id, "name": customer.full_name, "mobile": customer.mobile,
         "balance": "0", "store_credit": "0", "credit_limit": "0", "is_walk_in": False,
+        "more_options": [],
     }})
 
 
@@ -500,10 +509,15 @@ def _render_invoice(request, sale, template, mark_reprint=False):
     if mark_reprint:
         sale.reprint_count += 1
         sale.save(update_fields=["reprint_count"])
+    settings_obj = sale.business.settings
+    first_taxed_item = next((item for item in items if item.tax_rate), None)
+    vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
+    show_vat = bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount))
     return render(request, template, {
         "sale": sale, "items": items, "payments": payments,
-        "business": sale.business, "settings_obj": sale.business.settings,
-        "is_reprint": is_reprint,
+        "business": sale.business, "settings_obj": settings_obj,
+        "is_reprint": is_reprint, "vat_rate": vat_rate,
+        "show_vat": show_vat, "vat_number": settings_obj.vat_number,
     })
 
 
@@ -539,10 +553,16 @@ def sale_invoice_pdf(request, public_id):
     )
     items = sale.items.all()
     payments = sale.payments.select_related("method")
+    settings_obj = sale.business.settings
+    first_taxed_item = next((item for item in items if item.tax_rate), None)
+    vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     pdf = render_pdf("invoices/invoice_a4.html", {
         "sale": sale, "items": items, "payments": payments,
-        "business": sale.business, "settings_obj": sale.business.settings,
+        "business": sale.business, "settings_obj": settings_obj,
         "is_reprint": False, "pdf_mode": True,
+        "vat_rate": vat_rate,
+        "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
+        "vat_number": settings_obj.vat_number,
     })
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (

@@ -89,8 +89,29 @@ class BusinessSettings(TimeStampedModel):
     )
 
     # Tax
+    vat_enabled = models.BooleanField(default=False)
+    vat_percentage = models.DecimalField(max_digits=6, decimal_places=3, default=0)
+    vat_registration_number = models.CharField(max_length=60, blank=True)
+    show_vat_on_invoice_receipt = models.BooleanField(default=True)
     prices_include_tax = models.BooleanField(default=False)
     show_tax_on_receipt = models.BooleanField(default=True)
+
+    # Customer More Options labels. Blank labels stay hidden on customer screens.
+    more_option_label_1 = models.CharField(max_length=80, blank=True)
+    more_option_label_2 = models.CharField(max_length=80, blank=True)
+    more_option_label_3 = models.CharField(max_length=80, blank=True)
+    more_option_label_4 = models.CharField(max_length=80, blank=True)
+    more_option_label_5 = models.CharField(max_length=80, blank=True)
+    more_option_label_6 = models.CharField(max_length=80, blank=True)
+    more_option_label_7 = models.CharField(max_length=80, blank=True)
+    more_option_label_8 = models.CharField(max_length=80, blank=True)
+    more_option_label_9 = models.CharField(max_length=80, blank=True)
+    more_option_label_10 = models.CharField(max_length=80, blank=True)
+    more_option_label_11 = models.CharField(max_length=80, blank=True)
+    more_option_label_12 = models.CharField(max_length=80, blank=True)
+    more_option_label_13 = models.CharField(max_length=80, blank=True)
+    more_option_label_14 = models.CharField(max_length=80, blank=True)
+    more_option_label_15 = models.CharField(max_length=80, blank=True)
 
     # Invoice / receipt
     invoice_prefix = models.CharField(
@@ -140,3 +161,20 @@ class BusinessSettings(TimeStampedModel):
 
     def __str__(self):
         return f"Settings for {self.business}"
+
+    @property
+    def effective_vat_rate(self):
+        return self.vat_percentage if self.vat_enabled else 0
+
+    @property
+    def vat_number(self):
+        return self.vat_registration_number or self.business.tax_registration_number
+
+    @property
+    def more_option_labels(self):
+        labels = []
+        for index in range(1, 16):
+            label = getattr(self, f"more_option_label_{index}", "").strip()
+            if label:
+                labels.append({"key": str(index), "label": label})
+        return labels

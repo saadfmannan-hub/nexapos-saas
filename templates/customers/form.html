@@ -27,6 +27,20 @@
           <div class="col-md-6">{% include "components/form_field.html" with field=form.credit_limit %}</div>
         </div>
         {% include "components/form_field.html" with field=form.notes %}
+        {% if form.more_option_fields %}
+        <div class="border rounded p-3 mb-3">
+          <h2 class="h6 mb-3">More Options</h2>
+          <div class="row">
+            {% for name in form.more_option_fields %}
+              {% for field in form %}
+                {% if field.name == name %}
+                  <div class="col-md-6">{% include "components/form_field.html" with field=field %}</div>
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
         <div class="form-check mb-3">{{ form.is_active }}<label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
         <button class="btn btn-primary">Save customer</button>
         <a href="{% url 'customers:list' %}" class="btn btn-outline-secondary">Cancel</a>

@@ -102,12 +102,15 @@ def _resolve_cost(product, variant):
     return product.average_cost or product.purchase_price
 
 
-def compute_line(product, variant, quantity, unit_price, discount_amount, prices_include_tax):
+def compute_line(
+    product, variant, quantity, unit_price, discount_amount,
+    prices_include_tax, tax_rate=None,
+):
     """Compute one cart line. Returns dict of money parts (tax-exclusive base)."""
     quantity = D(quantity)
     unit_price = money(unit_price)
     discount_amount = money(discount_amount)
-    rate = D(product.effective_tax_rate())
+    rate = D(product.effective_tax_rate() if tax_rate is None else tax_rate)
 
     gross = unit_price * quantity - discount_amount
     if gross < 0:
@@ -170,6 +173,7 @@ def complete_sale(
 
     settings_obj = business.settings
     prices_include_tax = settings_obj.prices_include_tax
+    tax_rate = settings_obj.effective_vat_rate
     invoice_discount = money(invoice_discount)
 
     # ---- compute totals --------------------------------------------------
@@ -196,7 +200,10 @@ def complete_sale(
         discount = money(line.get("discount_amount", ZERO))
         if discount > 0 and not product.allow_discount:
             raise SaleError(f"Discounts are not allowed on {product.name}.")
-        parts = compute_line(product, variant, qty, unit_price, discount, prices_include_tax)
+        parts = compute_line(
+            product, variant, qty, unit_price, discount,
+            prices_include_tax, tax_rate=tax_rate,
+        )
         computed.append((line, parts))
         subtotal += parts["base"]
         tax_total += parts["tax"]

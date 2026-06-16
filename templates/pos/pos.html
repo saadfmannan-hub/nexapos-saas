@@ -107,6 +107,20 @@
         </div>
         <button class="btn btn-outline-danger" title="Clear cart (F8)" @click="clearCart()"><i class="bi bi-trash"></i></button>
       </div>
+      <div class="px-2 py-2 border-bottom small" x-show="customer.more_options && customer.more_options.length">
+        <button class="btn btn-sm btn-outline-secondary w-100 text-start" type="button"
+                data-bs-toggle="collapse" data-bs-target="#customerMoreOptions">
+          <i class="bi bi-card-list me-1"></i>More Options
+        </button>
+        <div class="collapse mt-2" id="customerMoreOptions">
+          <template x-for="item in customer.more_options" :key="item.label">
+            <div class="d-flex justify-content-between gap-2 py-1 border-bottom">
+              <span class="text-secondary" x-text="item.label"></span>
+              <span class="text-end" x-text="item.value"></span>
+            </div>
+          </template>
+        </div>
+      </div>
 
       <div class="pos-cart-items">
         <template x-for="(line, i) in cart" :key="i">
@@ -142,8 +156,9 @@
       </div>
 
       <div class="pos-totals">
-        <div class="d-flex justify-content-between small"><span>Subtotal (excl. tax)</span><span x-text="fmt(totals.base)"></span></div>
-        <div class="d-flex justify-content-between small"><span>Tax</span><span x-text="fmt(totals.tax)"></span></div>
+        <div class="d-flex justify-content-between small"><span>Subtotal</span><span x-text="fmt(totals.base)"></span></div>
+        <div class="d-flex justify-content-between small"><span>VAT %</span><span x-text="vatLabel"></span></div>
+        <div class="d-flex justify-content-between small"><span>VAT Amount</span><span x-text="fmt(totals.tax)"></span></div>
         {% if can_discount %}
         <div class="d-flex justify-content-between small align-items-center my-1 gap-1">
           <span>Invoice discount</span>
@@ -157,7 +172,7 @@
         </div>
         {% endif %}
         <div class="d-flex justify-content-between fs-5 fw-bold border-top pt-2 mt-1">
-          <span>Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
+          <span>Grand Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
         </div>
         <input type="text" class="form-control form-control-sm my-2" placeholder="Sale notes…" x-model="notes">
         <div class="d-flex gap-2">
@@ -183,8 +198,9 @@
           <div class="col-md-5">
             <table class="table table-sm small">
               <tr><td>Subtotal</td><td class="text-end" x-text="fmt(totals.base)"></td></tr>
+              <tr><td>VAT %</td><td class="text-end" x-text="vatLabel"></td></tr>
+              <tr><td>VAT Amount</td><td class="text-end" x-text="fmt(totals.tax)"></td></tr>
               <tr><td>Discount</td><td class="text-end" x-text="fmt(totals.discount)"></td></tr>
-              <tr><td>Tax</td><td class="text-end" x-text="fmt(totals.tax)"></td></tr>
               <tr class="fw-bold fs-6"><td>Grand total</td><td class="text-end" x-text="fmt(totals.total)"></td></tr>
               <tr><td>Paid</td><td class="text-end" x-text="fmt(paidTotal)"></td></tr>
               <tr :class="remaining > 0 ? 'text-danger fw-bold' : ''"><td>Remaining</td><td class="text-end" x-text="fmt(Math.max(0, remaining))"></td></tr>
@@ -281,10 +297,11 @@
 <script>
 function pos() {
   const PREC = {{ precision }};
+  const VAT_RATE = parseFloat("{{ vat_rate|default:'0' }}") || 0;
   return {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
     cart: [], invoiceDiscount: 0, notes: '', deliveryDate: '', busy: false, payError: '',
-    customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0},
+    customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []},
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
     recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
     payments: [], lastSale: {}, heldSales: [], heldCount: {{ held_sales|length }},
@@ -292,6 +309,7 @@ function pos() {
 
     init() { this.loadProducts(); this.$refs.barcode.focus(); },
     fmt(v) { return (parseFloat(v || 0)).toFixed(PREC); },
+    get vatLabel() { return VAT_RATE > 0 ? VAT_RATE.toFixed(3).replace(/\.?0+$/, '') + '%' : '0%'; },
 
     async loadProducts() {
       this.loading = true;
@@ -429,7 +447,7 @@ function pos() {
     newSale() {
       this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
       this.deliveryDate = ''; this.resumedHeldId = null;
-      this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0};
+      this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []};
       this.$refs.barcode.focus();
     },
     clearCart() { if (!this.cart.length || confirm('Clear the current cart?')) this.newSale(); },

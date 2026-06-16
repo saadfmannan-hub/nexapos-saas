@@ -45,6 +45,7 @@ class Customer(TenantModel):
     store_credit = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     loyalty_points = models.DecimalField(max_digits=14, decimal_places=3, default=0)
 
+    more_options = models.JSONField(default=dict, blank=True)
     notes = models.TextField(blank=True)
     is_walk_in = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

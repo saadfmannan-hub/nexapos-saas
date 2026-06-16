@@ -124,9 +124,30 @@ class BusinessProfileForm(forms.ModelForm):
 
 
 class BusinessSettingsForm(forms.ModelForm):
+    FIELD_GROUPS = {
+        "invoice": [
+            "invoice_prefix", "invoice_include_branch_code", "invoice_footer",
+            "receipt_footer", "terms_and_conditions", "show_logo_on_invoice",
+        ],
+        "vat": [
+            "vat_enabled", "vat_percentage", "vat_registration_number",
+            "show_vat_on_invoice_receipt", "prices_include_tax",
+        ],
+        "more_options": [f"more_option_label_{index}" for index in range(1, 16)],
+        "policies": [
+            "price_rounding", "max_discount_percent", "negative_stock_policy",
+            "return_window_days", "allow_sale_without_shift",
+            "require_customer_for_credit",
+        ],
+        "alerts": [
+            "expense_approval_threshold", "adjustment_requires_approval",
+            "notify_low_stock", "notify_credit_overdue", "notify_support_access",
+        ],
+    }
+
     class Meta:
         model = BusinessSettings
-        exclude = ["business", "created_at", "updated_at"]
+        exclude = ["business", "show_tax_on_receipt", "created_at", "updated_at"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -140,3 +161,11 @@ class BusinessSettingsForm(forms.ModelForm):
                 f.widget.attrs.setdefault("rows", 2)
             else:
                 f.widget.attrs.setdefault("class", "form-control")
+
+        self.fields["vat_percentage"].widget.attrs.update({"min": "0", "step": "0.001"})
+        self.fields["vat_registration_number"].label = "VAT Registration Number"
+        self.fields["show_vat_on_invoice_receipt"].label = "Show VAT on Invoice/Receipt"
+        for index in range(1, 16):
+            field = self.fields[f"more_option_label_{index}"]
+            field.label = f"Label {index}"
+            field.required = False

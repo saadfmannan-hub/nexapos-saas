@@ -47,7 +47,7 @@
       <div class="muted">
         {{ sale.branch.name }}{% if sale.branch.address %} · {{ sale.branch.address }}{% endif %}<br>
         {% if business.phone %}Tel: {{ business.phone }} · {% endif %}{{ business.email }}<br>
-        {% if business.tax_registration_number %}Tax Reg. No: {{ business.tax_registration_number }}{% endif %}
+        {% if show_vat and vat_number %}VAT No: {{ vat_number }}{% endif %}
       </div>
     </td>
     <td class="r">
@@ -80,7 +80,7 @@
 <table class="items" style="margin-top:14px">
   <thead><tr>
     <th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th>
-    <th class="r">Discount</th><th class="r">Tax</th><th class="r">Total</th>
+    <th class="r">Discount</th><th class="r">VAT</th><th class="r">Total</th>
   </tr></thead>
   <tbody>
     {% for item in items %}
@@ -114,9 +114,12 @@
     </td>
     <td style="width:45%">
       <table class="totals">
-        <tr><td>Subtotal (excl. tax)</td><td class="r">{{ sale.subtotal }}</td></tr>
+        <tr><td>Subtotal</td><td class="r">{{ sale.subtotal }}</td></tr>
         <tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>
-        <tr><td>Tax</td><td class="r">{{ sale.tax_amount }}</td></tr>
+        {% if show_vat %}
+        <tr><td>VAT %</td><td class="r">{{ vat_rate }}%</td></tr>
+        <tr><td>VAT Amount</td><td class="r">{{ sale.tax_amount }}</td></tr>
+        {% endif %}
         <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}

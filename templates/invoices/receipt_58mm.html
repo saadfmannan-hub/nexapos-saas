@@ -23,12 +23,16 @@
 <div class="c">
   <span class="b lg">{{ business.name }}</span><br>
   {{ sale.branch.name }}<br>
-  {% if business.tax_registration_number %}Tax No: {{ business.tax_registration_number }}<br>{% endif %}
+  {% if show_vat and vat_number %}VAT No: {{ vat_number }}<br>{% endif %}
 </div>
 <hr>
 <table>
   <tr><td>Inv</td><td class="r b">{{ sale.invoice_number }}</td></tr>
   <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"y-m-d H:i" }}</td></tr>
+  {% if not sale.customer.is_walk_in %}
+  <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:14 }}</td></tr>
+  {% if sale.customer.mobile %}<tr><td>Phone</td><td class="r">{{ sale.customer.mobile|truncatechars:14 }}</td></tr>{% endif %}
+  {% endif %}
   {% if is_reprint %}<tr><td colspan="2" class="c b">** DUPLICATE **</td></tr>{% endif %}
   {% if sale.status == "voided" %}<tr><td colspan="2" class="c b lg">** VOIDED **</td></tr>{% endif %}
 </table>
@@ -43,7 +47,7 @@
 <hr>
 <table>
   {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>{% endif %}
-  {% if settings_obj.show_tax_on_receipt %}<tr><td>Tax</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
+  {% if show_vat %}<tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
   <tr class="b lg"><td>TOTAL</td><td class="r">{{ sale.total }}</td></tr>
   {% for p in payments %}<tr><td>{{ p.method.name|truncatechars:12 }}</td><td class="r">{{ p.amount }}</td></tr>{% endfor %}
   {% if sale.change_due > 0 %}<tr class="b"><td>CHANGE</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}

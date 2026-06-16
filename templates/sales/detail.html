@@ -29,7 +29,7 @@
       <div class="card-header">Items</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Price</th>
-          <th class="text-end">Discount</th><th class="text-end">Tax</th><th class="text-end">Total</th>
+          <th class="text-end">Discount</th><th class="text-end">VAT</th><th class="text-end">Total</th>
           {% if show_profit %}<th class="text-end">Profit</th>{% endif %}
           <th class="text-end">Returned</th></tr></thead>
         <tbody>
@@ -79,7 +79,7 @@
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
         <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
         <tr><th>Discount</th><td>{% money sale.discount_amount %}</td></tr>
-        <tr><th>Tax</th><td>{% money sale.tax_amount %}</td></tr>
+        <tr><th>VAT Amount</th><td>{% money sale.tax_amount %}</td></tr>
         {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
         <tr><th>Total</th><td class="fw-bold">{% money sale.total symbol=1 %}</td></tr>
         <tr><th>Paid</th><td>{% money sale.amount_paid %}

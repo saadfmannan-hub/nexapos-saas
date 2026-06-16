@@ -6,6 +6,8 @@ from .models import Customer, CustomerGroup
 
 
 class CustomerForm(TenantStyledModelForm):
+    MORE_OPTION_PREFIX = "more_option_"
+
     class Meta:
         model = Customer
         fields = ["full_name", "code", "mobile", "whatsapp", "email", "address",
@@ -18,6 +20,30 @@ class CustomerForm(TenantStyledModelForm):
         self.fields["group"].queryset = CustomerGroup.objects.for_business(business)
         self.fields["group"].required = False
         self.fields["code"].required = False
+        self.more_option_fields = []
+        current_values = self.instance.more_options or {}
+        for option in business.settings.more_option_labels:
+            field_name = f"{self.MORE_OPTION_PREFIX}{option['key']}"
+            self.fields[field_name] = forms.CharField(
+                label=option["label"],
+                required=False,
+                max_length=255,
+                initial=current_values.get(option["key"], ""),
+                widget=forms.TextInput(attrs={"class": "form-control"}),
+            )
+            self.more_option_fields.append(field_name)
+
+    def save(self, commit=True):
+        customer = super().save(commit=False)
+        customer.more_options = {
+            name.removeprefix(self.MORE_OPTION_PREFIX): self.cleaned_data.get(name, "").strip()
+            for name in self.more_option_fields
+            if self.cleaned_data.get(name, "").strip()
+        }
+        if commit:
+            customer.save()
+            self.save_m2m()
+        return customer
 
     def clean_code(self):
         code = self.cleaned_data.get("code", "").strip()

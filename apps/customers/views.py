@@ -115,6 +115,7 @@ def customer_detail(request, public_id):
         "payments": payments[:25], "returns": returns,
         "payment_form": payment_form, "active_nav": "customers",
         "can_collect": request.membership.has_perm("customers.payments"),
+        "more_options": services.more_option_values(request.business, customer),
     })
 
 

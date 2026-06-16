@@ -31,6 +31,16 @@ def ensure_walk_in_customer(business):
     return customer
 
 
+def more_option_values(business, customer):
+    values = customer.more_options or {}
+    options = []
+    for option in business.settings.more_option_labels:
+        value = str(values.get(option["key"], "")).strip()
+        if value:
+            options.append({"label": option["label"], "value": value})
+    return options
+
+
 def next_customer_code(business):
     count = Customer.objects.for_business(business).count()
     n = count + 1
