@@ -1,9 +1,11 @@
 {% extends "layouts/base.html" %}
 {% block title %}Product — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
+<style>[x-cloak]{display:none!important;}</style>
 <h1 class="page-title mb-3">{% if product %}Edit: {{ product.name }}{% else %}New product{% endif %}</h1>
 {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
-<form method="post" enctype="multipart/form-data">{% csrf_token %}
+<form method="post" enctype="multipart/form-data"
+      x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %})">{% csrf_token %}
 <div class="row g-3">
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Basics</div><div class="card-body">
@@ -15,6 +17,10 @@
       <div class="row">
         <div class="col-6">{% include "components/form_field.html" with field=form.category %}</div>
         <div class="col-6">{% include "components/form_field.html" with field=form.brand %}</div>
+      </div>
+      <div class="form-check mb-2">{{ form.auto_generate_sku }}
+        <label class="form-check-label" for="{{ form.auto_generate_sku.id_for_label }}">Auto Generate SKU</label>
+        {% if form.auto_generate_sku.help_text %}<div class="form-text">{{ form.auto_generate_sku.help_text }}</div>{% endif %}
       </div>
       <div class="row">
         <div class="col-4">{% include "components/form_field.html" with field=form.internal_code %}</div>
@@ -51,16 +57,172 @@
         <div class="col-6">{% include "components/form_field.html" with field=form.opening_stock %}</div>
         <div class="col-6">{% include "components/form_field.html" with field=form.opening_warehouse %}</div>
       </div>
+      <p class="form-text" x-show="productType === 'variant'" x-cloak>For products with variants,
+        the warehouse above is used for each variant's opening stock entered below.</p>
       {% endif %}
       {% include "components/form_field.html" with field=form.preferred_supplier %}
       <div class="form-check">{{ form.is_active }}
         <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
     </div></div>
   </div>
+
+  <!-- ============================ VARIANTS ============================ -->
+  <div class="col-12" x-show="productType === 'variant'" x-cloak>
+    <div class="card border-primary">
+      <div class="card-header bg-primary-subtle">Variants</div>
+      <div class="card-body">
+
+        {% if product and product.variants.exists %}
+        <div class="mb-3">
+          <div class="fw-semibold mb-1">Existing variants</div>
+          <div class="table-responsive"><table class="table table-sm mb-0">
+            <thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th><th class="text-end">Sale price</th><th></th></tr></thead>
+            <tbody>
+              {% for v in product.variants.all %}
+              <tr>
+                <td>{{ v.name }}</td><td class="small">{{ v.sku|default:"—" }}</td>
+                <td class="small">{{ v.barcode|default:"—" }}</td>
+                <td class="text-end">{{ v.sale_price }}</td>
+                <td class="text-end"><a class="btn btn-sm btn-outline-secondary"
+                    href="{% url 'catalog:variant_edit' product.public_id v.public_id %}">Edit</a></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table></div>
+          <p class="form-text mb-0">Generate more combinations below — new variants are added to this list.</p>
+        </div>
+        <hr>
+        {% endif %}
+
+        <!-- Variant type / value builder -->
+        <div class="row g-3">
+          <div class="col-lg-5">
+            <label class="form-label">Variant types &amp; values</label>
+            <template x-for="(t, ti) in types" :key="ti">
+              <div class="border rounded p-2 mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <strong x-text="t.name"></strong>
+                  <button type="button" class="btn btn-sm btn-link text-danger p-0" @click="removeType(ti)">remove type</button>
+                </div>
+                <div class="d-flex flex-wrap gap-1 mb-2">
+                  <template x-for="(val, vi) in t.values" :key="vi">
+                    <span class="badge text-bg-secondary d-inline-flex align-items-center gap-1">
+                      <span x-text="val"></span>
+                      <a href="#" class="text-white text-decoration-none" @click.prevent="t.values.splice(vi,1)">&times;</a>
+                    </span>
+                  </template>
+                  <span class="text-muted small" x-show="!t.values.length">No values yet</span>
+                </div>
+                <div class="input-group input-group-sm" style="max-width:320px">
+                  <input type="text" class="form-control" x-model="t._newValue"
+                         @keydown.enter.prevent="addValue(ti)" placeholder="Add value (e.g. M) and press Enter">
+                  <button type="button" class="btn btn-outline-secondary" @click="addValue(ti)">Add</button>
+                </div>
+              </div>
+            </template>
+
+            <div class="d-flex gap-2 align-items-start">
+              <select class="form-select form-select-sm" style="max-width:150px" x-model="newTypeChoice">
+                <option value="Size">Size</option>
+                <option value="Color">Color</option>
+                <option value="Material">Material</option>
+                <option value="Custom">Custom</option>
+              </select>
+              <input type="text" class="form-control form-control-sm" style="max-width:150px"
+                     x-show="newTypeChoice === 'Custom'" x-model="newTypeCustom" placeholder="Type name">
+              <button type="button" class="btn btn-sm btn-outline-primary" @click="addType()">Add type</button>
+            </div>
+          </div>
+
+          <div class="col-lg-7">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <label class="form-label mb-0">Generated variants</label>
+              <button type="button" class="btn btn-sm btn-secondary" @click="generateVariants()">Generate Variants</button>
+            </div>
+            <div class="table-responsive" x-show="variants.length">
+              <table class="table table-sm align-middle">
+                <thead><tr>
+                  <th>Variant</th><th>SKU</th><th>Barcode</th>
+                  <th>Purchase</th><th>Sale</th><th>Opening</th><th></th>
+                </tr></thead>
+                <tbody>
+                  <template x-for="(v, vi) in variants" :key="vi">
+                    <tr>
+                      <td style="min-width:120px"><input class="form-control form-control-sm" x-model="v.name"></td>
+                      <td style="min-width:110px"><input class="form-control form-control-sm" x-model="v.sku"
+                          x-bind:disabled="autoSku" x-bind:placeholder="autoSku ? 'auto' : ''"></td>
+                      <td style="min-width:110px"><input class="form-control form-control-sm" x-model="v.barcode"></td>
+                      <td style="width:90px"><input type="number" step="any" class="form-control form-control-sm" x-model="v.purchase_price"></td>
+                      <td style="width:90px"><input type="number" step="any" class="form-control form-control-sm" x-model="v.sale_price"></td>
+                      <td style="width:90px"><input type="number" step="any" class="form-control form-control-sm" x-model="v.opening_stock"></td>
+                      <td><button type="button" class="btn btn-sm btn-outline-danger" @click="variants.splice(vi,1)">&times;</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+            <p class="text-muted small" x-show="!variants.length">
+              Add variant types and values on the left, then click <strong>Generate Variants</strong>.</p>
+          </div>
+        </div>
+
+        <input type="hidden" name="variants_json" x-bind:value="JSON.stringify(variants)">
+      </div>
+    </div>
+  </div>
 </div>
+
 <div class="mt-3">
   <button class="btn btn-primary">Save product</button>
   <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Cancel</a>
 </div>
 </form>
+
+<script>
+function productForm(initialType, initialAutoSku) {
+  return {
+    productType: initialType || 'standard',
+    autoSku: !!initialAutoSku,
+    types: [],
+    newTypeChoice: 'Size',
+    newTypeCustom: '',
+    variants: [],
+    addType() {
+      let name = this.newTypeChoice === 'Custom' ? (this.newTypeCustom || '').trim() : this.newTypeChoice;
+      if (!name) return;
+      if (this.types.some(t => t.name.toLowerCase() === name.toLowerCase())) return;
+      this.types.push({ name: name, values: [], _newValue: '' });
+      this.newTypeCustom = '';
+    },
+    removeType(i) { this.types.splice(i, 1); },
+    addValue(ti) {
+      let t = this.types[ti];
+      let val = (t._newValue || '').trim();
+      if (!val) return;
+      if (!t.values.includes(val)) t.values.push(val);
+      t._newValue = '';
+    },
+    generateVariants() {
+      let active = this.types.filter(t => t.values.length);
+      if (!active.length) { this.variants = []; return; }
+      let combos = [{}];
+      active.forEach(t => {
+        let next = [];
+        combos.forEach(c => t.values.forEach(v => {
+          let merged = Object.assign({}, c); merged[t.name] = v; next.push(merged);
+        }));
+        combos = next;
+      });
+      let pp = (document.getElementById('id_purchase_price') || {}).value || '';
+      let sp = (document.getElementById('id_sale_price') || {}).value || '';
+      this.variants = combos.map(attrs => ({
+        name: Object.values(attrs).join(' / '),
+        attributes: attrs,
+        sku: '', barcode: '',
+        purchase_price: pp, sale_price: sp, opening_stock: ''
+      }));
+    }
+  };
+}
+</script>
 {% endblock %}

@@ -1,7 +1,50 @@
 """Catalog defaults and helpers."""
+import re
+
 from django.db import transaction
 
-from .models import Product, Unit
+from .models import Product, ProductVariant, Unit
+
+
+def sku_prefix_for(business):
+    """Per-business auto-SKU prefix: first 3 alphanumeric chars of the
+    business name, uppercased. Falls back to 'SKU' when the name has none."""
+    letters = re.sub(r"[^A-Za-z0-9]", "", business.name or "")[:3].upper()
+    return letters or "SKU"
+
+
+def generate_sku(business, prefix=None, *, taken=None):
+    """Return the next free ``PREFIX-000001`` style SKU for a business.
+
+    Scans existing product and variant SKUs (and any ``taken`` set of SKUs
+    being assigned in the same request) so generated codes never collide
+    within the tenant. Optional ``taken`` lets a caller reserve SKUs across
+    several variants created together before they hit the database.
+    """
+    prefix = prefix or sku_prefix_for(business)
+    taken = taken if taken is not None else set()
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+
+    highest = 0
+    skus = list(
+        Product.objects.for_business(business)
+        .exclude(sku="").values_list("sku", flat=True)
+    ) + list(
+        ProductVariant.objects.for_business(business)
+        .exclude(sku="").values_list("sku", flat=True)
+    ) + list(taken)
+    for sku in skus:
+        match = pattern.match(sku or "")
+        if match:
+            highest = max(highest, int(match.group(1)))
+
+    candidate_n = highest + 1
+    existing = set(skus)
+    while True:
+        candidate = f"{prefix}-{candidate_n:06d}"
+        if candidate not in existing:
+            return candidate
+        candidate_n += 1
 
 
 class ProductInUse(Exception):

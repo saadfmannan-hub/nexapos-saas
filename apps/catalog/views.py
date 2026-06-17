@@ -1,7 +1,9 @@
 import csv
 import io
+import json
 
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
@@ -116,6 +118,8 @@ def product_export(request):
 
 @require_permission("products.manage")
 def product_form(request, public_id=None):
+    from . import services as catalog_services
+
     instance = None
     if public_id:
         instance = get_tenant_object(Product, request.business, public_id=public_id)
@@ -129,25 +133,136 @@ def product_form(request, public_id=None):
     form = ProductForm(request.business, request.POST or None,
                        request.FILES or None, instance=instance)
     if request.method == "POST" and form.is_valid():
-        product = form.save(commit=False)
-        product.business = request.business
-        product.save()
-        opening = form.cleaned_data.get("opening_stock")
-        warehouse = form.cleaned_data.get("opening_warehouse")
-        if not public_id and opening and warehouse and product.is_stocked:
-            inventory.set_opening_stock(
-                business=request.business, warehouse=warehouse, product=product,
-                quantity=opening, unit_cost=product.purchase_price,
-                user=request.user,
-            )
+        auto_sku = form.cleaned_data.get("auto_generate_sku")
+        is_variant = form.cleaned_data.get("product_type") == Product.Type.VARIANT
+
+        # Parse + validate any submitted variant rows BEFORE writing anything,
+        # so a bad row re-renders the form without a partial save.
+        variant_rows, variant_errors = ([], [])
+        if is_variant:
+            variant_rows, variant_errors = _parse_variant_rows(
+                request, request.POST.get("variants_json", ""), auto_sku)
+        if variant_errors:
+            for err in variant_errors:
+                messages.error(request, err)
+            return render(request, "catalog/product_form.html",
+                          {"form": form, "product": instance,
+                           "active_nav": "products"})
+
+        with transaction.atomic():
+            product = form.save(commit=False)
+            product.business = request.business
+            if auto_sku and not product.sku:
+                product.sku = catalog_services.generate_sku(request.business)
+            product.save()
+
+            opening = form.cleaned_data.get("opening_stock")
+            warehouse = form.cleaned_data.get("opening_warehouse")
+            if not public_id and opening and warehouse and product.is_stocked:
+                inventory.set_opening_stock(
+                    business=request.business, warehouse=warehouse, product=product,
+                    quantity=opening, unit_cost=product.purchase_price,
+                    user=request.user,
+                )
+
+            created_variants = 0
+            if is_variant and variant_rows:
+                created_variants = _create_variants(
+                    request, product, variant_rows, warehouse)
+
         audit.log("product.saved", request=request, module="catalog", obj=product,
-                  description=f"Product '{product.name}' saved.")
+                  description=f"Product '{product.name}' saved"
+                              + (f" with {created_variants} variant(s)."
+                                 if created_variants else "."))
         messages.success(request, "Product saved.")
         if product.has_variants:
             return redirect("catalog:product_detail", public_id=product.public_id)
         return redirect("catalog:product_list")
     return render(request, "catalog/product_form.html",
                   {"form": form, "product": instance, "active_nav": "products"})
+
+
+def _parse_variant_rows(request, raw_json, auto_sku):
+    """Validate the variant builder payload. Returns (rows, errors).
+
+    Each row is normalised to a dict; SKU/barcode uniqueness is checked
+    against existing products + variants and within the submitted batch.
+    Auto-SKU rows are validated for uniqueness only when a SKU is supplied
+    (blank ones are generated at save time).
+    """
+    business = request.business
+    if not raw_json.strip():
+        return [], []
+    try:
+        payload = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return [], ["Could not read the variants data. Please try again."]
+    if not isinstance(payload, list):
+        return [], ["Invalid variants data."]
+
+    rows, errors = [], []
+    seen_sku, seen_barcode = set(), set()
+    for idx, item in enumerate(payload, start=1):
+        if not isinstance(item, dict):
+            continue
+        attributes = item.get("attributes") or {}
+        attributes = {str(k).strip(): str(v).strip()
+                      for k, v in attributes.items() if str(k).strip() and str(v).strip()}
+        name = (item.get("name") or "").strip() or " / ".join(attributes.values()) or "Variant"
+        sku = (item.get("sku") or "").strip()
+        barcode = (item.get("barcode") or "").strip()
+
+        if sku:
+            if sku in seen_sku:
+                errors.append(f"Variant {idx}: SKU '{sku}' is repeated.")
+            elif (Product.objects.for_business(business).filter(sku=sku).exists()
+                  or ProductVariant.objects.for_business(business).filter(sku=sku).exists()):
+                errors.append(f"Variant {idx}: SKU '{sku}' is already in use.")
+            seen_sku.add(sku)
+        if barcode:
+            if barcode in seen_barcode:
+                errors.append(f"Variant {idx}: barcode '{barcode}' is repeated.")
+            elif (Product.objects.for_business(business).filter(barcode=barcode).exists()
+                  or ProductVariant.objects.for_business(business).filter(barcode=barcode).exists()):
+                errors.append(f"Variant {idx}: barcode '{barcode}' is already in use.")
+            seen_barcode.add(barcode)
+
+        rows.append({
+            "name": name[:160], "attributes": attributes,
+            "sku": sku[:60], "barcode": barcode[:80],
+            "purchase_price": D(item.get("purchase_price")),
+            "sale_price": D(item.get("sale_price")),
+            "opening_stock": D(item.get("opening_stock")),
+        })
+    return rows, errors
+
+
+def _create_variants(request, product, rows, warehouse):
+    """Create ProductVariant rows (+ opening stock). Assumes rows are
+    already validated. Runs inside the caller's atomic block."""
+    from . import services as catalog_services
+
+    business = request.business
+    reserved = set()
+    created = 0
+    for row in rows:
+        sku = row["sku"]
+        if not sku:  # auto-generate (auto-SKU on, or simply left blank)
+            sku = catalog_services.generate_sku(business, taken=reserved)
+        reserved.add(sku)
+        variant = ProductVariant.objects.create(
+            business=business, product=product, name=row["name"],
+            attributes=row["attributes"], sku=sku, barcode=row["barcode"],
+            purchase_price=row["purchase_price"], sale_price=row["sale_price"],
+        )
+        if row["opening_stock"] and warehouse and product.is_stocked:
+            inventory.set_opening_stock(
+                business=business, warehouse=warehouse, product=product,
+                variant=variant, quantity=row["opening_stock"],
+                unit_cost=row["purchase_price"], user=request.user,
+            )
+        created += 1
+    return created
 
 
 @require_permission("products.view")

@@ -39,6 +39,12 @@ class TaxRateForm(TenantStyledModelForm):
 
 
 class ProductForm(TenantStyledModelForm):
+    auto_generate_sku = forms.BooleanField(
+        required=False, label="Auto Generate SKU",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        help_text="Generate a unique SKU automatically (e.g. NEX-000001). "
+                  "Applies to this product and any generated variants.",
+    )
     opening_stock = forms.DecimalField(
         required=False, min_value=0, decimal_places=3, max_digits=14,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
@@ -78,6 +84,13 @@ class ProductForm(TenantStyledModelForm):
         self.fields["opening_warehouse"].queryset = Warehouse.objects.for_business(business).filter(is_active=True)
         for name in ("category", "brand", "unit", "tax_rate", "preferred_supplier"):
             self.fields[name].required = False
+        # Alpine bindings for the dynamic variants UI / auto-SKU toggle.
+        self.fields["product_type"].widget.attrs["x-model"] = "productType"
+        self.fields["auto_generate_sku"].widget.attrs["x-model"] = "autoSku"
+        self.fields["sku"].widget.attrs["x-bind:disabled"] = "autoSku"
+        self.fields["sku"].widget.attrs["x-bind:placeholder"] = (
+            "autoSku ? 'Auto-generated on save' : ''"
+        )
         if self.instance.pk:  # opening stock only at creation
             del self.fields["opening_stock"]
             del self.fields["opening_warehouse"]
