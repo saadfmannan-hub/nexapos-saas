@@ -1,15 +1,24 @@
 # NexaPOS — Project Status
 
-**Current version:** 1.6.0
-**Status:** Production-ready core; actively maintained.
+**Current version:** 1.6.1
+**Status:** **Demo Ready** — production-ready core; multi-tenant SaaS
+architecture stable; actively maintained.
 **Last verified:** `manage.py check` clean · `makemigrations --check` clean ·
-platform admin suite green (`tests/test_platform_enhancements`, 27/27) ·
-variants suite green (`tests/test_variants`, 13/13).
+full suite **246 tests, 218 passing** · platform admin suite green
+(`tests/test_platform_enhancements`, 27/27) · variants suite green
+(`tests/test_variants`, 13/13) · announcements suite green
+(`tests/test_announcements`, 8/8).
 **Known pre-existing test gap:** 28 money/tax/returns/shift tests currently
-fail due to an earlier VAT rework (business-level `vat_enabled` vs. the
-per-product tax assumed by `tests/base.py`) — unrelated to current work;
-see §7 and CHANGELOG 1.5.0.
+fail (16 failures + 12 errors) due to an earlier VAT rework (business-level
+`vat_enabled` vs. the per-product tax assumed by `tests/base.py`) —
+unrelated to current work; see §7 and CHANGELOG 1.5.0.
+**Latest commits:** `936eb23` (1.6.1 announcement notifications) ·
+`6693442` (1.6.0 variants + auto-SKU) · `c1a0278` (1.5.0 Create Business).
 **Repo head:** see CHANGELOG.md for version history.
+
+**Completion (estimate):** demo / commercial-core scope **~95%**; full
+commercial roadmap incl. Phase 3 (gateways, email/Celery, quotations,
+i18n) **~80%**. See §9 (roadmap) and §10 (demo snapshot).
 
 ---
 
@@ -142,12 +151,16 @@ payments; colour-coded subscription **status system**; **Login-As-Owner**
 support mode with banner + audit; **configurable expiry mode**
 (read-only / suspend); time-limited audited support-access grants;
 **Create Business** (provision a new tenant + owner account + subscription —
-trial or active — with auto-generated credentials, audited) from the panel.
+trial or active — with auto-generated credentials, audited) from the panel;
+**announcement broadcast** (publishing a platform announcement fans out an
+in-app notification to every active member of every active business —
+suspended businesses and inactive memberships excluded, tenant-scoped).
 
 **Cross-cutting** — immutable audit log (business + platform actions),
-in-app notifications, DRF API v1 (tenant + plan gated, health endpoint),
-PWA shell (manifest, offline page, safe service worker), Docker, full
-docs, demo seed command.
+in-app notifications (incl. **platform announcement notifications** with
+bell count, notifications page and mark-as-read), DRF API v1 (tenant + plan
+gated, health endpoint), PWA shell (manifest, offline page, safe service
+worker), Docker, full docs, demo seed command.
 
 ---
 
@@ -187,6 +200,14 @@ docs, demo seed command.
 - **Demo-seed migrations** (`accounts/0004_seed_render_admin`,
   `accounts/0005_seed_demo_tailoring`) are demo-only and now **no-op under
   the test runner** so they no longer pollute the test database.
+- **Thermal receipt payment dates — postponed.** Dated payment history on
+  the 80/58mm thermal receipt is deferred (A4/PDF invoice already shows it).
+- **Coupon redemption flow — verification postponed.** Coupons can be
+  created/edited in platform admin; end-to-end redemption at checkout is not
+  yet verified.
+- **Phase 3 commercial SaaS features — postponed** until the Hetzner VPS
+  migration and a persistent production database are in place (payment
+  gateways, transactional email + Celery sweeps, quotations, i18n/RTL).
 - **Reserved stock** is always 0 in inventory export (no reservation
   subsystem); available == current. Stated honestly, not faked.
 - **Product export Warehouse/Branch columns** show "All" with total stock
@@ -233,23 +254,71 @@ Services: `web` (Gunicorn, migrates on boot), `db` (PostgreSQL 16),
 
 ### Tests
 ```bash
-python manage.py test               # full suite (217 tests)
-python manage.py test tests.test_tenancy   # isolation only
+python manage.py test               # full suite (246 tests; 218 pass,
+                                    # 28 VAT-cluster failures — see §7)
+python manage.py test tests.test_tenancy           # isolation only
+python manage.py test tests.test_variants          # variants + auto-SKU
+python manage.py test tests.test_announcements     # announcement fan-out
+python manage.py test tests.test_platform_enhancements  # platform admin
 ```
 
 ---
 
-## 9. Next development priorities
+## 9. Roadmap
 
-1. **Payment gateway integration** (Stripe-first) on the existing
+### Immediate priorities (after the demo)
+1. **Reconcile the VAT test baseline** (28 failing tests) — enable VAT in
+   `tests/base.py` to match the business-level VAT behaviour, or restore
+   per-product tax. Restores a fully green suite. (§7)
+2. **Hetzner VPS migration + persistent production PostgreSQL** — the
+   gateway for everything in Phase 3 below.
+3. **Verify the coupon redemption flow** end-to-end at checkout.
+4. **Thermal receipt payment dates** — bring the dated-payment history to
+   the 80/58mm receipt (parity with the A4/PDF invoice).
+
+### Phase 3 — commercial SaaS (post-migration)
+5. **Payment gateway integration** (Stripe-first) on the existing
    `SubscriptionPayment` + checkout-ready architecture — biggest
    commercial unlock.
-2. **Email backend + transactional emails** (invoices, statements, trial/
-   expiry notices) and the **Celery beat** sweeps for expiry/overdue.
-3. **Quotations module** (and a Balance Sheet report) — the only document
+6. **Email backend + transactional emails** (invoices, statements, trial/
+   expiry notices) and the **Celery beat** sweeps for expiry/overdue, plus
+   **async announcement fan-out** for large tenant counts.
+7. **Quotations module** (and a Balance Sheet report) — the only document
    types the prompts asked for that aren't built yet.
-4. **i18n/Arabic + RTL** rollout using the existing scaffolding.
-5. **Async exports / background jobs** for very large datasets.
-6. **Dark mode** theme pass.
+8. **i18n/Arabic + RTL** rollout using the existing scaffolding.
+9. **Async exports / background jobs** for very large datasets.
+10. **Dark mode** theme pass.
 
 See CLAUDE_HANDOFF.md for the detailed map a new session needs.
+
+---
+
+## 10. Demo readiness snapshot
+
+**Status: Demo Ready.** Multi-tenant SaaS architecture stable.
+
+**Completed & verified for demo**
+- Create Business (Platform Admin → new tenant + owner + subscription)
+- Product Variants builder + Auto SKU generation
+- Announcement notifications (platform → business users)
+- Product export · Inventory export
+- Customer statement PDF
+- Sale void / delete · Product archive / delete
+- Invoice PDF
+- Support sessions (Login-As-Owner)
+
+**Subscription plans configured**
+- **Trial** (Limited)
+- **Starter** (Basic)
+- **Business** (Recommended)
+- **Enterprise** (Gold)
+
+> Plan names/limits are data-driven and editable in Platform Admin → Plans;
+> the four tiers above are the configured demo set.
+
+**Open items carried into the demo** (none block the demo flow)
+- VAT test cluster — documented pre-existing issue (§7).
+- Thermal receipt payment dates — postponed (§7).
+- Coupon redemption flow — verification postponed (§7).
+- Phase 3 commercial features — postponed until Hetzner VPS migration and
+  persistent production database (§7, §9).

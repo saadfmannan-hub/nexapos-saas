@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to NexaPOS. Current version: **1.6.0**.
+All notable changes to NexaPOS. Current version: **1.6.1**.
 Format: newest first. Each entry notes SaaS-platform and POS changes.
 
 ## Major milestones completed
@@ -16,11 +16,52 @@ Format: newest first. Each entry notes SaaS-platform and POS changes.
 | 1.4.0 | Platform/SaaS expansion | Business reactivation, subscription status system, SaaS metrics + charts, Login-As-Owner support mode, configurable expiry mode, extended platform audit. |
 | 1.5.0 | Platform: Create Business | Platform admin can provision a new business + owner account + subscription (trial or active) from the admin panel, with auto-generated credentials and platform audit. |
 | 1.6.0 | Product Variants Builder + Auto SKU | Dynamic variant builder on product create/edit (types → values → generate combinations with SKU/barcode/prices/opening stock); auto-SKU generation from business-name initials. |
+| 1.6.1 | Platform Announcement Notifications | Publishing a platform announcement now fans out tenant-scoped in-app notifications to all active members of active businesses (suspended businesses / inactive memberships excluded), with bell, notifications page and mark-as-read. |
 
 Implementation also tracked phase-by-phase in DEVELOPMENT_PROGRESS.md /
 PROJECT_PLAN.md. Detailed per-version notes follow.
 
 ---
+
+## 1.6.1 — 2026-06-18 — Platform Announcement Notifications
+
+### Fixed
+- **Platform announcements never reached business users.** Publishing an
+  announcement only stored an `Announcement` row and created **no**
+  `Notification` records, so the bell, unread count, notifications page and
+  mark-as-read (all of which read from `Notification`) showed nothing. Root
+  cause: the publish path had no fan-out — the announcement and notification
+  systems were entirely disconnected.
+
+### Added
+- **`notifications.services.broadcast_announcement(announcement, *, link="")`**
+  — on publish, fans out one in-app `Notification` (category
+  `"announcement"`) to **every active member of every active business**, in
+  a single `transaction.atomic`. **Suspended businesses** (`is_active=False`)
+  and **inactive memberships** are skipped. Each notification is scoped to
+  its recipient's business, so the existing tenant-isolated bell count,
+  notifications list and mark-as-read work unchanged. Returns the recipient
+  count, surfaced in the platform admin success message.
+- `apps/platformadmin/views.py` `announcement_list` now calls the fan-out
+  after creating the announcement.
+
+### Unchanged (verified)
+- Multi-tenant isolation intact — a recipient only ever sees their own
+  business's notification; cross-tenant mark-as-read is blocked.
+- No unrelated notification behaviour was modified (downstream bell, list
+  page and mark-as-read are reused as-is).
+
+### Database migrations
+- **None.** Uses the existing `Notification.category` field.
+  `makemigrations --check` is clean.
+
+### Test status
+- New `tests/test_announcements.py` — **8 tests, all passing**: fan-out to
+  all active members of both tenants, tenant-scoped rows, content/severity
+  copied, unread count increments, suspended business excluded, inactive
+  membership excluded, owner view + mark-read, and cross-tenant mark-read
+  blocked. Verified live in the browser preview (publish → bell badge →
+  notifications page → mark-as-read). Commit `936eb23`.
 
 ## 1.6.0 — 2026-06-18 — Product Variants Builder + Auto SKU Generation
 
@@ -75,6 +116,7 @@ PROJECT_PLAN.md. Detailed per-version notes follow.
   duplicate/colliding variant SKUs rejected with no partial save, auto-SKU
   on product and variants (all unique), and `generate_sku` /
   `sku_prefix_for` unit coverage. Verified live in the browser preview.
+  Commit `6693442`.
 - **Known pre-existing issue (unchanged):** the ~28 money/tax/returns/
   shift failures from the VAT rework remain open and were not touched
   (see 1.5.0 and §7 of PROJECT_STATUS).
@@ -129,7 +171,7 @@ PROJECT_PLAN.md. Detailed per-version notes follow.
 - New `CreateBusinessTests` (8 tests) in
   `tests/test_platform_enhancements.py`, all passing; the full
   `test_platform_enhancements` module is green (27/27). `manage.py check`
-  clean; `makemigrations --check` clean.
+  clean; `makemigrations --check` clean. Commit `c1a0278`.
 - **Known pre-existing issue (not introduced here):** 28 money/tax/
   returns/shift tests currently fail because of an earlier **VAT rework** —
   `sales.services.complete_sale` now derives tax from the business-level
