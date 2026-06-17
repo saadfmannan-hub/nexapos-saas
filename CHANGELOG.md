@@ -1,5 +1,25 @@
 # Changelog
 
+All notable changes to NexaPOS. Current version: **1.4.0**.
+Format: newest first. Each entry notes SaaS-platform and POS changes.
+
+## Major milestones completed
+
+| Version | Theme | Highlights |
+|---|---|---|
+| 1.0.0 | Initial commercial release | Full multi-tenant POS SaaS: tenancy, auth/RBAC, catalog+variants, ledger inventory, POS + invoices/receipts, customers/credit, suppliers/purchases, registers/shifts, expenses, dashboard + 19 reports, subscriptions, platform admin, audit, notifications, API v1, PWA, Docker, docs. 95 tests. |
+| 1.1.0 | Production bug-fix sprint | Payment precision fix, customer-detail crash fix, PO print/PDF/email/share, money formatting + currency registry, subscription limit enforcement + upgrade page, premium dashboard (trends/sparklines/widgets), POS UX, P&L/cash-flow/expense reports. |
+| 1.1.x | Dashboard regression + targeted fixes | Sparkline sizing, icon-font paths, service-worker cache, register branch dropdown, revenue trend zero-fill. |
+| 1.2.0 | Business controls | Delivery dates + statuses, multi-payment ledger, customer statements, product/sale lifecycle (archive/restore/delete, void/delete), extended audit. |
+| 1.3.0 | Data tools (Phase 2.1) | Customer statement PDF redesign, customer import/export, product export, inventory import/export. |
+| 1.3.x | Targeted fixes | Invoice prefix from Business Settings → simplified `PREFIX-NNN` format; platform super-admin access without a workspace. |
+| 1.4.0 | Platform/SaaS expansion | Business reactivation, subscription status system, SaaS metrics + charts, Login-As-Owner support mode, configurable expiry mode, extended platform audit. |
+
+Implementation also tracked phase-by-phase in DEVELOPMENT_PROGRESS.md /
+PROJECT_PLAN.md. Detailed per-version notes follow.
+
+---
+
 ## 1.4.0 — 2026-06-14 — Platform: reactivation, status system, SaaS metrics, support mode, expiry control
 
 ### Added
