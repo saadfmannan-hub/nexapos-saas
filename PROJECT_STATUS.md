@@ -1,9 +1,10 @@
 # NexaPOS — Project Status
 
-**Current version:** 1.5.0
+**Current version:** 1.6.0
 **Status:** Production-ready core; actively maintained.
 **Last verified:** `manage.py check` clean · `makemigrations --check` clean ·
-platform admin suite green (`tests/test_platform_enhancements`, 27/27).
+platform admin suite green (`tests/test_platform_enhancements`, 27/27) ·
+variants suite green (`tests/test_variants`, 13/13).
 **Known pre-existing test gap:** 28 money/tax/returns/shift tests currently
 fail due to an earlier VAT rework (business-level `vat_enabled` vs. the
 per-product tax assumed by `tests/base.py`) — unrelated to current work;
@@ -106,9 +107,12 @@ pipeline**. Edit templates/CSS directly.
 default roles + custom roles), branches & warehouses, subscription plans.
 
 **Catalog & inventory** — categories/brands/units/taxes, products with
-variants, barcodes + label printing, CSV/XLSX import **and export**,
-archive/restore/safe-delete, ledger-based stock, transfers, adjustments,
-physical counts, valuation, low-stock alerts, **inventory import/export**.
+variants (**dynamic variant builder** on create/edit: types → values →
+generate combinations with SKU/barcode/prices/opening stock; **auto-SKU**
+from business-name initials), barcodes + label printing, CSV/XLSX import
+**and export**, archive/restore/safe-delete, ledger-based stock, transfers,
+adjustments, physical counts, valuation, low-stock alerts, **inventory
+import/export**.
 
 **POS & sales** — touch POS (barcode, search, cart, split payments,
 change, hold/resume, quick discount/qty, recent customers, keyboard

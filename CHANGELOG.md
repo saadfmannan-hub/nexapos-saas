@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to NexaPOS. Current version: **1.5.0**.
+All notable changes to NexaPOS. Current version: **1.6.0**.
 Format: newest first. Each entry notes SaaS-platform and POS changes.
 
 ## Major milestones completed
@@ -15,11 +15,69 @@ Format: newest first. Each entry notes SaaS-platform and POS changes.
 | 1.3.x | Targeted fixes | Invoice prefix from Business Settings → simplified `PREFIX-NNN` format; platform super-admin access without a workspace. |
 | 1.4.0 | Platform/SaaS expansion | Business reactivation, subscription status system, SaaS metrics + charts, Login-As-Owner support mode, configurable expiry mode, extended platform audit. |
 | 1.5.0 | Platform: Create Business | Platform admin can provision a new business + owner account + subscription (trial or active) from the admin panel, with auto-generated credentials and platform audit. |
+| 1.6.0 | Product Variants Builder + Auto SKU | Dynamic variant builder on product create/edit (types → values → generate combinations with SKU/barcode/prices/opening stock); auto-SKU generation from business-name initials. |
 
 Implementation also tracked phase-by-phase in DEVELOPMENT_PROGRESS.md /
 PROJECT_PLAN.md. Detailed per-version notes follow.
 
 ---
+
+## 1.6.0 — 2026-06-18 — Product Variants Builder + Auto SKU Generation
+
+### Added
+- **Dynamic variant builder on the product create/edit page.** Selecting
+  product type "Product with variants" now reveals a Variants section
+  (Alpine.js, no build step) — previously nothing appeared and variants
+  could only be added one-by-one on a separate page after saving. Users:
+  - add **variant types** (Size / Color / Material / Custom) with multiple
+    values each (e.g. Size: S, M, L, XL · Color: Black, White);
+  - click **Generate Variants** to produce every combination
+    (M / Black, M / White, L / Black, L / White, …);
+  - edit each generated row's **SKU, Barcode (optional), Purchase Price,
+    Sale Price and Opening Stock** before saving.
+  Product, variants and per-variant opening stock are persisted in one
+  `transaction.atomic` block; opening stock flows through the existing
+  `inventory.set_opening_stock` ledger (no new ledger logic). Variant
+  SKU/barcode uniqueness is validated across products + variants and
+  within the batch — a bad row re-renders the form with no partial save.
+- **Auto SKU generation.** A new **"Auto Generate SKU"** checkbox on the
+  product form. When enabled, the product and every generated variant
+  receive a unique `PREFIX-000001` style SKU; the prefix comes from the
+  **business-name initials** (e.g. "Nexa Retail" → `NEX-000001`, "Demo
+  Tailoring" → `DEM-000001`), falling back to `SKU` when the name has no
+  letters. `catalog.services.generate_sku` scans existing product and
+  variant SKUs (and codes reserved earlier in the same request) so
+  generated values never collide within the tenant. When the checkbox is
+  off, manual SKU entry is unchanged.
+- **Append-only edit mode.** On an existing variant product, the builder
+  adds new combinations while existing variants are listed read-only with
+  links to the current per-variant edit page — the existing per-variant
+  editing flow is unchanged.
+
+### Unchanged (verified)
+- **Simple/standard products are unaffected** — all variant logic is gated
+  on `product_type == "variant"`; standard, service and non-stock paths
+  behave exactly as before, and stray variant payloads are ignored.
+- Multi-tenant isolation, the POS sale flow, the inventory ledger logic
+  (beyond the required per-variant opening-stock call) and the audit core
+  are untouched.
+
+### Database migrations
+- **None.** Reuses existing `Product` / `ProductVariant` / stock models;
+  `generate_sku` scans rather than adding a sequence table.
+  `makemigrations --check` is clean.
+
+### Test status
+- New `tests/test_variants.py` — **13 tests, all passing**: simple product
+  still saves (regression) and ignores stray variant payloads, manual
+  duplicate SKU rejected, variant product creates rows + per-variant
+  opening stock, generated combinations save with attributes/prices,
+  duplicate/colliding variant SKUs rejected with no partial save, auto-SKU
+  on product and variants (all unique), and `generate_sku` /
+  `sku_prefix_for` unit coverage. Verified live in the browser preview.
+- **Known pre-existing issue (unchanged):** the ~28 money/tax/returns/
+  shift failures from the VAT rework remain open and were not touched
+  (see 1.5.0 and §7 of PROJECT_STATUS).
 
 ## 1.5.0 — 2026-06-17 — Platform: Create Business
 
