@@ -3,6 +3,7 @@
 This is additive and idempotent. It creates Demo Tailoring only when that
 business is missing, and rollback does not delete or alter any data.
 """
+import sys
 from decimal import Decimal
 
 from django.contrib.auth.hashers import make_password
@@ -105,6 +106,10 @@ DEFAULT_EXPENSE_CATEGORIES = [
 
 
 def seed_demo_tailoring(apps, schema_editor):
+    # Demo-only seed: never populate the test database (keeps the test
+    # suite running on a clean, predictable dataset).
+    if "test" in sys.argv:
+        return
     User = apps.get_model("accounts", "User")
     Business = apps.get_model("tenants", "Business")
     BusinessSettings = apps.get_model("tenants", "BusinessSettings")

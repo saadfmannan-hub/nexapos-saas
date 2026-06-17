@@ -6,10 +6,11 @@ from decimal import Decimal
 from django.urls import reverse
 from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.models import Membership, User
 from apps.audit.models import AuditLog
 from apps.platformadmin.models import PlatformConfig
-from apps.subscriptions.models import Subscription
+from apps.subscriptions.models import Plan, Subscription, SubscriptionPayment
+from apps.tenants.models import Business
 
 from .base import TenantTestCase
 
@@ -189,6 +190,106 @@ class LoginAsOwnerTests(PlatformBaseTest):
             reverse("platformadmin:login_as", args=[self.business_a.public_id]),
             {"reason": "x"})
         self.assertEqual(r.status_code, 403)
+
+
+class CreateBusinessTests(PlatformBaseTest):
+    def setUp(self):
+        super().setUp()
+        self.plan = Plan.objects.filter(is_active=True).first()
+
+    def _payload(self, **overrides):
+        data = {
+            "business_name": "Gamma Stores",
+            "country": "Oman",
+            "currency": "OMR",
+            "business_category": "Grocery",
+            "owner_name": "Gamma Owner",
+            "owner_email": "gamma-owner@example.com",
+            "phone": "+96890000000",
+            "password": "",
+            "plan": self.plan.pk,
+            "subscription_mode": "trial",
+            "days": "",
+            "amount": "",
+            "reference": "",
+        }
+        data.update(overrides)
+        return data
+
+    def test_create_business_creates_owner_membership_and_lists(self):
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload())
+        self.assertEqual(r.status_code, 302)
+        business = Business.objects.get(name="Gamma Stores")
+        self.assertEqual(business.owner.email, "gamma-owner@example.com")
+        # Owner membership created with the owner role
+        membership = Membership.objects.get(business=business,
+                                            user=business.owner)
+        self.assertTrue(membership.role.is_owner)
+        # Default provisioning ran (branch + trial subscription)
+        self.assertTrue(hasattr(business, "subscription"))
+        # Appears in the businesses list
+        listing = self.client.get(reverse("platformadmin:business_list"))
+        self.assertContains(listing, "Gamma Stores")
+
+    def test_password_provided_lets_owner_log_in(self):
+        self.client.post(reverse("platformadmin:business_create"),
+                         self._payload(password="OwnerPass123!"))
+        owner = User.objects.get(email="gamma-owner@example.com")
+        self.assertTrue(owner.check_password("OwnerPass123!"))
+
+    def test_blank_password_is_auto_generated_and_shown_once(self):
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload(), follow=True)
+        owner = User.objects.get(email="gamma-owner@example.com")
+        self.assertTrue(owner.has_usable_password())
+        self.assertContains(r, "password:")
+
+    def test_active_mode_sets_period_and_records_payment(self):
+        self.client.post(reverse("platformadmin:business_create"),
+                         self._payload(subscription_mode="active", days="30",
+                                       amount="25.000", reference="bank-001"))
+        sub = Business.objects.get(name="Gamma Stores").subscription
+        self.assertEqual(sub.status, Subscription.Status.ACTIVE)
+        self.assertIsNotNone(sub.current_period_end)
+        self.assertTrue(sub.current_period_end > timezone.now())
+        self.assertTrue(SubscriptionPayment.objects.filter(
+            subscription=sub, reference="bank-001").exists())
+
+    def test_trial_mode_with_explicit_days(self):
+        self.client.post(reverse("platformadmin:business_create"),
+                         self._payload(subscription_mode="trial", days="21"))
+        sub = Business.objects.get(name="Gamma Stores").subscription
+        self.assertEqual(sub.status, Subscription.Status.TRIAL)
+        self.assertIsNotNone(sub.trial_ends_at)
+        delta = (sub.trial_ends_at - timezone.now()).days
+        self.assertGreaterEqual(delta, 19)
+        self.assertLessEqual(delta, 21)
+
+    def test_create_is_audited(self):
+        self.client.post(reverse("platformadmin:business_create"),
+                         self._payload())
+        business = Business.objects.get(name="Gamma Stores")
+        self.assertTrue(AuditLog.objects.filter(
+            action="platform.business_created", business=business).exists())
+
+    def test_duplicate_email_rejected(self):
+        before = Business.objects.count()
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload(owner_email="owner-a@example.com"))
+        self.assertEqual(r.status_code, 200)  # re-renders form with errors
+        self.assertContains(r, "already exists")
+        self.assertEqual(Business.objects.count(), before)
+
+    def test_non_platform_user_cannot_create(self):
+        self.client.logout()
+        self.client.force_login(self.owner_a)
+        r = self.client.get(reverse("platformadmin:business_create"))
+        self.assertEqual(r.status_code, 403)
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload())
+        self.assertEqual(r.status_code, 403)
+        self.assertFalse(Business.objects.filter(name="Gamma Stores").exists())
 
 
 class ExpiryModeTests(PlatformBaseTest):

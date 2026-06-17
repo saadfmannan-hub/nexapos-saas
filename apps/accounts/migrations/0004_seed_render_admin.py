@@ -4,6 +4,8 @@ This migration is intentionally additive and idempotent. It only creates
 admin@nexapos.com when that user is missing, and rollback does not delete
 or change any user data.
 """
+import sys
+
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, migrations
 
@@ -19,6 +21,10 @@ def _model_has_field(model, field_name):
 
 
 def seed_render_admin(apps, schema_editor):
+    # Demo-only seed: never populate the test database (keeps the test
+    # suite running on a clean, predictable dataset).
+    if "test" in sys.argv:
+        return
     User = get_user_model()
     db_alias = schema_editor.connection.alias
     manager = User._default_manager.db_manager(db_alias)

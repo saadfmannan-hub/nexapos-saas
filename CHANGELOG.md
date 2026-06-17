@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to NexaPOS. Current version: **1.4.0**.
+All notable changes to NexaPOS. Current version: **1.5.0**.
 Format: newest first. Each entry notes SaaS-platform and POS changes.
 
 ## Major milestones completed
@@ -14,11 +14,74 @@ Format: newest first. Each entry notes SaaS-platform and POS changes.
 | 1.3.0 | Data tools (Phase 2.1) | Customer statement PDF redesign, customer import/export, product export, inventory import/export. |
 | 1.3.x | Targeted fixes | Invoice prefix from Business Settings → simplified `PREFIX-NNN` format; platform super-admin access without a workspace. |
 | 1.4.0 | Platform/SaaS expansion | Business reactivation, subscription status system, SaaS metrics + charts, Login-As-Owner support mode, configurable expiry mode, extended platform audit. |
+| 1.5.0 | Platform: Create Business | Platform admin can provision a new business + owner account + subscription (trial or active) from the admin panel, with auto-generated credentials and platform audit. |
 
 Implementation also tracked phase-by-phase in DEVELOPMENT_PROGRESS.md /
 PROJECT_PLAN.md. Detailed per-version notes follow.
 
 ---
+
+## 1.5.0 — 2026-06-17 — Platform: Create Business
+
+### Added
+- **Platform Admin → Create Business** — a platform admin can provision a
+  complete new tenant from `/platform/businesses/new/` (linked from a
+  "Create business" button on the Businesses list). One transactional
+  flow:
+  1. Creates the **owner `User`** account (email login).
+  2. Provisions the **business** via the existing
+     `tenants.services.provision_business()` — default roles + owner
+     membership, head-office branch, main warehouse, default catalog,
+     payment methods, register and expense categories.
+  3. Assigns a **subscription** on a chosen `Plan`: either **Trial**
+     (trial-days, defaulting to the plan's `trial_days`) or **Active**
+     (paid period in days, with an optional recorded `SubscriptionPayment`
+     — reusing the same logic as the existing "extend" action).
+  4. **Generates login credentials** — the admin may type a password or
+     leave it blank to auto-generate a strong one, which is shown **once**
+     on the success message for the admin to share.
+  5. Writes a **`platform.business_created`** audit entry (module
+     `platformadmin`, the acting admin as user) on top of the
+     `business.registered` tenant audit entry from provisioning.
+  6. The new business immediately appears in the Platform Admin
+     **Businesses** list.
+
+### New endpoints / templates
+- Endpoint: `/platform/businesses/new/` (`platformadmin:business_create`).
+- View + form: `business_create` and `BusinessCreateForm` in
+  `apps/platformadmin/views.py`.
+- Template: `templates/platformadmin/business_create.html`; "Create
+  business" button added to `templates/platformadmin/business_list.html`.
+
+### Database migrations
+- **None.** The feature reuses existing models and the
+  `provision_business` service; no schema change.
+  `makemigrations --check` is clean.
+
+### Maintenance — demo-seed migrations no longer pollute the test DB
+- `accounts/0004_seed_render_admin` and `accounts/0005_seed_demo_tailoring`
+  are demo-only data seeds. They were running against the **test**
+  database (Django applies all migrations when building it), which added a
+  third business and a `trial_days=0` demo plan — masking real failures.
+  Both now **no-op under the test runner** (`"test" in sys.argv`); live and
+  demo databases are unaffected. This restores a clean, predictable test
+  dataset.
+
+### Test status
+- New `CreateBusinessTests` (8 tests) in
+  `tests/test_platform_enhancements.py`, all passing; the full
+  `test_platform_enhancements` module is green (27/27). `manage.py check`
+  clean; `makemigrations --check` clean.
+- **Known pre-existing issue (not introduced here):** 28 money/tax/
+  returns/shift tests currently fail because of an earlier **VAT rework** —
+  `sales.services.complete_sale` now derives tax from the business-level
+  `BusinessSettings.effective_vat_rate` (`vat_enabled` defaults to off)
+  instead of each product's `tax_rate`, while `tests/base.py` and those
+  tests still assume per-product tax. These failures are unrelated to the
+  Create Business feature and were previously hidden by the demo-seed
+  migrations above (which made the same tests error earlier with
+  `SubscriptionInactive`). Reconciling the VAT test baseline is tracked
+  separately and intentionally left untouched here.
 
 ## 1.4.0 — 2026-06-14 — Platform: reactivation, status system, SaaS metrics, support mode, expiry control
 

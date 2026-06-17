@@ -1,9 +1,14 @@
 # NexaPOS — Project Status
 
-**Current version:** 1.4.0
+**Current version:** 1.5.0
 **Status:** Production-ready core; actively maintained.
-**Last verified:** `manage.py check` clean · **217/217 automated tests passing** · full-page smoke test green.
-**Repo head:** `2430740` (see CHANGELOG.md for version history).
+**Last verified:** `manage.py check` clean · `makemigrations --check` clean ·
+platform admin suite green (`tests/test_platform_enhancements`, 27/27).
+**Known pre-existing test gap:** 28 money/tax/returns/shift tests currently
+fail due to an earlier VAT rework (business-level `vat_enabled` vs. the
+per-product tax assumed by `tests/base.py`) — unrelated to current work;
+see §7 and CHANGELOG 1.5.0.
+**Repo head:** see CHANGELOG.md for version history.
 
 ---
 
@@ -131,7 +136,9 @@ user metrics + charts; plans/coupons/announcements; business suspend +
 **reactivate** (with who/when/why); subscription/trial extension &
 payments; colour-coded subscription **status system**; **Login-As-Owner**
 support mode with banner + audit; **configurable expiry mode**
-(read-only / suspend); time-limited audited support-access grants.
+(read-only / suspend); time-limited audited support-access grants;
+**Create Business** (provision a new tenant + owner account + subscription —
+trial or active — with auto-generated credentials, audited) from the panel.
 
 **Cross-cutting** — immutable audit log (business + platform actions),
 in-app notifications, DRF API v1 (tenant + plan gated, health endpoint),
@@ -164,6 +171,18 @@ docs, demo seed command.
 
 ## 7. Known issues / caveats
 
+- **VAT test baseline mismatch (pre-existing, open).** Tax is now computed
+  from the business-level `BusinessSettings.effective_vat_rate`
+  (`vat_enabled` defaults off) in `sales.services.complete_sale`, but
+  `tests/base.py` and ~28 money/tax/returns/shift tests still assume the
+  older **per-product** `tax_rate`, so they fail with `tax_amount == 0`.
+  This is unrelated to the Create Business feature; it surfaced after the
+  demo-seed migrations (which previously masked it) were guarded out of the
+  test DB. Reconcile by enabling VAT in the fixture (or restoring
+  per-product tax) — left untouched pending a decision.
+- **Demo-seed migrations** (`accounts/0004_seed_render_admin`,
+  `accounts/0005_seed_demo_tailoring`) are demo-only and now **no-op under
+  the test runner** so they no longer pollute the test database.
 - **Reserved stock** is always 0 in inventory export (no reservation
   subsystem); available == current. Stated honestly, not faked.
 - **Product export Warehouse/Branch columns** show "All" with total stock

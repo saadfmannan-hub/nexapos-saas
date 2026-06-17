@@ -9,15 +9,19 @@ from functools import wraps
 
 from django import forms
 from django.contrib import messages
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.shortcuts import redirect, render
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 from apps.accounts.models import LoginHistory, Membership, User
 from apps.audit import services as audit
 from apps.audit.models import AuditLog
+from apps.core.currencies import currency_choices, precision_for
 from apps.subscriptions.models import Coupon, Plan, Subscription, SubscriptionPayment
 from apps.tenants.models import Business
 
@@ -268,6 +272,163 @@ def business_action(request, public_id, action):
                   description=f"Trial extended {days} days.")
         messages.success(request, "Trial extended.")
     return redirect("platformadmin:business_detail", public_id=public_id)
+
+
+# ---------------------------------------------------------------------------
+# Create Business — platform admin provisions a new tenant + owner account
+# ---------------------------------------------------------------------------
+class BusinessCreateForm(forms.Form):
+    """Platform admin: create a new business with an owner account and a
+    subscription. Reuses the same validation rules as public registration."""
+
+    INPUT = {"class": "form-control"}
+    SELECT = {"class": "form-select"}
+
+    business_name = forms.CharField(
+        max_length=150,
+        widget=forms.TextInput(attrs={**INPUT, "placeholder": "e.g. Sunrise Trading"}),
+    )
+    country = forms.CharField(
+        max_length=100, required=False, widget=forms.TextInput(attrs=INPUT))
+    currency = forms.ChoiceField(
+        choices=currency_choices(), initial="USD",
+        widget=forms.Select(attrs=SELECT))
+    business_category = forms.ChoiceField(
+        required=False,
+        choices=[("", "—")] + [
+            (c, c) for c in [
+                "Clothing", "Perfumes", "Mobile & Accessories", "Electronics",
+                "Grocery", "General Trading", "Gifts", "Hardware", "Tailoring",
+                "Services", "Wholesale", "Other",
+            ]
+        ],
+        widget=forms.Select(attrs=SELECT))
+
+    owner_name = forms.CharField(
+        max_length=150, label="Owner full name",
+        widget=forms.TextInput(attrs=INPUT))
+    owner_email = forms.EmailField(
+        label="Owner email", widget=forms.EmailInput(attrs=INPUT))
+    phone = forms.CharField(
+        max_length=30, required=False, label="Owner phone",
+        widget=forms.TextInput(attrs=INPUT))
+    password = forms.CharField(
+        required=False, label="Password (leave blank to auto-generate)",
+        widget=forms.PasswordInput(attrs={**INPUT, "autocomplete": "new-password"}))
+
+    plan = forms.ModelChoiceField(
+        queryset=Plan.objects.filter(is_active=True),
+        widget=forms.Select(attrs=SELECT))
+    subscription_mode = forms.ChoiceField(
+        choices=[("trial", "Trial"), ("active", "Active (paid)")],
+        initial="trial", widget=forms.Select(attrs=SELECT))
+    days = forms.IntegerField(
+        required=False, min_value=1, label="Days (trial / paid period)",
+        help_text="Leave blank to use the plan's trial length.",
+        widget=forms.NumberInput(attrs=INPUT))
+    amount = forms.DecimalField(
+        required=False, min_value=0, label="Payment amount (optional)",
+        widget=forms.NumberInput(attrs=INPUT))
+    reference = forms.CharField(
+        max_length=120, required=False, label="Payment reference (optional)",
+        widget=forms.TextInput(attrs=INPUT))
+
+    def clean_owner_email(self):
+        email = self.cleaned_data["owner_email"].lower()
+        if User.objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError(
+                "An account with this email already exists.")
+        return email
+
+    def clean(self):
+        data = super().clean()
+        if data.get("password"):
+            validate_password(data["password"])
+        return data
+
+
+@platform_admin_required
+def business_create(request):
+    form = BusinessCreateForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        from apps.tenants.services import provision_business
+
+        cd = form.cleaned_data
+        currency_code = cd["currency"]
+        generated_password = ""
+        password = cd.get("password")
+        if not password:
+            password = get_random_string(12)
+            generated_password = password
+
+        with transaction.atomic():
+            owner = User.objects.create_user(
+                email=cd["owner_email"],
+                password=password,
+                full_name=cd["owner_name"],
+                phone=cd.get("phone", ""),
+            )
+            business = provision_business(
+                owner=owner,
+                name=cd["business_name"],
+                country=cd.get("country", ""),
+                currency_code=currency_code,
+                currency_precision=precision_for(currency_code, default=2),
+                business_category=cd.get("business_category", ""),
+                phone=cd.get("phone", ""),
+                plan=cd["plan"],
+                request=request,
+            )
+
+            sub = business.subscription
+            now = timezone.now()
+            days = cd.get("days")
+            if cd["subscription_mode"] == "active":
+                # Mirror the existing "extend" action: active paid period.
+                period_days = days or 30
+                sub.status = Subscription.Status.ACTIVE
+                sub.current_period_start = now
+                sub.current_period_end = now + timedelta(days=period_days)
+                sub.save()
+                amount = cd.get("amount")
+                if amount:
+                    SubscriptionPayment.objects.create(
+                        subscription=sub, amount=amount,
+                        currency_code=sub.plan.currency_code,
+                        method="manual",
+                        reference=cd.get("reference", "")[:120],
+                        period_start=sub.current_period_start,
+                        period_end=sub.current_period_end,
+                        recorded_by=request.user,
+                    )
+            elif days:
+                # Trial with an explicit length overriding the plan default.
+                sub.status = Subscription.Status.TRIAL
+                sub.trial_ends_at = now + timedelta(days=days)
+                sub.save()
+
+            audit.log(
+                "platform.business_created", business=business,
+                user=request.user, request=request, module="platformadmin",
+                obj=business,
+                description=f"Business '{business.name}' created with owner "
+                            f"{owner.email} on plan {sub.plan.name}.")
+
+        if generated_password:
+            messages.success(
+                request,
+                f"Business '{business.name}' created. Owner login — "
+                f"email: {owner.email} · password: {generated_password} "
+                "(shown once; copy it now).")
+        else:
+            messages.success(
+                request,
+                f"Business '{business.name}' created. Owner: {owner.email}.")
+        return redirect("platformadmin:business_detail",
+                        public_id=business.public_id)
+
+    return render(request, "platformadmin/business_create.html",
+                  {"form": form, "pa_nav": "businesses"})
 
 
 @platform_admin_required

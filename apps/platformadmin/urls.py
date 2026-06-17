@@ -7,6 +7,7 @@ app_name = "platformadmin"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("businesses/", views.business_list, name="business_list"),
+    path("businesses/new/", views.business_create, name="business_create"),
     path("businesses/<uuid:public_id>/", views.business_detail, name="business_detail"),
     path("businesses/<uuid:public_id>/support-access/", views.support_access, name="support_access"),
     path("businesses/<uuid:public_id>/login-as/", views.support_login_as, name="login_as"),

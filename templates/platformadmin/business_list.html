@@ -3,6 +3,8 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">Businesses</h1>
+  <div class="d-flex gap-2 align-items-center">
+  <a href="{% url 'platformadmin:business_create' %}" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Create business</a>
   <form class="d-flex gap-2" method="get">
     <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Business or owner email…">
     <select name="status" class="form-select form-select-sm">
@@ -12,6 +14,7 @@
     </select>
     <button class="btn btn-sm btn-primary">Filter</button>
   </form>
+  </div>
 </div>
 <div class="card"><div class="table-responsive">
   <table class="table table-hover mb-0">
