@@ -669,10 +669,19 @@ def announcement_list(request):
     if request.method == "POST":
         title = request.POST.get("title", "").strip()
         if title:
-            Announcement.objects.create(
+            from django.urls import reverse
+
+            from apps.notifications import services as notifications
+
+            announcement = Announcement.objects.create(
                 title=title[:160], body=request.POST.get("body", ""),
             )
-            messages.success(request, "Announcement published.")
+            sent = notifications.broadcast_announcement(
+                announcement, link=reverse("notifications:list"))
+            messages.success(
+                request,
+                f"Announcement published and delivered to {sent} "
+                f"recipient{'' if sent == 1 else 's'} across active businesses.")
         return redirect("platformadmin:announcements")
     announcements = Announcement.objects.all()[:50]
     return render(request, "platformadmin/announcements.html",
