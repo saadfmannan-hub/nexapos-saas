@@ -365,3 +365,123 @@ body.pa-admin .text-reset { color: var(--pa-text) !important; }
   body.pa-admin .pa-profile .pa-email { display: none; }
   body.pa-admin .np-topbar { padding: .7rem .9rem; }
 }
+
+/* ==================================================================
+   Hover / focus contrast fixes (scoped to body.pa-admin)
+   ------------------------------------------------------------------
+   app.css (and Bootstrap) apply LIGHT hover backgrounds (e.g.
+   `.table-hover tbody tr:hover { background:#f8fafd }`). On the dark
+   theme that left light text on a light background (invisible). These
+   rules force every interactive surface to keep a dark hover background
+   with light, readable text. `!important` is used only to beat the
+   earlier light-theme rules of equal specificity loaded before this file.
+   ================================================================== */
+
+/* --- Table rows ------------------------------------------------- */
+body.pa-admin .table {
+  --bs-table-hover-bg: rgba(37, 99, 235, 0.12);
+  --bs-table-hover-color: #F9FAFB;
+  --bs-table-active-bg: rgba(37, 99, 235, 0.16);
+  --bs-table-active-color: #F9FAFB;
+}
+body.pa-admin .table-hover > tbody > tr:hover,
+body.pa-admin .table-hover tbody tr:hover {
+  background-color: rgba(37, 99, 235, 0.12) !important;
+  color: #F9FAFB !important;
+}
+body.pa-admin .table-hover > tbody > tr:hover > *,
+body.pa-admin .table-hover tbody tr:hover > * {
+  background-color: rgba(37, 99, 235, 0.12) !important;
+  color: #F9FAFB !important;
+}
+body.pa-admin .table-hover tbody tr:hover .fw-semibold { color: #F9FAFB !important; }
+body.pa-admin .table-hover tbody tr:hover .text-secondary,
+body.pa-admin .table-hover tbody tr:hover .small,
+body.pa-admin .table-hover tbody tr:hover .text-muted { color: #E5E7EB !important; }
+/* Badges stay readable on a hovered row */
+body.pa-admin .table-hover tbody tr:hover .badge-status,
+body.pa-admin .table-hover tbody tr:hover .sub-badge { color: inherit; }
+
+/* --- Sidebar nav ------------------------------------------------ */
+body.pa-admin .np-sidebar .nav-link:hover,
+body.pa-admin .np-sidebar .nav-link:focus {
+  background: var(--pa-surface-2) !important;
+  color: #F9FAFB !important;
+}
+body.pa-admin .np-sidebar .nav-link:hover i { color: #93b4ff; }
+
+/* --- Buttons ---------------------------------------------------- */
+body.pa-admin .btn-outline-primary:hover,
+body.pa-admin .btn-outline-primary:focus,
+body.pa-admin .btn-outline-primary:active {
+  background-color: var(--pa-primary) !important;
+  border-color: var(--pa-primary) !important;
+  color: #fff !important;
+}
+body.pa-admin .btn-outline-secondary:hover,
+body.pa-admin .btn-outline-secondary:focus {
+  background-color: var(--pa-surface-2) !important;
+  border-color: var(--pa-border-strong) !important;
+  color: #F9FAFB !important;
+}
+body.pa-admin .btn-light:hover,
+body.pa-admin .btn-light:focus {
+  background-color: #2a3647 !important;
+  border-color: var(--pa-border) !important;
+  color: #F9FAFB !important;
+}
+body.pa-admin .btn-primary:hover,
+body.pa-admin .btn-primary:focus {
+  background-color: #1d4ed8 !important;
+  border-color: #1d4ed8 !important;
+  color: #fff !important;
+}
+
+/* --- Quick action cards ---------------------------------------- */
+body.pa-admin .pa-action:hover,
+body.pa-admin .pa-action:focus { background: #131c2e; color: #F9FAFB; }
+body.pa-admin .pa-action:hover .pa-action-title,
+body.pa-admin .pa-action:hover .pa-action-sub,
+body.pa-admin .pa-action:hover .pa-action-arrow { color: #F9FAFB; }
+
+/* --- KPI / wrapper anchors ------------------------------------- */
+body.pa-admin a.text-decoration-none:hover .kpi-card,
+body.pa-admin a.text-reset:hover { color: #F9FAFB; }
+
+/* --- Top header icons + profile -------------------------------- */
+body.pa-admin .pa-icon-btn:hover,
+body.pa-admin .pa-icon-btn:focus { background: #273345 !important; color: #F9FAFB !important; }
+body.pa-admin .pa-profile:hover { background: #273345; }
+body.pa-admin .pa-profile .btn:hover,
+body.pa-admin .pa-profile .btn:focus { background: transparent !important; color: #F9FAFB !important; }
+
+/* --- Dropdown menus (Bootstrap) -------------------------------- */
+body.pa-admin .dropdown-menu { background: var(--pa-surface); border-color: var(--pa-border); }
+body.pa-admin .dropdown-item { color: #E5E7EB; }
+body.pa-admin .dropdown-item:hover,
+body.pa-admin .dropdown-item:focus { background-color: var(--pa-surface-2) !important; color: #F9FAFB !important; }
+
+/* --- Tabs / pills / list-group action -------------------------- */
+body.pa-admin .nav-tabs .nav-link:hover,
+body.pa-admin .nav-tabs .nav-link:focus {
+  background: var(--pa-surface-2) !important; color: #F9FAFB !important;
+  border-color: var(--pa-border) !important;
+}
+body.pa-admin .nav-pills .nav-link:hover,
+body.pa-admin .nav-pills .nav-link:focus { background: var(--pa-surface-2) !important; color: #F9FAFB !important; }
+body.pa-admin .list-group-item-action:hover,
+body.pa-admin .list-group-item-action:focus {
+  background-color: var(--pa-surface-2) !important; color: #F9FAFB !important;
+}
+
+/* --- Filter inputs / selects ----------------------------------- */
+body.pa-admin .form-control:hover,
+body.pa-admin .form-select:hover {
+  background-color: var(--pa-surface-2) !important; color: #F9FAFB !important;
+}
+body.pa-admin .form-select option { background: var(--pa-surface); color: #F9FAFB; }
+
+/* --- Content links --------------------------------------------- */
+body.pa-admin a:not(.btn):not(.nav-link):not(.pa-action):not(.text-decoration-none):not(.text-reset):hover {
+  color: #bfd3ff;
+}
