@@ -1,94 +1,171 @@
 {% extends "platformadmin/_base.html" %}
 {% load static humanize platform_tags %}
 {% block content %}
-<h1 class="page-title mb-3">Platform overview</h1>
 
-<!-- Revenue metrics -->
-<div class="row g-3 mb-1">
-  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
-    <div class="kpi-label">Monthly recurring revenue</div>
-    <div class="kpi-value">{{ mrr|floatformat:2|intcomma }}</div>
-    <div class="small text-secondary">MRR (paid, active)</div>
-  </div></div></div>
-  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
-    <div class="kpi-label">Revenue this month</div>
-    <div class="kpi-value">{{ revenue_this_month|floatformat:2|intcomma }}</div>
-    <div class="small text-secondary">Last month: {{ revenue_last_month|floatformat:2|intcomma }}</div>
-  </div></div></div>
-  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
-    <div class="kpi-label">Total subscription revenue</div>
-    <div class="kpi-value">{{ revenue_total|floatformat:2|intcomma }}</div>
-  </div></div></div>
-  <div class="col-6 col-xl-3"><div class="card kpi-card"><div class="card-body">
-    <div class="kpi-label">Users</div>
-    <div class="kpi-value">{{ user_metrics.total|intcomma }}</div>
-    <div class="small text-secondary">{{ user_metrics.active }} active (30d)</div>
-  </div></div></div>
+<!-- ===================== KPI SECTION ===================== -->
+<div class="pa-section-title">Key metrics</div>
+<div class="row g-3">
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-primary"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Total businesses</div>
+        <div class="kpi-value">{{ biz.total|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-buildings"></i></span>
+    </div></div></div></div>
+  <a class="col-6 col-xl-3 text-decoration-none" href="{% url 'platformadmin:business_list' %}?status=active"><div class="card kpi-card kpi-success h-100"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Active businesses</div>
+        <div class="kpi-value text-success">{{ biz.active|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-check2-circle"></i></span>
+    </div></div></div></a>
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-info"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Trial businesses</div>
+        <div class="kpi-value">{{ biz.trial|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-hourglass-split"></i></span>
+    </div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-warning"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Expiring soon</div>
+        <div class="kpi-value">{{ biz.expiring_soon|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-alarm"></i></span>
+    </div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-danger"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Expired</div>
+        <div class="kpi-value text-danger">{{ biz.expired|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-x-octagon"></i></span>
+    </div></div></div></div>
+  <a class="col-6 col-xl-3 text-decoration-none" href="{% url 'platformadmin:business_list' %}?status=suspended"><div class="card kpi-card kpi-warning h-100"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Suspended</div>
+        <div class="kpi-value">{{ biz.suspended|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-pause-circle"></i></span>
+    </div></div></div></a>
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-success"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Monthly revenue (MRR)</div>
+        <div class="kpi-value">{{ mrr|floatformat:2|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-graph-up-arrow"></i></span>
+    </div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card kpi-card kpi-muted"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-start">
+      <div><div class="kpi-label">Last month revenue</div>
+        <div class="kpi-value">{{ revenue_last_month|floatformat:2|intcomma }}</div></div>
+      <span class="kpi-icon"><i class="bi bi-calendar3"></i></span>
+    </div></div></div></div>
 </div>
 
-<!-- Business status metrics -->
-<div class="row g-3 mb-3">
-  <div class="col-6 col-md-2"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value">{{ biz.total }}</div><div class="kpi-label">Businesses</div></div></div></div>
-  <div class="col-6 col-md-2"><a href="{% url 'platformadmin:business_list' %}?status=active" class="text-reset"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value text-success">{{ biz.active }}</div><div class="kpi-label">Active</div></div></div></a></div>
-  <div class="col-6 col-md-2"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value" style="color:#854d0e">{{ biz.trial }}</div><div class="kpi-label">Trial</div></div></div></div>
-  <div class="col-6 col-md-2"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value" style="color:#9a3412">{{ biz.expiring_soon }}</div><div class="kpi-label">Expiring soon</div></div></div></div>
-  <div class="col-6 col-md-2"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value text-danger">{{ biz.expired }}</div><div class="kpi-label">Expired</div></div></div></div>
-  <div class="col-6 col-md-2"><a href="{% url 'platformadmin:business_list' %}?status=suspended" class="text-reset"><div class="card kpi-card"><div class="card-body text-center">
-    <div class="kpi-value" style="color:#7f1d1d">{{ biz.suspended }}</div><div class="kpi-label">Suspended</div></div></div></a></div>
+<!-- ===================== QUICK ACTIONS ===================== -->
+<div class="pa-section-title">Quick actions</div>
+<div class="row g-3">
+  <div class="col-12 col-md-6 col-xl-3"><a class="pa-action" href="{% url 'platformadmin:business_create' %}">
+    <span class="pa-action-icon"><i class="bi bi-plus-lg"></i></span>
+    <span><span class="pa-action-title d-block">Create Business</span>
+      <span class="pa-action-sub">Provision a new tenant</span></span>
+    <i class="bi bi-arrow-right pa-action-arrow"></i></a></div>
+  <div class="col-12 col-md-6 col-xl-3"><a class="pa-action act-green" href="{% url 'platformadmin:plan_create' %}">
+    <span class="pa-action-icon"><i class="bi bi-stars"></i></span>
+    <span><span class="pa-action-title d-block">Create Plan</span>
+      <span class="pa-action-sub">Add a subscription plan</span></span>
+    <i class="bi bi-arrow-right pa-action-arrow"></i></a></div>
+  <div class="col-12 col-md-6 col-xl-3"><a class="pa-action act-violet" href="{% url 'platformadmin:announcements' %}">
+    <span class="pa-action-icon"><i class="bi bi-megaphone"></i></span>
+    <span><span class="pa-action-title d-block">Publish Announcement</span>
+      <span class="pa-action-sub">Notify all businesses</span></span>
+    <i class="bi bi-arrow-right pa-action-arrow"></i></a></div>
+  <div class="col-12 col-md-6 col-xl-3"><a class="pa-action act-amber" href="{% url 'platformadmin:audit' %}">
+    <span class="pa-action-icon"><i class="bi bi-shield-check"></i></span>
+    <span><span class="pa-action-title d-block">View Audit Logs</span>
+      <span class="pa-action-sub">Platform activity trail</span></span>
+    <i class="bi bi-arrow-right pa-action-arrow"></i></a></div>
 </div>
 
+<!-- ===================== ANALYTICS ===================== -->
+<div class="pa-section-title">Analytics</div>
 <div class="row g-3">
   <div class="col-lg-4">
-    <div class="card chart-card"><div class="card-header">Plan distribution</div>
-      <div class="card-body"><canvas id="planChart" height="200"></canvas></div></div>
+    <div class="card h-100"><div class="card-header"><i class="bi bi-cash-stack me-1"></i> Revenue overview</div>
+      <div class="card-body">
+        <div class="d-flex justify-content-between py-2 border-bottom">
+          <span class="text-secondary">MRR (paid, active)</span><strong>{{ mrr|floatformat:2|intcomma }}</strong></div>
+        <div class="d-flex justify-content-between py-2 border-bottom">
+          <span class="text-secondary">This month</span><strong>{{ revenue_this_month|floatformat:2|intcomma }}</strong></div>
+        <div class="d-flex justify-content-between py-2 border-bottom">
+          <span class="text-secondary">Last month</span><strong>{{ revenue_last_month|floatformat:2|intcomma }}</strong></div>
+        <div class="d-flex justify-content-between py-2">
+          <span class="text-secondary">Total revenue</span><strong>{{ revenue_total|floatformat:2|intcomma }}</strong></div>
+        <div class="mt-2 pt-2 border-top d-flex justify-content-between">
+          <span class="text-secondary">Users (active 30d)</span>
+          <strong>{{ user_metrics.total|intcomma }} <span class="text-secondary">/ {{ user_metrics.active }}</span></strong></div>
+      </div></div>
   </div>
   <div class="col-lg-4">
-    <div class="card chart-card"><div class="card-header">Subscription status</div>
-      <div class="card-body"><canvas id="statusChart" height="200"></canvas></div></div>
+    <div class="card h-100"><div class="card-header"><i class="bi bi-pie-chart me-1"></i> Subscription distribution</div>
+      <div class="card-body d-flex align-items-center justify-content-center"><canvas id="planChart" height="220"></canvas></div></div>
   </div>
   <div class="col-lg-4">
-    <div class="card h-100"><div class="card-header">Attention</div><div class="card-body">
-      <div class="d-flex justify-content-between border-bottom py-2">
-        <span>Expiring within 7 days</span><strong style="color:#9a3412">{{ biz.expiring_soon }}</strong></div>
-      <div class="d-flex justify-content-between border-bottom py-2">
-        <span>Failed logins (24h)</span><strong class="{% if recent_failed_logins > 20 %}text-danger{% endif %}">{{ recent_failed_logins }}</strong></div>
-      <div class="d-flex justify-content-between py-2">
-        <span>Active support grants</span><strong>{{ active_grants }}</strong></div>
-    </div></div>
+    <div class="card h-100"><div class="card-header"><i class="bi bi-bar-chart me-1"></i> Subscription status</div>
+      <div class="card-body"><canvas id="statusChart" height="220"></canvas></div></div>
   </div>
 </div>
 
-<div class="row g-3 mt-1">
-  <div class="col-lg-7">
-    <div class="card"><div class="card-header">Recently registered</div>
-      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
-        <thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Registered</th><th></th></tr></thead>
+<!-- ===================== BUSINESS MANAGEMENT + PLATFORM HEALTH ===================== -->
+<div class="pa-section-title">Business management</div>
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card h-100"><div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-clock-history me-1"></i> Recently registered</span>
+        <a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:business_list' %}">View all</a></div>
+      <div class="table-responsive"><table class="table table-hover mb-0">
+        <thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Created</th><th></th></tr></thead>
         <tbody>
           {% for b in recent_businesses %}
           <tr>
             <td class="fw-semibold">{{ b.name }}</td>
-            <td class="small">{{ b.owner.email }}</td>
+            <td class="small text-secondary">{{ b.owner.email }}</td>
             <td>{% sub_status_badge b.subscription %}</td>
-            <td class="small">{{ b.created_at|date:"Y-m-d" }}</td>
-            <td class="w-1"><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:business_detail' b.public_id %}">Manage</a></td>
+            <td class="small text-secondary">{{ b.created_at|date:"Y-m-d" }}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:business_detail' b.public_id %}">Manage</a></td>
           </tr>
+          {% empty %}
+          <tr><td colspan="5"><div class="empty-state text-center py-3">No businesses yet.</div></td></tr>
           {% endfor %}
         </tbody>
       </table></div>
     </div>
   </div>
-  <div class="col-lg-5">
-    <div class="card"><div class="card-header">Expiring soon</div>
-      <div class="table-responsive"><table class="table table-sm mb-0">
+  <div class="col-lg-4">
+    <div class="card h-100"><div class="card-header"><i class="bi bi-activity me-1"></i> Platform health</div>
+      <div class="card-body py-2">
+        <div class="pa-health-row">
+          <span class="pa-health-icon h-warn"><i class="bi bi-alarm"></i></span>
+          <span class="pa-health-label">Expiring within 7 days</span>
+          <span class="pa-health-value">{{ biz.expiring_soon }}</span></div>
+        <div class="pa-health-row">
+          <span class="pa-health-icon h-danger"><i class="bi bi-shield-exclamation"></i></span>
+          <span class="pa-health-label">Failed logins (24h)</span>
+          <span class="pa-health-value {% if recent_failed_logins > 20 %}text-danger{% endif %}">{{ recent_failed_logins }}</span></div>
+        <div class="pa-health-row">
+          <span class="pa-health-icon h-info"><i class="bi bi-person-badge"></i></span>
+          <span class="pa-health-label">Active support grants</span>
+          <span class="pa-health-value">{{ active_grants }}</span></div>
+        <div class="pa-health-row">
+          <span class="pa-health-icon h-danger"><i class="bi bi-x-octagon"></i></span>
+          <span class="pa-health-label">Expired subscriptions</span>
+          <span class="pa-health-value">{{ biz.expired }}</span></div>
+      </div></div>
+  </div>
+</div>
+
+<!-- ===================== EXPIRING SOON ===================== -->
+<div class="row g-3 mt-1">
+  <div class="col-12">
+    <div class="card"><div class="card-header"><i class="bi bi-hourglass-bottom me-1"></i> Expiring soon</div>
+      <div class="table-responsive"><table class="table mb-0">
         <thead><tr><th>Business</th><th>Plan</th><th class="text-end">Days left</th></tr></thead>
         <tbody>
           {% for s in expiring %}
-          <tr><td>{{ s.business.name }}</td><td class="small">{{ s.plan.name }}</td>
+          <tr><td class="fw-semibold">{{ s.business.name }}</td><td class="small text-secondary">{{ s.plan.name }}</td>
               <td class="text-end"><span class="sub-badge sub-expiring">{{ s.days_until_expiry }}d</span></td></tr>
           {% empty %}<tr><td colspan="3" class="text-center text-secondary py-3">Nothing expiring soon</td></tr>{% endfor %}
         </tbody>
@@ -104,17 +181,26 @@
 <script src="{% static 'js/chart.umd.min.js' %}"></script>
 <script>
 (function() {
-  const palette = ['#0d6efd','#0ea5a4','#16a34a','#d97706','#dc2626','#6366f1','#0891b2'];
+  // Dark-theme chart styling (presentation only — data is unchanged).
+  const palette = ['#2563EB','#10B981','#F59E0B','#8B5CF6','#EF4444','#38BDF8','#14B8A6'];
+  const gridColor = 'rgba(255,255,255,0.06)';
+  const tickColor = '#9CA3AF';
+  if (window.Chart) {
+    Chart.defaults.color = tickColor;
+    Chart.defaults.font.family = '"Segoe UI", system-ui, -apple-system, sans-serif';
+  }
   const plans = JSON.parse(document.getElementById('plan-data').textContent);
   if (plans.labels.length) new Chart(document.getElementById('planChart'), {
     type: 'doughnut',
-    data: {labels: plans.labels, datasets:[{data: plans.data, backgroundColor: palette}]},
-    options: {plugins:{legend:{position:'bottom'}}}});
+    data: {labels: plans.labels, datasets:[{data: plans.data, backgroundColor: palette, borderColor: '#111827', borderWidth: 2}]},
+    options: {plugins:{legend:{position:'bottom', labels:{color: tickColor, padding: 14, usePointStyle: true}}}, cutout: '62%'}});
   const status = JSON.parse(document.getElementById('status-data').textContent);
   if (status.labels.length) new Chart(document.getElementById('statusChart'), {
     type: 'bar',
-    data: {labels: status.labels, datasets:[{label:'Businesses', data: status.data, backgroundColor:'#0d6efd'}]},
-    options: {plugins:{legend:{display:false}}, scales:{y:{beginAtZero:true, ticks:{precision:0}}}}});
+    data: {labels: status.labels, datasets:[{label:'Businesses', data: status.data, backgroundColor:'#2563EB', borderRadius: 6, maxBarThickness: 38}]},
+    options: {plugins:{legend:{display:false}},
+      scales:{y:{beginAtZero:true, ticks:{precision:0, color: tickColor}, grid:{color: gridColor}},
+              x:{ticks:{color: tickColor}, grid:{display:false}}}}});
 })();
 </script>
 {% endblock %}

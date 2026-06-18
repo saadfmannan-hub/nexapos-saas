@@ -1,0 +1,367 @@
+/* ==================================================================
+   NexaPOS — Platform Admin "Dark Luxury Enterprise" theme
+   ------------------------------------------------------------------
+   UI ONLY. Every rule is scoped under `body.pa-admin` so it never
+   affects the business-facing app (which shares app.css and the same
+   shell class names). Loaded only from templates/platformadmin/_base.html.
+   ================================================================== */
+body.pa-admin {
+  --pa-bg: #0B1220;
+  --pa-surface: #111827;
+  --pa-surface-2: #1F2937;
+  --pa-primary: #2563EB;
+  --pa-primary-soft: rgba(37, 99, 235, 0.15);
+  --pa-success: #10B981;
+  --pa-warning: #F59E0B;
+  --pa-danger: #EF4444;
+  --pa-text: #F9FAFB;
+  --pa-muted: #9CA3AF;
+  --pa-border: rgba(255, 255, 255, 0.08);
+  --pa-border-strong: rgba(255, 255, 255, 0.14);
+  --pa-radius: 16px;
+  --pa-radius-sm: 12px;
+  --pa-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.25);
+  --pa-shadow-hover: 0 12px 32px rgba(0, 0, 0, 0.45);
+
+  background: var(--pa-bg);
+  color: var(--pa-text);
+}
+
+body.pa-admin ::selection { background: var(--pa-primary-soft); }
+
+/* ---------------- Sidebar ---------------- */
+body.pa-admin .np-sidebar {
+  width: 256px;
+  background: linear-gradient(180deg, #0c1424 0%, #0a1019 100%) !important;
+  color: var(--pa-muted);
+  border-right: 1px solid var(--pa-border);
+}
+body.pa-admin .np-sidebar .brand {
+  padding: 1.15rem 1.35rem;
+  color: var(--pa-text);
+  border-bottom: 1px solid var(--pa-border);
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+body.pa-admin .np-sidebar .brand .badge {
+  background: var(--pa-primary-soft) !important;
+  color: #93b4ff !important;
+  border: 1px solid rgba(37, 99, 235, .4);
+  font-size: .58rem;
+  letter-spacing: .08em;
+}
+body.pa-admin .np-sidebar .brand .logo-dot {
+  background: linear-gradient(135deg, var(--pa-primary), #7c3aed);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, .22);
+}
+body.pa-admin .np-sidebar .nav-section {
+  color: #5b6678;
+  font-size: .66rem;
+  letter-spacing: .14em;
+  padding: 1.1rem 1.35rem .4rem;
+}
+body.pa-admin .np-sidebar .nav-link {
+  color: var(--pa-muted);
+  margin: 2px .6rem;
+  padding: .6rem .75rem;
+  border-radius: var(--pa-radius-sm);
+  border-left: none;
+  font-size: .9rem;
+  font-weight: 500;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+}
+body.pa-admin .np-sidebar .nav-link i {
+  font-size: 1.05rem;
+  opacity: .85;
+}
+body.pa-admin .np-sidebar .nav-link:hover {
+  background: var(--pa-surface-2);
+  color: var(--pa-text);
+  transform: translateX(2px);
+}
+body.pa-admin .np-sidebar .nav-link.active {
+  background: linear-gradient(90deg, var(--pa-primary-soft), rgba(37, 99, 235, .04));
+  color: #fff;
+  border-left: none;
+  box-shadow: inset 2px 0 0 var(--pa-primary);
+}
+body.pa-admin .np-sidebar .nav-link.active i { opacity: 1; color: #93b4ff; }
+body.pa-admin .np-sidebar .sidebar-scroll::-webkit-scrollbar-thumb { background: #243042; }
+
+/* ---------------- Top header ---------------- */
+body.pa-admin .np-topbar {
+  background: rgba(11, 18, 32, 0.85);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--pa-border);
+  padding: .85rem 1.5rem;
+}
+body.pa-admin .pa-header-titles .pa-title {
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--pa-text);
+  line-height: 1.2;
+}
+body.pa-admin .pa-header-titles .pa-subtitle {
+  font-size: .78rem;
+  color: var(--pa-muted);
+}
+body.pa-admin .pa-icon-btn {
+  width: 38px; height: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: var(--pa-surface-2);
+  border: 1px solid var(--pa-border);
+  color: var(--pa-muted);
+  font-size: 1.05rem;
+  transition: background .15s ease, color .15s ease, transform .15s ease;
+  position: relative;
+}
+body.pa-admin .pa-icon-btn:hover {
+  background: #273345; color: var(--pa-text); transform: translateY(-1px);
+}
+body.pa-admin .pa-icon-btn .pa-dot {
+  position: absolute; top: 8px; right: 9px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--pa-danger); border: 2px solid var(--pa-surface);
+}
+body.pa-admin .pa-profile {
+  display: flex; align-items: center; gap: .6rem;
+  padding: .3rem .55rem .3rem .35rem;
+  border-radius: 999px;
+  background: var(--pa-surface-2);
+  border: 1px solid var(--pa-border);
+}
+body.pa-admin .pa-avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--pa-primary), #7c3aed);
+  color: #fff; font-weight: 700; font-size: .82rem;
+}
+body.pa-admin .pa-profile .pa-email { color: var(--pa-text); font-size: .82rem; }
+body.pa-admin .pa-profile .btn { color: var(--pa-muted); }
+body.pa-admin .pa-profile .btn:hover { color: var(--pa-text); }
+
+/* ---------------- Content shell ---------------- */
+body.pa-admin .np-content { padding: 1.75rem; }
+body.pa-admin .page-title { color: var(--pa-text); font-weight: 700; }
+body.pa-admin .text-secondary,
+body.pa-admin .text-muted { color: var(--pa-muted) !important; }
+body.pa-admin .pa-section-title {
+  font-size: .78rem; text-transform: uppercase; letter-spacing: .12em;
+  color: var(--pa-muted); font-weight: 600; margin: 1.75rem 0 .85rem;
+}
+body.pa-admin .pa-section-title:first-of-type { margin-top: .25rem; }
+
+/* ---------------- Cards ---------------- */
+body.pa-admin .card {
+  background: var(--pa-surface);
+  border: 1px solid var(--pa-border);
+  border-radius: var(--pa-radius);
+  box-shadow: var(--pa-shadow);
+  color: var(--pa-text);
+}
+body.pa-admin .card-header {
+  background: transparent;
+  border-bottom: 1px solid var(--pa-border);
+  color: var(--pa-text);
+  font-weight: 600;
+  padding: .95rem 1.25rem;
+}
+body.pa-admin .card-body { color: var(--pa-text); }
+body.pa-admin .border-bottom { border-color: var(--pa-border) !important; }
+body.pa-admin hr { border-color: var(--pa-border); opacity: 1; }
+
+/* ---------------- KPI cards ---------------- */
+body.pa-admin .kpi-card {
+  position: relative;
+  overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+body.pa-admin .kpi-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--pa-shadow-hover);
+  border-color: var(--pa-border-strong);
+}
+body.pa-admin .kpi-card .card-body { padding: 1.25rem; }
+body.pa-admin .kpi-card .kpi-label {
+  font-size: .72rem; color: var(--pa-muted);
+  text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
+}
+body.pa-admin .kpi-card .kpi-value {
+  font-size: 1.95rem; font-weight: 800; color: var(--pa-text);
+  line-height: 1.1; letter-spacing: -.02em;
+}
+body.pa-admin .kpi-card .kpi-sub { font-size: .76rem; color: var(--pa-muted); }
+body.pa-admin .kpi-card .kpi-icon {
+  width: 40px; height: 40px; border-radius: 11px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 1.15rem;
+  background: var(--pa-surface-2); color: var(--pa-muted);
+}
+/* accent strip + tints */
+body.pa-admin .kpi-card::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--pa-primary); opacity: .9;
+}
+body.pa-admin .kpi-card.kpi-primary::before { background: var(--pa-primary); }
+body.pa-admin .kpi-card.kpi-success::before { background: var(--pa-success); }
+body.pa-admin .kpi-card.kpi-warning::before { background: var(--pa-warning); }
+body.pa-admin .kpi-card.kpi-danger::before  { background: var(--pa-danger); }
+body.pa-admin .kpi-card.kpi-info::before    { background: #38bdf8; }
+body.pa-admin .kpi-card.kpi-muted::before   { background: #6b7280; }
+body.pa-admin .kpi-card.kpi-success .kpi-icon { color: var(--pa-success); background: rgba(16,185,129,.12); }
+body.pa-admin .kpi-card.kpi-warning .kpi-icon { color: var(--pa-warning); background: rgba(245,158,11,.12); }
+body.pa-admin .kpi-card.kpi-danger  .kpi-icon { color: var(--pa-danger);  background: rgba(239,68,68,.12); }
+body.pa-admin .kpi-card.kpi-primary .kpi-icon { color: #60a5fa; background: var(--pa-primary-soft); }
+body.pa-admin .kpi-card.kpi-info    .kpi-icon { color: #38bdf8; background: rgba(56,189,248,.12); }
+body.pa-admin .kpi-card .kpi-value.text-success { color: var(--pa-success) !important; }
+body.pa-admin .kpi-card .kpi-value.text-danger  { color: var(--pa-danger) !important; }
+
+/* ---------------- Quick actions ---------------- */
+body.pa-admin .pa-action {
+  display: flex; align-items: center; gap: .9rem;
+  padding: 1.05rem 1.2rem;
+  background: var(--pa-surface);
+  border: 1px solid var(--pa-border);
+  border-radius: var(--pa-radius);
+  color: var(--pa-text);
+  text-decoration: none;
+  box-shadow: var(--pa-shadow);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease;
+}
+body.pa-admin .pa-action:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--pa-shadow-hover);
+  border-color: var(--pa-primary);
+  background: #131c2e;
+}
+body.pa-admin .pa-action .pa-action-icon {
+  width: 44px; height: 44px; flex: 0 0 44px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 1.3rem; color: #fff;
+  background: linear-gradient(135deg, var(--pa-primary), #1d4ed8);
+}
+body.pa-admin .pa-action.act-green .pa-action-icon  { background: linear-gradient(135deg, #10b981, #059669); }
+body.pa-admin .pa-action.act-amber .pa-action-icon  { background: linear-gradient(135deg, #f59e0b, #d97706); }
+body.pa-admin .pa-action.act-violet .pa-action-icon { background: linear-gradient(135deg, #8b5cf6, #6d28d9); }
+body.pa-admin .pa-action .pa-action-title { font-weight: 600; font-size: .95rem; line-height: 1.15; }
+body.pa-admin .pa-action .pa-action-sub { font-size: .76rem; color: var(--pa-muted); }
+body.pa-admin .pa-action .pa-action-arrow { margin-left: auto; color: var(--pa-muted); transition: transform .18s ease; }
+body.pa-admin .pa-action:hover .pa-action-arrow { transform: translateX(3px); color: var(--pa-text); }
+
+/* ---------------- Tables ---------------- */
+body.pa-admin .table {
+  color: var(--pa-text);
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--pa-text);
+  margin-bottom: 0;
+}
+body.pa-admin .table thead th {
+  background: var(--pa-surface-2);
+  color: var(--pa-muted);
+  border-bottom: 1px solid var(--pa-border);
+  font-size: .7rem; text-transform: uppercase; letter-spacing: .08em;
+  padding: .75rem 1rem;
+}
+body.pa-admin .table td {
+  border-color: var(--pa-border);
+  color: var(--pa-text);
+  padding: .8rem 1rem;
+}
+body.pa-admin .table > :not(caption) > * > * { background: transparent; color: var(--pa-text); }
+body.pa-admin .table-hover tbody tr { transition: background .12s ease; }
+body.pa-admin .table-hover tbody tr:hover > * { background: rgba(255,255,255,.035); }
+body.pa-admin .table .fw-semibold { color: var(--pa-text); }
+
+/* ---------------- Status badges (override light app.css, scoped) ---------------- */
+body.pa-admin .badge-status,
+body.pa-admin .sub-badge {
+  font-weight: 600; padding: .4em .75em; border-radius: 999px;
+  border: 1px solid transparent; font-size: .72rem;
+}
+body.pa-admin .bs-active,
+body.pa-admin .sub-active   { background: rgba(16,185,129,.15); color: #6ee7b7; border-color: rgba(16,185,129,.35); }
+body.pa-admin .sub-trial    { background: rgba(37,99,235,.15);  color: #93b4ff; border-color: rgba(37,99,235,.4); }
+body.pa-admin .sub-expiring { background: rgba(245,158,11,.15); color: #fcd34d; border-color: rgba(245,158,11,.4); }
+body.pa-admin .sub-expired,
+body.pa-admin .bs-expired   { background: rgba(239,68,68,.15);  color: #fca5a5; border-color: rgba(239,68,68,.4); }
+body.pa-admin .bs-suspended,
+body.pa-admin .sub-suspended{ background: rgba(245,158,11,.18); color: #fdba74; border-color: rgba(245,158,11,.45); }
+body.pa-admin .sub-grace    { background: rgba(99,102,241,.15); color: #c7d2fe; border-color: rgba(99,102,241,.4); }
+
+/* ---------------- Platform health rows ---------------- */
+body.pa-admin .pa-health-row {
+  display: flex; align-items: center; gap: .85rem;
+  padding: .8rem 0; border-bottom: 1px solid var(--pa-border);
+}
+body.pa-admin .pa-health-row:last-child { border-bottom: none; }
+body.pa-admin .pa-health-icon {
+  width: 38px; height: 38px; border-radius: 10px; flex: 0 0 38px;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem;
+}
+body.pa-admin .pa-health-icon.h-warn { background: rgba(245,158,11,.14); color: var(--pa-warning); }
+body.pa-admin .pa-health-icon.h-danger { background: rgba(239,68,68,.14); color: var(--pa-danger); }
+body.pa-admin .pa-health-icon.h-info { background: rgba(56,189,248,.14); color: #38bdf8; }
+body.pa-admin .pa-health-row .pa-health-label { font-size: .85rem; color: var(--pa-muted); }
+body.pa-admin .pa-health-row .pa-health-value { margin-left: auto; font-weight: 700; font-size: 1.1rem; color: var(--pa-text); }
+
+/* ---------------- Buttons / forms (scoped) ---------------- */
+body.pa-admin .btn-primary {
+  background: var(--pa-primary); border-color: var(--pa-primary);
+  box-shadow: 0 4px 12px rgba(37,99,235,.25);
+}
+body.pa-admin .btn-primary:hover { background: #1d4ed8; border-color: #1d4ed8; }
+body.pa-admin .btn-outline-primary { color: #93b4ff; border-color: rgba(37,99,235,.5); }
+body.pa-admin .btn-outline-primary:hover { background: var(--pa-primary); border-color: var(--pa-primary); color: #fff; }
+body.pa-admin .btn-outline-secondary { color: var(--pa-muted); border-color: var(--pa-border-strong); }
+body.pa-admin .btn-outline-secondary:hover { background: var(--pa-surface-2); color: var(--pa-text); border-color: var(--pa-border-strong); }
+body.pa-admin .btn-light { background: var(--pa-surface-2); border-color: var(--pa-border); color: var(--pa-text); }
+body.pa-admin .btn-light:hover { background: #2a3647; color: #fff; }
+body.pa-admin .form-control,
+body.pa-admin .form-select {
+  background: var(--pa-surface-2);
+  border: 1px solid var(--pa-border-strong);
+  color: var(--pa-text);
+}
+body.pa-admin .form-control::placeholder { color: #6b7688; }
+body.pa-admin .form-control:focus,
+body.pa-admin .form-select:focus {
+  background: var(--pa-surface-2);
+  border-color: var(--pa-primary);
+  color: var(--pa-text);
+  box-shadow: 0 0 0 .2rem rgba(37,99,235,.25);
+}
+body.pa-admin .form-label,
+body.pa-admin label { color: var(--pa-text); }
+body.pa-admin .form-text { color: var(--pa-muted); }
+body.pa-admin .form-check-input { background-color: var(--pa-surface-2); border-color: var(--pa-border-strong); }
+body.pa-admin .form-check-input:checked { background-color: var(--pa-primary); border-color: var(--pa-primary); }
+
+/* ---------------- Alerts (scoped, keep semantics) ---------------- */
+body.pa-admin .alert { border: 1px solid var(--pa-border); border-radius: var(--pa-radius-sm); }
+body.pa-admin .alert-success { background: rgba(16,185,129,.12); color: #6ee7b7; border-color: rgba(16,185,129,.3); }
+body.pa-admin .alert-danger  { background: rgba(239,68,68,.12);  color: #fca5a5; border-color: rgba(239,68,68,.3); }
+body.pa-admin .alert-warning { background: rgba(245,158,11,.12); color: #fcd34d; border-color: rgba(245,158,11,.3); }
+body.pa-admin .alert-info,
+body.pa-admin .alert-primary { background: rgba(37,99,235,.12);  color: #93b4ff; border-color: rgba(37,99,235,.3); }
+
+/* ---------------- Misc surfaces used by sub-pages ---------------- */
+body.pa-admin .list-group-item { background: var(--pa-surface); color: var(--pa-text); border-color: var(--pa-border); }
+body.pa-admin .empty-state { color: var(--pa-muted); }
+body.pa-admin a { color: #93b4ff; }
+body.pa-admin a.btn,
+body.pa-admin a.nav-link,
+body.pa-admin a.pa-action,
+body.pa-admin a.text-reset { color: inherit; }
+body.pa-admin .text-reset { color: var(--pa-text) !important; }
+
+/* ---------------- Responsive ---------------- */
+@media (max-width: 991.98px) {
+  body.pa-admin .np-content { padding: 1.1rem; }
+  body.pa-admin .pa-header-titles .pa-subtitle { display: none; }
+}
+@media (max-width: 575.98px) {
+  body.pa-admin .kpi-card .kpi-value { font-size: 1.6rem; }
+  body.pa-admin .pa-profile .pa-email { display: none; }
+  body.pa-admin .np-topbar { padding: .7rem .9rem; }
+}
