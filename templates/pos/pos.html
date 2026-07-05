@@ -157,20 +157,24 @@
 
       <div class="pos-totals">
         <div class="d-flex justify-content-between small"><span>Subtotal</span><span x-text="fmt(totals.base)"></span></div>
-        <div class="d-flex justify-content-between small"><span>VAT %</span><span x-text="vatLabel"></span></div>
-        <div class="d-flex justify-content-between small"><span>VAT Amount</span><span x-text="fmt(totals.tax)"></span></div>
         {% if can_discount %}
         <div class="d-flex justify-content-between small align-items-center my-1 gap-1">
-          <span>Invoice discount</span>
-          <div class="btn-group btn-group-sm">
-            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(5)" title="5% off">5%</button>
-            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(10)" title="10% off">10%</button>
-            <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="invoiceDiscount = 0" title="Clear">×</button>
+          <span>Invoice Discount</span>
+          <div class="d-flex align-items-center gap-1">
+            <span class="text-danger fw-semibold" x-text="discountLabel"></span>
+            <div class="btn-group btn-group-sm">
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(5)" title="5% off">5%</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="quickDiscount(10)" title="10% off">10%</button>
+              <button type="button" class="btn btn-outline-secondary py-0 px-1" @click="invoiceDiscount = 0" title="Clear">×</button>
+            </div>
+            <input type="number" step="any" min="0" class="form-control form-control-sm text-end" style="width:86px"
+                   x-model="invoiceDiscount">
           </div>
-          <input type="number" step="any" min="0" class="form-control form-control-sm text-end" style="width:100px"
-                 x-model="invoiceDiscount">
         </div>
         {% endif %}
+        <div class="d-flex justify-content-between small"><span>Discounted Subtotal</span><span x-text="fmt(totals.discountedSubtotal)"></span></div>
+        <div class="d-flex justify-content-between small"><span>VAT %</span><span x-text="vatLabel"></span></div>
+        <div class="d-flex justify-content-between small"><span>VAT Amount</span><span x-text="fmt(totals.tax)"></span></div>
         <div class="d-flex justify-content-between fs-5 fw-bold border-top pt-2 mt-1">
           <span>Grand Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
         </div>
@@ -198,9 +202,10 @@
           <div class="col-md-5">
             <table class="table table-sm small">
               <tr><td>Subtotal</td><td class="text-end" x-text="fmt(totals.base)"></td></tr>
+              <tr><td>Invoice Discount</td><td class="text-end text-danger" x-text="discountLabel"></td></tr>
+              <tr><td>Discounted Subtotal</td><td class="text-end" x-text="fmt(totals.discountedSubtotal)"></td></tr>
               <tr><td>VAT %</td><td class="text-end" x-text="vatLabel"></td></tr>
               <tr><td>VAT Amount</td><td class="text-end" x-text="fmt(totals.tax)"></td></tr>
-              <tr><td>Discount</td><td class="text-end" x-text="fmt(totals.discount)"></td></tr>
               <tr class="fw-bold fs-6"><td>Grand total</td><td class="text-end" x-text="fmt(totals.total)"></td></tr>
               <tr><td>Paid</td><td class="text-end" x-text="fmt(paidTotal)"></td></tr>
               <tr :class="remaining > 0 ? 'text-danger fw-bold' : ''"><td>Remaining</td><td class="text-end" x-text="fmt(Math.max(0, remaining))"></td></tr>
@@ -297,7 +302,6 @@
 <script>
 function pos() {
   const PREC = {{ precision }};
-  const VAT_RATE = parseFloat("{{ vat_rate|default:'0' }}") || 0;
   return {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
     cart: [], invoiceDiscount: 0, notes: '', deliveryDate: '', busy: false, payError: '',
@@ -309,7 +313,17 @@ function pos() {
 
     init() { this.loadProducts(); this.$refs.barcode.focus(); },
     fmt(v) { return (parseFloat(v || 0)).toFixed(PREC); },
-    get vatLabel() { return VAT_RATE > 0 ? VAT_RATE.toFixed(3).replace(/\.?0+$/, '') + '%' : '0%'; },
+    get vatLabel() {
+      const rates = [...new Set(this.cart
+        .map(l => +(l.tax_rate || 0))
+        .filter(rate => rate > 0)
+        .map(rate => rate.toFixed(3).replace(/\.?0+$/, '')))];
+      if (!rates.length) return '0%';
+      return rates.length === 1 ? rates[0] + '%' : 'Mixed';
+    },
+    get discountLabel() {
+      return this.totals.invoiceDiscount > 0 ? '-' + this.fmt(this.totals.invoiceDiscount) : this.fmt(0);
+    },
 
     async loadProducts() {
       this.loading = true;
@@ -360,6 +374,7 @@ function pos() {
       });
       const invoiceDiscount = Math.max(0, +this.invoiceDiscount || 0);
       const allocatedDiscount = Math.min(invoiceDiscount, base);
+      const discountedSubtotal = Math.max(0, base - allocatedDiscount);
       let allocated = 0;
       lines.forEach((entry, index) => {
         const share = (base > 0)
@@ -373,9 +388,16 @@ function pos() {
       // Round the grand total to the business currency precision — this is
       // exactly what the server charges (it stores the delta as rounding),
       // so "Exact amount" and Remaining=0 always validate.
-      const raw = Math.max(0, base - allocatedDiscount + tax);
+      const raw = Math.max(0, discountedSubtotal + tax);
       const total = parseFloat(raw.toFixed(PREC));
-      return {base, tax, discount: lineDisc + (+this.invoiceDiscount || 0), total};
+      return {
+        base,
+        tax,
+        invoiceDiscount: allocatedDiscount,
+        discountedSubtotal,
+        discount: lineDisc + allocatedDiscount,
+        total
+      };
     },
     get paidTotal() {
       return parseFloat(this.payments.reduce((s, p) => s + (+p.amount || 0), 0).toFixed(PREC));
