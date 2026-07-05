@@ -143,6 +143,19 @@ class StatusTests(TenantTestCase):
         sub.save()
         self.assertEqual(sub.effective_status, Subscription.Status.EXPIRED)
 
+    def test_days_remaining_helper_uses_calendar_days(self):
+        sub = self.business_a.subscription
+        sub.status = Subscription.Status.ACTIVE
+        sub.current_period_end = timezone.now() + timedelta(days=5)
+        sub.save()
+        sub.refresh_from_db()
+
+        self.assertGreaterEqual(sub.days_remaining, 4)
+        self.assertLessEqual(sub.days_remaining, 5)
+        self.assertTrue(sub.is_active_subscription)
+        self.assertFalse(sub.is_expired)
+        self.assertTrue(sub.can_access_app)
+
     def test_suspended_business_read_only(self):
         self.allow_no_shift()
         sale = self.make_sale()  # data created while active

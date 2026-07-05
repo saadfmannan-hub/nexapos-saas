@@ -4,7 +4,8 @@ Access requires user.is_platform_admin. Tenant business data is NOT
 shown here beyond operational metadata (name, owner, counts, status)
 unless an active SupportAccessGrant exists.
 """
-from datetime import timedelta
+from datetime import datetime, time, timedelta
+from decimal import Decimal
 from functools import wraps
 
 from django import forms
@@ -38,6 +39,52 @@ def platform_admin_required(view_func):
         return view_func(request, *args, **kwargs)
 
     return wrapper
+
+
+def local_date_start(value):
+    return timezone.make_aware(datetime.combine(value, time.min))
+
+
+def default_renewal_start(subscription):
+    end = subscription.current_period_end if subscription else None
+    if end and end > timezone.now():
+        return end.date()
+    return timezone.localdate()
+
+
+def build_subscription_history(business, subscription):
+    history = []
+    if business.created_at:
+        history.append({
+            "date": business.created_at,
+            "label": "Created",
+            "detail": f"Business created for {business.owner.email}",
+        })
+    if subscription and subscription.trial_ends_at:
+        history.append({
+            "date": subscription.created_at,
+            "label": "Trial started",
+            "detail": f"Trial on {subscription.plan.name}",
+        })
+    for payment in SubscriptionPayment.objects.filter(business=business)[:25]:
+        history.append({
+            "date": payment.created_at,
+            "label": "Payment recorded",
+            "detail": f"{payment.amount} {payment.currency_code} via "
+                      f"{payment.get_method_display()}",
+        })
+    for row in AuditLog.objects.filter(
+        business=business,
+        action__in=[
+            "platform.business_created", "platform.business_suspended",
+            "platform.business_reactivated", "platform.subscription_renewed",
+            "platform.subscription_plan_changed", "platform.subscription_payment_recorded",
+            "platform.subscription_extended", "platform.trial_extended",
+        ],
+    )[:50]:
+        label = row.action.replace("platform.", "").replace("_", " ").title()
+        history.append({"date": row.created_at, "label": label, "detail": row.description})
+    return sorted(history, key=lambda item: item["date"], reverse=True)[:25]
 
 
 @platform_admin_required
@@ -163,26 +210,87 @@ def business_detail(request, public_id):
     members = Membership.objects.filter(business=business).select_related(
         "user", "role")
     payments = SubscriptionPayment.objects.filter(
-        subscription__business=business)[:10]
+        subscription__business=business).select_related("recorded_by")[:10]
     grants = SupportAccessGrant.objects.filter(business=business)[:10]
     plans = Plan.objects.filter(is_active=True)
     # Operational metadata only — counts, not data
-    from apps.branches.models import Branch
+    from apps.branches.models import Branch, Warehouse
     from apps.catalog.models import Product
+    from apps.customers.models import Customer
     from apps.sales.models import Sale
 
+    month_start = timezone.localdate().replace(day=1)
     usage = {
         "branches": Branch.objects.for_business(business).count(),
+        "warehouses": Warehouse.objects.for_business(business).count(),
         "products": Product.objects.for_business(business).count(),
+        "customers": Customer.objects.for_business(business).count(),
         "invoices": Sale.objects.for_business(business).exclude(
             status="draft").count(),
+        "monthly_invoices": Sale.objects.for_business(business).filter(
+            created_at__date__gte=month_start,
+        ).exclude(status__in=["draft", "held"]).count(),
         "users": members.count(),
+        "storage_mb": None,
     }
+    payment_summary = SubscriptionPayment.objects.filter(
+        business=business,
+    ).aggregate(total=Sum("amount"), count=Count("id"))
+    renewal_initial = {"plan": sub.plan_id if sub else None}
+    if sub:
+        renewal_initial.update({
+            "start_date": default_renewal_start(sub),
+            "payment_amount": sub.plan.monthly_price or Decimal("0"),
+            "payment_method": "manual",
+        })
+    renewal_form = SubscriptionRenewalForm(initial=renewal_initial, prefix="renew")
+    plan_change_form = PlanChangeForm(
+        initial={
+            "new_plan": sub.plan_id if sub else None,
+            "effective_date": timezone.localdate(),
+        },
+        prefix="plan",
+    )
+    payment_form = SubscriptionPaymentForm(
+        initial={"payment_method": "manual", "payment_date": timezone.localdate()},
+        prefix="payment",
+    )
     return render(request, "platformadmin/business_detail.html", {
         "business": business, "sub": sub, "members": members,
         "payments": payments, "grants": grants, "plans": plans, "usage": usage,
-        "now": timezone.now(),
+        "payment_summary": payment_summary, "renewal_form": renewal_form,
+        "plan_change_form": plan_change_form, "payment_form": payment_form,
+        "history": build_subscription_history(business, sub),
+        "now": timezone.now(), "pa_nav": "businesses",
     })
+
+
+def record_subscription_payment(
+    *,
+    business,
+    subscription,
+    amount,
+    method,
+    reference="",
+    payment_date=None,
+    period_start=None,
+    period_end=None,
+    notes="",
+    user=None,
+):
+    return SubscriptionPayment.objects.create(
+        business=business,
+        subscription=subscription,
+        amount=amount,
+        currency_code=subscription.plan.currency_code,
+        method=method,
+        reference=reference[:120],
+        payment_date=payment_date or timezone.localdate(),
+        period_start=period_start,
+        period_end=period_end,
+        recorded_by=user,
+        notes=notes,
+    )
 
 
 @platform_admin_required
@@ -229,6 +337,143 @@ def business_action(request, public_id, action):
                   user=request.user, request=request, module="platformadmin",
                   obj=business, description="Business reactivated — access restored.")
         messages.success(request, f"{business.name} reactivated. Access restored immediately.")
+    elif action == "renew" and sub:
+        form = SubscriptionRenewalForm(request.POST, prefix="renew")
+        if form.is_valid():
+            cd = form.cleaned_data
+            plan = cd["plan"]
+            renewal_type = cd["renewal_type"]
+            start_date = cd.get("start_date") or default_renewal_start(sub)
+            if renewal_type == "monthly":
+                end_date = start_date + timedelta(days=30)
+                sub.billing_cycle = "monthly"
+            elif renewal_type == "annual":
+                end_date = start_date + timedelta(days=365)
+                sub.billing_cycle = "annual"
+            else:
+                end_date = cd["end_date"]
+            period_start = local_date_start(start_date)
+            period_end = local_date_start(end_date)
+            old_values = {
+                "plan": sub.plan.name,
+                "status": sub.status,
+                "current_period_end": (
+                    sub.current_period_end.isoformat()
+                    if sub.current_period_end else None
+                ),
+            }
+            sub.plan = plan
+            sub.status = Subscription.Status.ACTIVE
+            sub.trial_ends_at = None
+            sub.current_period_start = period_start
+            sub.current_period_end = period_end
+            sub.notes = cd.get("notes", "")
+            sub.save()
+            if not business.is_active:
+                business.is_active = True
+                business.suspended_at = None
+                business.suspension_reason = ""
+                business.reactivated_at = timezone.now()
+                business.reactivated_by = request.user
+                business.save(update_fields=[
+                    "is_active", "suspended_at", "suspension_reason",
+                    "reactivated_at", "reactivated_by", "updated_at",
+                ])
+            payment = record_subscription_payment(
+                business=business,
+                subscription=sub,
+                amount=cd["payment_amount"],
+                method=cd["payment_method"],
+                reference=cd.get("payment_reference", ""),
+                period_start=period_start,
+                period_end=period_end,
+                notes=cd.get("notes", ""),
+                user=request.user,
+            )
+            audit.log(
+                "platform.subscription_renewed", business=business,
+                user=request.user, request=request, module="platformadmin",
+                obj=sub, old_values=old_values,
+                new_values={
+                    "plan": plan.name,
+                    "renewal_type": renewal_type,
+                    "current_period_start": period_start.isoformat(),
+                    "current_period_end": period_end.isoformat(),
+                    "payment": str(payment.amount),
+                },
+                description=f"Subscription renewed on {plan.name} until "
+                            f"{period_end:%Y-%m-%d}.")
+            messages.success(request, "Subscription renewed.")
+        else:
+            messages.error(request, "Renewal could not be saved. Check the form values.")
+    elif action == "change_plan" and sub:
+        form = PlanChangeForm(request.POST, prefix="plan")
+        if form.is_valid():
+            cd = form.cleaned_data
+            old_plan = sub.plan
+            new_plan = cd["new_plan"]
+            effective_date = cd["effective_date"]
+            sub.plan = new_plan
+            sub.notes = cd.get("notes", "")
+            sub.save(update_fields=["plan", "notes", "updated_at"])
+            payment_amount = cd.get("payment_amount")
+            payment = None
+            if payment_amount is not None:
+                payment = record_subscription_payment(
+                    business=business,
+                    subscription=sub,
+                    amount=payment_amount,
+                    method=cd["payment_method"],
+                    reference=cd.get("payment_reference", ""),
+                    payment_date=effective_date,
+                    period_start=local_date_start(effective_date),
+                    notes=cd.get("notes", ""),
+                    user=request.user,
+                )
+            audit.log(
+                "platform.subscription_plan_changed", business=business,
+                user=request.user, request=request, module="platformadmin",
+                obj=sub,
+                old_values={"plan": old_plan.name},
+                new_values={
+                    "plan": new_plan.name,
+                    "effective_date": str(effective_date),
+                    "payment": str(payment.amount) if payment else "",
+                },
+                description=f"Plan changed from {old_plan.name} to "
+                            f"{new_plan.name} effective {effective_date}.")
+            messages.success(request, "Plan changed.")
+        else:
+            messages.error(request, "Plan change could not be saved. Check the form values.")
+    elif action == "record_payment" and sub:
+        form = SubscriptionPaymentForm(request.POST, prefix="payment")
+        if form.is_valid():
+            cd = form.cleaned_data
+            payment = record_subscription_payment(
+                business=business,
+                subscription=sub,
+                amount=cd["amount"],
+                method=cd["payment_method"],
+                reference=cd.get("payment_reference", ""),
+                payment_date=cd["payment_date"],
+                notes=cd.get("notes", ""),
+                user=request.user,
+            )
+            audit.log(
+                "platform.subscription_payment_recorded", business=business,
+                user=request.user, request=request, module="platformadmin",
+                obj=payment,
+                new_values={
+                    "amount": str(payment.amount),
+                    "method": payment.method,
+                    "reference": payment.reference,
+                    "payment_date": str(payment.payment_date),
+                },
+                description=f"Payment recorded: {payment.amount} "
+                            f"{payment.currency_code}.")
+            messages.success(request, "Payment recorded.")
+        else:
+            messages.error(request, "Payment could not be recorded. Check the form values.")
     elif action == "extend" and sub:
         days = int(request.POST.get("days", 30))
         plan_id = request.POST.get("plan_id")
@@ -355,6 +600,97 @@ class BusinessCreateForm(forms.Form):
                 "This plan does not allow trial subscriptions.",
             )
         return data
+
+
+class SubscriptionRenewalForm(forms.Form):
+    INPUT = {"class": "form-control form-control-sm"}
+    SELECT = {"class": "form-select form-select-sm"}
+
+    plan = forms.ModelChoiceField(
+        queryset=Plan.objects.filter(is_active=True),
+        widget=forms.Select(attrs=SELECT),
+    )
+    renewal_type = forms.ChoiceField(
+        choices=[("monthly", "Monthly"), ("annual", "Annual"), ("custom", "Custom")],
+        initial="monthly",
+        widget=forms.Select(attrs=SELECT),
+    )
+    start_date = forms.DateField(required=False, widget=forms.DateInput(
+        attrs={**INPUT, "type": "date"}))
+    end_date = forms.DateField(required=False, widget=forms.DateInput(
+        attrs={**INPUT, "type": "date"}))
+    payment_amount = forms.DecimalField(
+        min_value=0, decimal_places=3, max_digits=14,
+        widget=forms.NumberInput(attrs=INPUT),
+    )
+    payment_reference = forms.CharField(
+        max_length=120, required=False, widget=forms.TextInput(attrs=INPUT))
+    payment_method = forms.ChoiceField(
+        choices=SubscriptionPayment._meta.get_field("method").choices,
+        widget=forms.Select(attrs=SELECT),
+    )
+    notes = forms.CharField(required=False, widget=forms.Textarea(
+        attrs={**INPUT, "rows": 2}))
+
+    def clean(self):
+        data = super().clean()
+        renewal_type = data.get("renewal_type")
+        start = data.get("start_date")
+        end = data.get("end_date")
+        if renewal_type == "custom" and not end:
+            self.add_error("end_date", "End date is required for a custom renewal.")
+        if start and end and end <= start:
+            self.add_error("end_date", "End date must be after the start date.")
+        return data
+
+
+class PlanChangeForm(forms.Form):
+    INPUT = {"class": "form-control form-control-sm"}
+    SELECT = {"class": "form-select form-select-sm"}
+
+    new_plan = forms.ModelChoiceField(
+        queryset=Plan.objects.filter(is_active=True),
+        widget=forms.Select(attrs=SELECT),
+    )
+    effective_date = forms.DateField(
+        initial=timezone.localdate,
+        widget=forms.DateInput(attrs={**INPUT, "type": "date"}),
+    )
+    notes = forms.CharField(required=False, widget=forms.Textarea(
+        attrs={**INPUT, "rows": 2}))
+    payment_amount = forms.DecimalField(
+        required=False, min_value=0, decimal_places=3, max_digits=14,
+        widget=forms.NumberInput(attrs=INPUT),
+    )
+    payment_reference = forms.CharField(
+        max_length=120, required=False, widget=forms.TextInput(attrs=INPUT))
+    payment_method = forms.ChoiceField(
+        choices=SubscriptionPayment._meta.get_field("method").choices,
+        initial="manual",
+        widget=forms.Select(attrs=SELECT),
+    )
+
+
+class SubscriptionPaymentForm(forms.Form):
+    INPUT = {"class": "form-control form-control-sm"}
+    SELECT = {"class": "form-select form-select-sm"}
+
+    amount = forms.DecimalField(
+        min_value=0, decimal_places=3, max_digits=14,
+        widget=forms.NumberInput(attrs=INPUT),
+    )
+    payment_reference = forms.CharField(
+        max_length=120, required=False, widget=forms.TextInput(attrs=INPUT))
+    payment_method = forms.ChoiceField(
+        choices=SubscriptionPayment._meta.get_field("method").choices,
+        widget=forms.Select(attrs=SELECT),
+    )
+    payment_date = forms.DateField(
+        initial=timezone.localdate,
+        widget=forms.DateInput(attrs={**INPUT, "type": "date"}),
+    )
+    notes = forms.CharField(required=False, widget=forms.Textarea(
+        attrs={**INPUT, "rows": 2}))
 
 
 @platform_admin_required

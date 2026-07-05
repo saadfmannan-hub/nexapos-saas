@@ -2,95 +2,181 @@
 {% load platform_tags %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h1 class="page-title">{{ business.name }} {% sub_status_badge sub %}</h1>
-  <div class="d-flex gap-2">
+  <div>
+    <h1 class="page-title mb-1">{{ business.name }} {% sub_status_badge sub %}</h1>
+    <div class="small text-secondary">Platform customer profile and subscription management</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
     {% if business.is_active %}
     <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#loginAsModal">
-      <i class="bi bi-box-arrow-in-right"></i> Login as owner</button>
+      <i class="bi bi-box-arrow-in-right"></i> Login as owner
+    </button>
     {% endif %}
+    <a href="{% url 'platformadmin:audit' %}" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-shield-check"></i> View audit logs
+    </a>
     <a href="{% url 'platformadmin:business_list' %}" class="btn btn-outline-secondary btn-sm">Back</a>
   </div>
 </div>
 
 <div class="row g-3">
-  <div class="col-lg-5">
-    <div class="card"><div class="card-header">Business</div><div class="card-body">
+  <div class="col-xl-4 col-lg-5">
+    <div class="card"><div class="card-header">Business overview</div><div class="card-body">
       <table class="table table-sm small mb-0">
-        <tr><th>Owner</th><td>{{ business.owner.full_name }} ({{ business.owner.email }})</td></tr>
-        <tr><th>Country</th><td>{{ business.country|default:"—" }}</td></tr>
-        <tr><th>Category</th><td>{{ business.business_category|default:"—" }}</td></tr>
+        <tr><th>Name</th><td>{{ business.name }}</td></tr>
+        <tr><th>Legal name</th><td>{{ business.legal_name|default:"-" }}</td></tr>
+        <tr><th>Country</th><td>{{ business.country|default:"-" }}</td></tr>
+        <tr><th>Category</th><td>{{ business.business_category|default:"-" }}</td></tr>
         <tr><th>Currency</th><td>{{ business.currency_code }} ({{ business.currency_precision }} dp)</td></tr>
         <tr><th>Registered</th><td>{{ business.created_at|date:"Y-m-d" }}</td></tr>
-        <tr><th>Usage</th><td>{{ usage.branches }} branches · {{ usage.users }} users ·
-            {{ usage.products }} products · {{ usage.invoices }} invoices</td></tr>
+        <tr><th>Business status</th><td>{% if business.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Suspended</span>{% endif %}</td></tr>
         {% if not business.is_active %}
-        <tr><th>Suspended</th><td>{{ business.suspended_at|date:"Y-m-d H:i" }}
-            {% if business.suspended_by %}by {{ business.suspended_by.email }}{% endif %}</td></tr>
+        <tr><th>Suspended</th><td>{{ business.suspended_at|date:"Y-m-d H:i" }}{% if business.suspended_by %} by {{ business.suspended_by.email }}{% endif %}</td></tr>
         {% if business.suspension_reason %}<tr><th>Reason</th><td>{{ business.suspension_reason }}</td></tr>{% endif %}
         {% elif business.reactivated_at %}
-        <tr><th>Reactivated</th><td>{{ business.reactivated_at|date:"Y-m-d H:i" }}
-            {% if business.reactivated_by %}by {{ business.reactivated_by.email }}{% endif %}</td></tr>
+        <tr><th>Reactivated</th><td>{{ business.reactivated_at|date:"Y-m-d H:i" }}{% if business.reactivated_by %} by {{ business.reactivated_by.email }}{% endif %}</td></tr>
         {% endif %}
       </table>
     </div></div>
 
-    <div class="card mt-3"><div class="card-header">Subscription</div><div class="card-body">
-      {% if sub %}
-      <div class="d-flex justify-content-between mb-2">
-        <strong>{{ sub.plan.name }}</strong>
-        {% sub_status_badge sub %}
-      </div>
-      <div class="small text-secondary mb-3">
-        {% if sub.trial_ends_at %}Trial ends {{ sub.trial_ends_at|date:"Y-m-d" }} · {% endif %}
-        {% if sub.current_period_end %}Period ends {{ sub.current_period_end|date:"Y-m-d" }}{% endif %}
-      </div>
-      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'extend' %}" class="border rounded p-2 mb-2">
-        {% csrf_token %}
-        <div class="small fw-bold mb-1">Extend / activate subscription</div>
-        <div class="row g-2">
-          <div class="col-4"><input type="number" name="days" value="30" min="1" class="form-control form-control-sm" title="Days"></div>
-          <div class="col-8">
-            <select name="plan_id" class="form-select form-select-sm">
-              {% for p in plans %}<option value="{{ p.id }}" {% if sub.plan_id == p.id %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
-            </select>
-          </div>
-          <div class="col-4"><input type="text" name="amount" class="form-control form-control-sm" placeholder="Amount paid"></div>
-          <div class="col-4">
-            <select name="method" class="form-select form-select-sm">
-              <option value="manual">Manual</option><option value="bank_transfer">Bank transfer</option>
-            </select>
-          </div>
-          <div class="col-4"><input type="text" name="reference" class="form-control form-control-sm" placeholder="Ref #"></div>
-          <div class="col-12"><button class="btn btn-sm btn-primary w-100">Extend subscription</button></div>
-        </div>
-      </form>
-      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'extend_trial' %}" class="d-flex gap-2">
-        {% csrf_token %}
-        <input type="number" name="days" value="7" min="1" class="form-control form-control-sm" style="max-width:90px">
-        <button class="btn btn-sm btn-outline-primary">Extend trial</button>
-      </form>
-      {% endif %}
+    <div class="card mt-3"><div class="card-header">Owner account</div><div class="card-body">
+      <table class="table table-sm small mb-0">
+        <tr><th>Name</th><td>{{ business.owner.full_name }}</td></tr>
+        <tr><th>Email</th><td>{{ business.owner.email }}</td></tr>
+        <tr><th>Phone</th><td>{{ business.owner.phone|default:"-" }}</td></tr>
+        <tr><th>Account status</th><td>{% if business.owner.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td></tr>
+      </table>
     </div></div>
 
-    <div class="card mt-3 border-danger"><div class="card-header text-danger">Danger zone</div><div class="card-body">
-      {% if business.is_active %}
-      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'suspend' %}"
-            onsubmit="return confirm('Suspend this business? Users will lose access but NO data is deleted.')">
-        {% csrf_token %}
-        <input type="text" name="reason" class="form-control form-control-sm mb-2" placeholder="Suspension reason" required>
-        <button class="btn btn-sm btn-danger">Suspend business</button>
-      </form>
-      {% else %}
-      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'activate' %}">
-        {% csrf_token %}
-        <button class="btn btn-sm btn-success">Reactivate business</button>
-      </form>
-      {% endif %}
+    <div class="card mt-3"><div class="card-header">Usage summary</div><div class="card-body">
+      <table class="table table-sm small mb-0">
+        <tr><th>Branches</th><td>{{ usage.branches }}</td></tr>
+        <tr><th>Users</th><td>{{ usage.users }}</td></tr>
+        <tr><th>Warehouses</th><td>{{ usage.warehouses }}</td></tr>
+        <tr><th>Products</th><td>{{ usage.products }}</td></tr>
+        <tr><th>Customers</th><td>{{ usage.customers }}</td></tr>
+        <tr><th>Monthly invoices</th><td>{{ usage.monthly_invoices }}</td></tr>
+        <tr><th>Total invoices</th><td>{{ usage.invoices }}</td></tr>
+        <tr><th>Storage used</th><td>{% if usage.storage_mb != None %}{{ usage.storage_mb }} MB{% else %}Not tracked{% endif %}</td></tr>
+      </table>
+    </div></div>
+
+    <div class="card mt-3"><div class="card-header">Quick actions</div><div class="card-body">
+      <div class="d-flex flex-wrap gap-2">
+        {% if business.is_active %}
+        <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#loginAsModal">Login as owner</button>
+        <button class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#suspendModal">Suspend business</button>
+        {% else %}
+        <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'activate' %}">{% csrf_token %}
+          <button class="btn btn-sm btn-success">Reactivate business</button>
+        </form>
+        {% endif %}
+        <a href="#renewalForm" class="btn btn-sm btn-primary">Renew subscription</a>
+        <a href="#planChangeForm" class="btn btn-sm btn-outline-primary">Change plan</a>
+        <a href="#paymentForm" class="btn btn-sm btn-outline-primary">Record payment</a>
+        <a href="{% url 'platformadmin:audit' %}" class="btn btn-sm btn-outline-secondary">View audit logs</a>
+      </div>
     </div></div>
   </div>
 
-  <div class="col-lg-7">
-    <div class="card"><div class="card-header">Members</div>
+  <div class="col-xl-8 col-lg-7">
+    <div class="card"><div class="card-header">Current subscription</div><div class="card-body">
+      {% if sub %}
+      <div class="row g-3">
+        <div class="col-md-6">
+          <table class="table table-sm small mb-0">
+            <tr><th>Current plan</th><td>{{ sub.plan.name }}</td></tr>
+            <tr><th>Status</th><td>{% sub_status_badge sub %}</td></tr>
+            <tr><th>Billing cycle</th><td>{{ sub.get_billing_cycle_display }}</td></tr>
+            <tr><th>Trial</th><td>{% if sub.is_trial %}Yes{% else %}No{% endif %}</td></tr>
+            <tr><th>Days remaining</th><td>{% if sub.days_remaining != None %}{{ sub.days_remaining }}{% else %}-{% endif %}</td></tr>
+            <tr><th>Can access app</th><td>{% if sub.can_access_app %}Yes{% else %}No{% endif %}</td></tr>
+            <tr><th>Should suspend</th><td>{% if sub.should_suspend %}Warning{% else %}No{% endif %}</td></tr>
+          </table>
+        </div>
+        <div class="col-md-6">
+          <table class="table table-sm small mb-0">
+            <tr><th>Trial ends</th><td>{{ sub.trial_ends_at|date:"Y-m-d"|default:"-" }}</td></tr>
+            <tr><th>Period start</th><td>{{ sub.current_period_start|date:"Y-m-d"|default:"-" }}</td></tr>
+            <tr><th>Period end</th><td>{{ sub.current_period_end|date:"Y-m-d"|default:"-" }}</td></tr>
+            <tr><th>Grace days</th><td>{{ sub.grace_days }}</td></tr>
+            <tr><th>Monthly price</th><td>{{ sub.plan.monthly_price }} {{ sub.plan.currency_code }}</td></tr>
+            <tr><th>Annual price</th><td>{{ sub.plan.annual_price }} {{ sub.plan.currency_code }}</td></tr>
+            <tr><th>Setup fee</th><td>{{ sub.plan.setup_fee }} {{ sub.plan.currency_code }}</td></tr>
+          </table>
+        </div>
+      </div>
+      {% else %}
+      <div class="empty-state">No subscription exists for this business.</div>
+      {% endif %}
+    </div></div>
+
+    <div class="card mt-3"><div class="card-header">Payment summary</div><div class="card-body">
+      <div class="row g-3 small">
+        <div class="col-sm-4"><div class="text-secondary">Payments</div><div class="fs-5 fw-semibold">{{ payment_summary.count|default:0 }}</div></div>
+        <div class="col-sm-4"><div class="text-secondary">Total paid</div><div class="fs-5 fw-semibold">{{ payment_summary.total|default:"0.000" }} {% if sub %}{{ sub.plan.currency_code }}{% endif %}</div></div>
+        <div class="col-sm-4"><div class="text-secondary">Last payment</div><div class="fs-5 fw-semibold">{% if payments.0 %}{{ payments.0.payment_date|date:"Y-m-d" }}{% else %}-{% endif %}</div></div>
+      </div>
+    </div></div>
+
+    <div class="card mt-3" id="renewalForm"><div class="card-header">Renew subscription</div><div class="card-body">
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'renew' %}">
+        {% csrf_token %}
+        <div class="row g-2">
+          <div class="col-md-4"><label class="form-label small">Plan</label>{{ renewal_form.plan }}</div>
+          <div class="col-md-4"><label class="form-label small">Renewal type</label>{{ renewal_form.renewal_type }}</div>
+          <div class="col-md-4"><label class="form-label small">Payment amount</label>{{ renewal_form.payment_amount }}</div>
+          <div class="col-md-4"><label class="form-label small">Start date</label>{{ renewal_form.start_date }}</div>
+          <div class="col-md-4"><label class="form-label small">End date</label>{{ renewal_form.end_date }}</div>
+          <div class="col-md-4"><label class="form-label small">Payment method</label>{{ renewal_form.payment_method }}</div>
+          <div class="col-md-6"><label class="form-label small">Payment reference</label>{{ renewal_form.payment_reference }}</div>
+          <div class="col-md-6"><label class="form-label small">Notes</label>{{ renewal_form.notes }}</div>
+          <div class="col-12"><button class="btn btn-sm btn-primary">Renew subscription</button></div>
+        </div>
+      </form>
+    </div></div>
+
+    <div class="card mt-3" id="planChangeForm"><div class="card-header">Change plan</div><div class="card-body">
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'change_plan' %}">
+        {% csrf_token %}
+        <div class="row g-2">
+          <div class="col-md-4"><label class="form-label small">New plan</label>{{ plan_change_form.new_plan }}</div>
+          <div class="col-md-4"><label class="form-label small">Effective date</label>{{ plan_change_form.effective_date }}</div>
+          <div class="col-md-4"><label class="form-label small">Optional payment</label>{{ plan_change_form.payment_amount }}</div>
+          <div class="col-md-4"><label class="form-label small">Payment method</label>{{ plan_change_form.payment_method }}</div>
+          <div class="col-md-4"><label class="form-label small">Payment reference</label>{{ plan_change_form.payment_reference }}</div>
+          <div class="col-md-4"><label class="form-label small">Notes</label>{{ plan_change_form.notes }}</div>
+          <div class="col-12"><button class="btn btn-sm btn-outline-primary">Change plan</button></div>
+        </div>
+      </form>
+    </div></div>
+
+    <div class="card mt-3" id="paymentForm"><div class="card-header">Record payment</div><div class="card-body">
+      <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'record_payment' %}">
+        {% csrf_token %}
+        <div class="row g-2">
+          <div class="col-md-3"><label class="form-label small">Amount</label>{{ payment_form.amount }}</div>
+          <div class="col-md-3"><label class="form-label small">Method</label>{{ payment_form.payment_method }}</div>
+          <div class="col-md-3"><label class="form-label small">Payment date</label>{{ payment_form.payment_date }}</div>
+          <div class="col-md-3"><label class="form-label small">Reference</label>{{ payment_form.payment_reference }}</div>
+          <div class="col-md-8"><label class="form-label small">Notes</label>{{ payment_form.notes }}</div>
+          <div class="col-md-4 d-flex align-items-end"><button class="btn btn-sm btn-outline-primary w-100">Record payment</button></div>
+        </div>
+      </form>
+    </div></div>
+
+    <div class="card mt-3"><div class="card-header">Subscription history</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Date</th><th>Event</th><th>Detail</th></tr></thead>
+        <tbody>
+          {% for item in history %}
+          <tr><td class="small text-secondary">{{ item.date|date:"Y-m-d H:i" }}</td><td class="fw-semibold small">{{ item.label }}</td><td class="small">{{ item.detail }}</td></tr>
+          {% empty %}<tr><td colspan="3" class="text-center text-secondary py-2">No history yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="card mt-3"><div class="card-header">Members</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>User</th><th>Role</th><th>Status</th></tr></thead>
         <tbody>
@@ -103,10 +189,22 @@
       </table></div>
     </div>
 
+    <div class="card mt-3"><div class="card-header">Subscription payments</div>
+      <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Recorded by</th><th class="text-end">Amount</th></tr></thead>
+        <tbody>
+          {% for p in payments %}
+          <tr><td class="small">{{ p.payment_date|date:"Y-m-d" }}</td>
+              <td>{{ p.get_method_display }}</td><td class="small">{{ p.reference|default:"-" }}</td>
+              <td class="small">{% if p.recorded_by %}{{ p.recorded_by.email }}{% else %}-{% endif %}</td>
+              <td class="text-end">{{ p.amount }} {{ p.currency_code }}</td></tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-2">No payments recorded</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
     <div class="card mt-3"><div class="card-header">Support access (audited)</div><div class="card-body">
-      <p class="small text-secondary">Platform staff cannot see tenant business data
-      without an explicit, time-limited, audited grant. The business owner
-      {% if business.settings.notify_support_access %}is notified{% else %}has notifications disabled{% endif %}.</p>
+      <p class="small text-secondary">Platform staff cannot see tenant business data without an explicit, time-limited, audited grant.</p>
       <form method="post" action="{% url 'platformadmin:support_access' business.public_id %}" class="d-flex gap-2 mb-3">
         {% csrf_token %}
         <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason (required)" required>
@@ -120,8 +218,7 @@
           <tr>
             <td>{{ g.granted_to.email }}</td>
             <td>{{ g.reason }}</td>
-            <td>{% if g.revoked_at %}<span class="text-danger">Revoked</span>
-                {% elif g.expires_at < now %}Expired{% else %}{{ g.expires_at|date:"Y-m-d H:i" }}{% endif %}</td>
+            <td>{% if g.revoked_at %}<span class="text-danger">Revoked</span>{% elif g.expires_at < now %}Expired{% else %}{{ g.expires_at|date:"Y-m-d H:i" }}{% endif %}</td>
             <td>{% if g.is_active %}
               <form method="post" action="{% url 'platformadmin:support_access' business.public_id %}">{% csrf_token %}
                 <input type="hidden" name="revoke_id" value="{{ g.pk }}">
@@ -132,33 +229,35 @@
         </tbody>
       </table>
     </div></div>
-
-    <div class="card mt-3"><div class="card-header">Subscription payments</div>
-      <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th class="text-end">Amount</th></tr></thead>
-        <tbody>
-          {% for p in payments %}
-          <tr><td class="small">{{ p.created_at|date:"Y-m-d" }}</td>
-              <td>{{ p.get_method_display }}</td><td class="small">{{ p.reference }}</td>
-              <td class="text-end">{{ p.amount }} {{ p.currency_code }}</td></tr>
-          {% empty %}<tr><td colspan="4" class="text-center text-secondary py-2">No payments recorded</td></tr>{% endfor %}
-        </tbody>
-      </table></div>
-    </div>
   </div>
 </div>
 
-<!-- Login As Owner modal -->
+<div class="modal fade" id="suspendModal" tabindex="-1">
+  <div class="modal-dialog"><div class="modal-content">
+    <form method="post" action="{% url 'platformadmin:business_action' business.public_id 'suspend' %}">{% csrf_token %}
+      <div class="modal-header py-2"><h5 class="modal-title">Suspend business</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
+        <label class="form-label required-star">Reason</label>
+        <input type="text" name="reason" class="form-control" required>
+      </div>
+      <div class="modal-footer py-2">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-danger">Suspend business</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+
 <div class="modal fade" id="loginAsModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
     <form method="post" action="{% url 'platformadmin:login_as' business.public_id %}">{% csrf_token %}
-      <div class="modal-header py-2"><h5 class="modal-title">Login as owner — support mode</h5>
+      <div class="modal-header py-2"><h5 class="modal-title">Login as owner - support mode</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
       <div class="modal-body">
         <div class="alert alert-warning py-2 small">
           You will enter <strong>{{ business.name }}</strong> as its owner
-          ({{ business.owner.email }}). The session is audited and the owner is
-          notified. A banner with an exit button stays visible throughout.
+          ({{ business.owner.email }}). The session is audited.
         </div>
         <label class="form-label required-star">Reason</label>
         <input type="text" name="reason" class="form-control" required

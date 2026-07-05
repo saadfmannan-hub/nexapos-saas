@@ -218,6 +218,33 @@ class Subscription(TimeStampedModel):
         return not self.is_operational
 
     @property
+    def is_trial(self) -> bool:
+        return self.effective_status == self.Status.TRIAL
+
+    @property
+    def is_active_subscription(self) -> bool:
+        return self.effective_status in (self.Status.ACTIVE, self.Status.GRACE)
+
+    @property
+    def is_expired(self) -> bool:
+        return self.effective_status == self.Status.EXPIRED
+
+    @property
+    def days_remaining(self):
+        end = self.period_ends_on
+        if not end:
+            return None
+        return (end.date() - timezone.localdate()).days
+
+    @property
+    def can_access_app(self) -> bool:
+        return self.is_operational
+
+    @property
+    def should_suspend(self) -> bool:
+        return self.is_expired
+
+    @property
     def has_tailoring_module(self) -> bool:
         return bool(self.plan_id and self.plan.has_tailoring_module)
 
@@ -247,6 +274,13 @@ class SubscriptionPayment(TimeStampedModel):
     future gateway). Gateway-agnostic by design."""
 
     public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    business = models.ForeignKey(
+        "tenants.Business",
+        on_delete=models.CASCADE,
+        related_name="subscription_payments",
+        null=True,
+        blank=True,
+    )
     subscription = models.ForeignKey(
         Subscription, on_delete=models.CASCADE, related_name="payments"
     )
@@ -262,6 +296,7 @@ class SubscriptionPayment(TimeStampedModel):
         default="manual",
     )
     reference = models.CharField(max_length=120, blank=True)
+    payment_date = models.DateField(default=timezone.localdate, db_index=True)
     coupon = models.ForeignKey(Coupon, on_delete=models.SET_NULL, null=True, blank=True)
     period_start = models.DateTimeField(null=True, blank=True)
     period_end = models.DateTimeField(null=True, blank=True)
@@ -271,7 +306,28 @@ class SubscriptionPayment(TimeStampedModel):
     notes = models.TextField(blank=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-payment_date", "-created_at"]
+
+    @property
+    def currency(self):
+        return self.currency_code
+
+    @property
+    def payment_method(self):
+        return self.method
+
+    @property
+    def payment_reference(self):
+        return self.reference
+
+    @property
+    def created_by(self):
+        return self.recorded_by
+
+    def save(self, *args, **kwargs):
+        if self.business_id is None and self.subscription_id:
+            self.business_id = self.subscription.business_id
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.subscription.business} {self.amount} {self.currency_code}"

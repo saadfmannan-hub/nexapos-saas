@@ -332,6 +332,149 @@ class PlanAdminTests(PlatformBaseTest):
         self.assertNotContains(r, "Coupons")
 
 
+class SubscriptionManagementTests(PlatformBaseTest):
+    def _second_plan(self):
+        return Plan.objects.create(
+            name="Growth",
+            monthly_price=D("49.000"),
+            annual_price=D("499.000"),
+            currency_code="USD",
+            max_branches=0,
+            max_users=0,
+            max_warehouses=0,
+        )
+
+    def test_renewal_from_active_subscription_extends_from_current_end(self):
+        plan = self.sub_a.plan
+        current_end = timezone.now() + timedelta(days=10)
+        self.sub_a.status = Subscription.Status.ACTIVE
+        self.sub_a.current_period_start = timezone.now()
+        self.sub_a.current_period_end = current_end
+        self.sub_a.save()
+
+        r = self.client.post(
+            reverse("platformadmin:business_action",
+                    args=[self.business_a.public_id, "renew"]),
+            {
+                "renew-plan": plan.pk,
+                "renew-renewal_type": "monthly",
+                "renew-start_date": "",
+                "renew-end_date": "",
+                "renew-payment_amount": "30.000",
+                "renew-payment_method": "manual",
+                "renew-payment_reference": "REN-ACTIVE",
+                "renew-notes": "monthly renewal",
+            },
+        )
+
+        self.assertEqual(r.status_code, 302)
+        self.sub_a.refresh_from_db()
+        self.assertEqual(self.sub_a.status, Subscription.Status.ACTIVE)
+        self.assertEqual(
+            self.sub_a.current_period_end.date(),
+            current_end.date() + timedelta(days=30),
+        )
+        payment = SubscriptionPayment.objects.get(reference="REN-ACTIVE")
+        self.assertEqual(payment.business, self.business_a)
+        self.assertEqual(payment.amount, D("30.000"))
+        self.assertTrue(AuditLog.objects.filter(
+            action="platform.subscription_renewed",
+            business=self.business_a,
+        ).exists())
+
+    def test_renewal_from_expired_subscription_starts_today(self):
+        plan = self.sub_a.plan
+        self.sub_a.status = Subscription.Status.ACTIVE
+        self.sub_a.current_period_end = timezone.now() - timedelta(days=20)
+        self.sub_a.grace_days = 1
+        self.sub_a.save()
+
+        r = self.client.post(
+            reverse("platformadmin:business_action",
+                    args=[self.business_a.public_id, "renew"]),
+            {
+                "renew-plan": plan.pk,
+                "renew-renewal_type": "annual",
+                "renew-start_date": "",
+                "renew-end_date": "",
+                "renew-payment_amount": "300.000",
+                "renew-payment_method": "bank_transfer",
+                "renew-payment_reference": "REN-EXPIRED",
+                "renew-notes": "",
+            },
+        )
+
+        self.assertEqual(r.status_code, 302)
+        self.sub_a.refresh_from_db()
+        today = timezone.localdate()
+        self.assertEqual(self.sub_a.current_period_start.date(), today)
+        self.assertEqual(self.sub_a.current_period_end.date(), today + timedelta(days=365))
+        self.assertEqual(self.sub_a.status, Subscription.Status.ACTIVE)
+
+    def test_plan_change_records_optional_payment(self):
+        new_plan = self._second_plan()
+
+        r = self.client.post(
+            reverse("platformadmin:business_action",
+                    args=[self.business_a.public_id, "change_plan"]),
+            {
+                "plan-new_plan": new_plan.pk,
+                "plan-effective_date": str(timezone.localdate()),
+                "plan-notes": "upgrade",
+                "plan-payment_amount": "15.000",
+                "plan-payment_reference": "UP-001",
+                "plan-payment_method": "manual",
+            },
+        )
+
+        self.assertEqual(r.status_code, 302)
+        self.sub_a.refresh_from_db()
+        self.assertEqual(self.sub_a.plan, new_plan)
+        self.assertTrue(SubscriptionPayment.objects.filter(
+            business=self.business_a,
+            subscription=self.sub_a,
+            reference="UP-001",
+        ).exists())
+        self.assertTrue(AuditLog.objects.filter(
+            action="platform.subscription_plan_changed",
+            business=self.business_a,
+        ).exists())
+
+    def test_record_payment_from_business_manage_page(self):
+        r = self.client.post(
+            reverse("platformadmin:business_action",
+                    args=[self.business_a.public_id, "record_payment"]),
+            {
+                "payment-amount": "12.500",
+                "payment-payment_method": "gateway",
+                "payment-payment_date": str(timezone.localdate()),
+                "payment-payment_reference": "PAY-001",
+                "payment-notes": "gateway receipt",
+            },
+        )
+
+        self.assertEqual(r.status_code, 302)
+        payment = SubscriptionPayment.objects.get(reference="PAY-001")
+        self.assertEqual(payment.business, self.business_a)
+        self.assertEqual(payment.method, "gateway")
+        self.assertEqual(payment.recorded_by, self.admin)
+        self.assertTrue(AuditLog.objects.filter(
+            action="platform.subscription_payment_recorded",
+            business=self.business_a,
+        ).exists())
+
+    def test_business_manage_page_renders_subscription_management(self):
+        r = self.client.get(reverse("platformadmin:business_detail",
+                                    args=[self.business_a.public_id]))
+
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Business overview")
+        self.assertContains(r, "Renew subscription")
+        self.assertContains(r, "Change plan")
+        self.assertContains(r, "Record payment")
+        self.assertContains(r, "Subscription history")
+
+
 class ExpiryModeTests(PlatformBaseTest):
     def setUp(self):
         super().setUp()
