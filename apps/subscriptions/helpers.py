@@ -15,6 +15,14 @@ RESOURCE_LABELS = {
     "products": "Products",
     "customers": "Customers",
     "monthly_invoices": "Invoices this month",
+    "employees": "Employees",
+    "suppliers": "Suppliers",
+    "active_orders": "Active orders",
+    "api_calls": "API calls",
+    "branch_managers": "Branch managers",
+    "cashiers": "Cashiers",
+    "logged_in_devices": "Logged-in devices",
+    "pos_terminals": "POS terminals",
 }
 
 
@@ -32,9 +40,9 @@ def limit_blocked_response(request, exc, resource=None):
         # Full usage table so the owner sees exactly where they stand
         usage = {}
         for key in RESOURCE_LABELS:
-            c, l, allowed = services.limit_state(request.business, key)
-            usage[key] = {"label": RESOURCE_LABELS[key], "current": c,
-                          "limit": l, "exceeded": not allowed and l > 0}
+            current, limit, allowed = services.limit_state(request.business, key)
+            usage[key] = {"label": RESOURCE_LABELS[key], "current": current,
+                          "limit": limit, "exceeded": not allowed and limit > 0}
         context["usage"] = usage
         context["plan"] = request.subscription.plan if request.subscription else None
     return render(request, "subscriptions/limit_blocked.html", context, status=200)

@@ -266,6 +266,29 @@ class CreateBusinessTests(PlatformBaseTest):
         self.assertGreaterEqual(delta, 19)
         self.assertLessEqual(delta, 21)
 
+    def test_trial_mode_rejected_when_plan_disallows_trial(self):
+        self.plan.allow_trial = False
+        self.plan.save()
+        before = Business.objects.count()
+
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload(subscription_mode="trial"))
+
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "does not allow trial subscriptions")
+        self.assertEqual(Business.objects.count(), before)
+
+    def test_active_mode_still_works_when_plan_disallows_trial(self):
+        self.plan.allow_trial = False
+        self.plan.save()
+
+        r = self.client.post(reverse("platformadmin:business_create"),
+                             self._payload(subscription_mode="active", days="30"))
+
+        self.assertEqual(r.status_code, 302)
+        sub = Business.objects.get(name="Gamma Stores").subscription
+        self.assertEqual(sub.status, Subscription.Status.ACTIVE)
+
     def test_create_is_audited(self):
         self.client.post(reverse("platformadmin:business_create"),
                          self._payload())
@@ -290,6 +313,23 @@ class CreateBusinessTests(PlatformBaseTest):
                              self._payload())
         self.assertEqual(r.status_code, 403)
         self.assertFalse(Business.objects.filter(name="Gamma Stores").exists())
+
+
+class PlanAdminTests(PlatformBaseTest):
+    def test_plan_form_renders_commercial_fields(self):
+        r = self.client.get(reverse("platformadmin:plan_create"))
+
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "setup_fee")
+        self.assertContains(r, "feature_tailoring_module")
+        self.assertContains(r, "feature_executive_dashboard")
+        self.assertContains(r, "max_pos_terminals")
+
+    def test_coupons_hidden_from_platform_sidebar(self):
+        r = self.client.get(reverse("platformadmin:plan_list"))
+
+        self.assertEqual(r.status_code, 200)
+        self.assertNotContains(r, "Coupons")
 
 
 class ExpiryModeTests(PlatformBaseTest):

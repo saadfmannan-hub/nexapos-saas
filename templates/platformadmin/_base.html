@@ -20,7 +20,6 @@
       <div class="nav-section">Operations</div>
       <a class="nav-link {% if pa_nav == 'businesses' %}active{% endif %}" href="{% url 'platformadmin:business_list' %}"><i class="bi bi-buildings"></i> Businesses</a>
       <a class="nav-link {% if pa_nav == 'plans' %}active{% endif %}" href="{% url 'platformadmin:plan_list' %}"><i class="bi bi-stars"></i> Plans</a>
-      <a class="nav-link {% if pa_nav == 'coupons' %}active{% endif %}" href="{% url 'platformadmin:coupon_list' %}"><i class="bi bi-ticket-perforated"></i> Coupons</a>
       <a class="nav-link {% if pa_nav == 'announcements' %}active{% endif %}" href="{% url 'platformadmin:announcements' %}"><i class="bi bi-megaphone"></i> Announcements</a>
       <div class="nav-section">Platform</div>
       <a class="nav-link {% if pa_nav == 'audit' %}active{% endif %}" href="{% url 'platformadmin:audit' %}"><i class="bi bi-shield-check"></i> Audit logs</a>

@@ -1,6 +1,5 @@
 """Subscription limits, trial expiry, suspension behaviour."""
 from datetime import timedelta
-from decimal import Decimal
 
 from django.urls import reverse
 from django.utils import timezone
@@ -32,6 +31,26 @@ class LimitTests(TenantTestCase):
         self.plan.max_products = 0
         self.plan.save()
         subscriptions.check_limit(self.business_a, "products")  # no raise
+
+    def test_new_commercial_limit_fields_use_zero_as_unlimited(self):
+        self.plan.max_suppliers = 0
+        self.plan.max_cashiers = 0
+        self.plan.max_pos_terminals = 0
+        self.plan.save()
+
+        for resource in ("suppliers", "cashiers", "pos_terminals"):
+            current, limit, allowed = subscriptions.limit_state(
+                self.business_a, resource)
+            self.assertEqual(limit, 0)
+            self.assertGreaterEqual(current, 0)
+            self.assertTrue(allowed)
+
+    def test_cashier_limit_can_be_enforced(self):
+        self.plan.max_cashiers = 1
+        self.plan.save()
+
+        with self.assertRaises(subscriptions.LimitExceeded):
+            subscriptions.check_limit(self.business_a, "cashiers")
 
     def test_branch_create_view_shows_upgrade_page(self):
         self.plan.max_branches = 1
@@ -161,3 +180,25 @@ class StatusTests(TenantTestCase):
         self.client.force_login(self.owner_a)
         response = self.client.get(reverse("inventory:transfer_list"))
         self.assertContains(response, "not included in your plan")
+
+    def test_new_feature_helpers_default_false_then_follow_plan(self):
+        plan = self.business_a.subscription.plan
+        plan.feature_tailoring_module = False
+        plan.feature_executive_dashboard = False
+        plan.save()
+
+        self.business_a.subscription.refresh_from_db()
+        self.assertFalse(subscriptions.has_tailoring_module(self.business_a))
+        self.assertFalse(subscriptions.has_executive_dashboard(self.business_a))
+        self.assertFalse(self.business_a.subscription.has_tailoring_module)
+        self.assertFalse(self.business_a.subscription.has_executive_dashboard)
+
+        plan.feature_tailoring_module = True
+        plan.feature_executive_dashboard = True
+        plan.save()
+
+        self.business_a.subscription.refresh_from_db()
+        self.assertTrue(subscriptions.has_tailoring_module(self.business_a))
+        self.assertTrue(subscriptions.has_executive_dashboard(self.business_a))
+        self.assertTrue(self.business_a.subscription.has_tailoring_module)
+        self.assertTrue(self.business_a.subscription.has_executive_dashboard)

@@ -7,24 +7,31 @@
 <div class="card"><div class="table-responsive">
   <table class="table table-hover mb-0">
     <thead><tr><th>Plan</th><th class="text-end">Monthly</th><th class="text-end">Annual</th>
-      <th class="text-end">Trial days</th><th>Limits</th><th class="text-end">Subscribers</th><th>Status</th><th></th></tr></thead>
+      <th class="text-end">Setup</th><th class="text-end">Trial</th><th>Limits</th>
+      <th class="text-end">Subscribers</th><th>Status</th><th></th></tr></thead>
     <tbody>
       {% for p in plans %}
       <tr>
         <td class="fw-semibold">{{ p.name }}</td>
         <td class="text-end">{{ p.monthly_price }} {{ p.currency_code }}</td>
         <td class="text-end">{{ p.annual_price }} {{ p.currency_code }}</td>
-        <td class="text-end">{{ p.trial_days }}</td>
+        <td class="text-end">{{ p.setup_fee }} {{ p.currency_code }}</td>
+        <td class="text-end">{% if p.allow_trial %}{{ p.trial_days }} days{% else %}No{% endif %}</td>
         <td class="small text-secondary">
-          {{ p.max_branches|default:"∞" }} br · {{ p.max_users|default:"∞" }} usr ·
-          {{ p.max_products|default:"∞" }} prod · {{ p.max_monthly_invoices|default:"∞" }} inv/mo
+          {{ p.max_branches|default:"unlimited" }} br /
+          {{ p.max_users|default:"unlimited" }} usr /
+          {{ p.max_products|default:"unlimited" }} prod /
+          {{ p.max_monthly_invoices|default:"unlimited" }} inv/mo<br>
+          {{ p.max_employees|default:"unlimited" }} emp /
+          {{ p.max_suppliers|default:"unlimited" }} supp /
+          {{ p.max_pos_terminals|default:"unlimited" }} POS
         </td>
         <td class="text-end">{{ p.sub_count }}</td>
         <td>{% if p.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
         <td class="w-1"><a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:plan_edit' p.pk %}"><i class="bi bi-pencil"></i></a></td>
       </tr>
       {% empty %}
-      <tr><td colspan="8"><div class="empty-state">No plans defined yet — create your first plan.</div></td></tr>
+      <tr><td colspan="9"><div class="empty-state">No plans defined yet - create your first plan.</div></td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -103,14 +103,18 @@ def provision_business(
     create_default_register(business, branch)
     create_default_expense_categories(business)
 
-    # Trial subscription
+    # Subscription: plans can opt out of trial provisioning.
     plan = plan or get_default_plan()
     now = timezone.now()
+    status = Subscription.Status.TRIAL if plan.allow_trial else Subscription.Status.ACTIVE
     Subscription.objects.create(
         business=business,
         plan=plan,
-        status=Subscription.Status.TRIAL,
-        trial_ends_at=now + timezone.timedelta(days=plan.trial_days or 0),
+        status=status,
+        trial_ends_at=(
+            now + timezone.timedelta(days=plan.trial_days or 0)
+            if plan.allow_trial else None
+        ),
         current_period_start=now,
     )
 

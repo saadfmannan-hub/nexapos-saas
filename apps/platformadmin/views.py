@@ -158,7 +158,7 @@ def business_detail(request, public_id):
             "owner", "subscription__plan").get(public_id=public_id)
     except Business.DoesNotExist:
         from django.http import Http404
-        raise Http404
+        raise Http404 from None
     sub = getattr(business, "subscription", None)
     members = Membership.objects.filter(business=business).select_related(
         "user", "role")
@@ -193,7 +193,7 @@ def business_action(request, public_id, action):
         business = Business.objects.get(public_id=public_id)
     except Business.DoesNotExist:
         from django.http import Http404
-        raise Http404
+        raise Http404 from None
     sub = getattr(business, "subscription", None)
 
     if action == "suspend":
@@ -344,6 +344,16 @@ class BusinessCreateForm(forms.Form):
         data = super().clean()
         if data.get("password"):
             validate_password(data["password"])
+        plan = data.get("plan")
+        if (
+            plan
+            and data.get("subscription_mode") == "trial"
+            and not plan.allow_trial
+        ):
+            self.add_error(
+                "subscription_mode",
+                "This plan does not allow trial subscriptions.",
+            )
         return data
 
 
@@ -437,7 +447,7 @@ def support_access(request, public_id):
         business = Business.objects.get(public_id=public_id)
     except Business.DoesNotExist:
         from django.http import Http404
-        raise Http404
+        raise Http404 from None
     if request.method == "POST":
         if request.POST.get("revoke_id"):
             grant = SupportAccessGrant.objects.filter(
@@ -489,7 +499,7 @@ def support_login_as(request, public_id):
         business = Business.objects.select_related("owner").get(public_id=public_id)
     except Business.DoesNotExist:
         from django.http import Http404
-        raise Http404
+        raise Http404 from None
     if request.method != "POST":
         return redirect("platformadmin:business_detail", public_id=public_id)
     reason = request.POST.get("reason", "").strip()
@@ -595,27 +605,87 @@ def platform_settings(request):
 # ---------------------------------------------------------------------------
 # Plans / coupons / announcements
 # ---------------------------------------------------------------------------
+PLAN_PRICING_FIELDS = [
+    "name", "description", "monthly_price", "annual_price", "setup_fee",
+    "currency_code", "trial_days", "allow_trial", "sort_order",
+    "support_level", "is_active",
+]
+PLAN_LIMIT_FIELDS = [
+    "max_branches", "max_users", "max_warehouses", "max_products",
+    "max_customers", "max_monthly_invoices", "storage_limit_mb",
+    "max_employees", "max_suppliers", "max_active_orders",
+    "max_api_calls", "max_branch_managers", "max_cashiers",
+    "max_logged_in_devices", "max_pos_terminals",
+]
+PLAN_CORE_FEATURES = [
+    "feature_sales", "feature_inventory", "feature_customers",
+    "feature_suppliers", "feature_employees", "feature_purchases",
+    "feature_expenses", "feature_returns", "feature_transfers",
+    "feature_advanced_reports", "feature_customer_credit",
+    "feature_api_access", "feature_custom_roles", "feature_audit_logs",
+]
+PLAN_OPERATIONS_FEATURES = [
+    "feature_executive_dashboard", "feature_tailoring_module",
+    "feature_attendance", "feature_payroll", "feature_manufacturing",
+    "feature_crm", "feature_loyalty_program", "feature_gift_cards",
+    "feature_barcode_printing", "feature_kitchen_display",
+    "feature_multi_currency", "feature_offline_mode",
+]
+PLAN_INTEGRATION_FEATURES = [
+    "feature_whatsapp_integration", "feature_mobile_app",
+    "feature_owner_dashboard_app", "feature_ai_reports",
+    "feature_ai_forecast", "feature_ai_sales_prediction",
+    "feature_ai_assistant", "feature_daily_backup",
+    "feature_weekly_backup", "feature_priority_restore",
+    "feature_email_integration", "feature_sms_integration",
+    "feature_payment_gateway", "feature_white_label",
+    "feature_custom_domain", "feature_logo_replacement",
+    "feature_email_branding", "feature_receipt_branding",
+    "feature_invoice_branding",
+]
+PLAN_FORM_FIELDS = (
+    PLAN_PRICING_FIELDS + PLAN_LIMIT_FIELDS + PLAN_CORE_FEATURES
+    + PLAN_OPERATIONS_FEATURES + PLAN_INTEGRATION_FEATURES
+)
+
+
 class PlanForm(forms.ModelForm):
+    PRICING_FIELDS = PLAN_PRICING_FIELDS
+    LIMIT_FIELDS = PLAN_LIMIT_FIELDS
+    CORE_FEATURES = PLAN_CORE_FEATURES
+    OPERATIONS_FEATURES = PLAN_OPERATIONS_FEATURES
+    INTEGRATION_FEATURES = PLAN_INTEGRATION_FEATURES
+
     class Meta:
         model = Plan
-        exclude = ["public_id", "created_at", "updated_at"]
+        fields = PLAN_FORM_FIELDS
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for f in self.fields.values():
             if isinstance(f.widget, forms.CheckboxInput):
                 f.widget.attrs.setdefault("class", "form-check-input")
+            elif isinstance(f.widget, forms.Select):
+                f.widget.attrs.setdefault("class", "form-select")
             elif isinstance(f.widget, forms.Textarea):
                 f.widget.attrs.setdefault("class", "form-control")
                 f.widget.attrs.setdefault("rows", 2)
             else:
                 f.widget.attrs.setdefault("class", "form-control")
+        self.pricing_fields = [self[name] for name in self.PRICING_FIELDS]
+        self.limit_fields = [self[name] for name in self.LIMIT_FIELDS]
+        self.feature_groups = [
+            ("Core modules", [self[name] for name in self.CORE_FEATURES]),
+            ("Operations", [self[name] for name in self.OPERATIONS_FEATURES]),
+            ("Integrations & AI", [self[name] for name in self.INTEGRATION_FEATURES]),
+        ]
 
 
 @platform_admin_required
 def plan_list(request):
     plans = Plan.objects.annotate(sub_count=Count("subscriptions"))
-    return render(request, "platformadmin/plan_list.html", {"plans": plans})
+    return render(request, "platformadmin/plan_list.html",
+                  {"plans": plans, "pa_nav": "plans"})
 
 
 @platform_admin_required
@@ -630,7 +700,7 @@ def plan_form(request, pk=None):
         messages.success(request, "Plan saved.")
         return redirect("platformadmin:plan_list")
     return render(request, "platformadmin/plan_form.html",
-                  {"form": form, "plan": instance})
+                  {"form": form, "plan": instance, "pa_nav": "plans"})
 
 
 class CouponForm(forms.ModelForm):

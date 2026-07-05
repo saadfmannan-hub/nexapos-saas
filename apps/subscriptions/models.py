@@ -13,13 +13,22 @@ class Plan(TimeStampedModel):
     """A sellable subscription plan. Managed by the platform admin —
     nothing here is hardcoded; seed data only provides editable examples."""
 
+    class SupportLevel(models.TextChoices):
+        STARTER = "starter", _("Starter")
+        STANDARD = "standard", _("Standard")
+        PRIORITY = "priority", _("Priority")
+        PREMIUM = "premium", _("Premium")
+        ENTERPRISE_DEDICATED = "enterprise_dedicated", _("Enterprise Dedicated")
+
     public_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     name = models.CharField(max_length=80, unique=True)
     description = models.TextField(blank=True)
     monthly_price = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     annual_price = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    setup_fee = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     currency_code = models.CharField(max_length=10, default="USD")
     trial_days = models.PositiveIntegerField(default=14)
+    allow_trial = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
 
@@ -31,6 +40,14 @@ class Plan(TimeStampedModel):
     max_customers = models.PositiveIntegerField(default=0)
     max_monthly_invoices = models.PositiveIntegerField(default=0)
     storage_limit_mb = models.PositiveIntegerField(default=0)
+    max_employees = models.PositiveIntegerField(default=0)
+    max_suppliers = models.PositiveIntegerField(default=0)
+    max_active_orders = models.PositiveIntegerField(default=0)
+    max_api_calls = models.PositiveIntegerField(default=0)
+    max_branch_managers = models.PositiveIntegerField(default=0)
+    max_cashiers = models.PositiveIntegerField(default=0)
+    max_logged_in_devices = models.PositiveIntegerField(default=0)
+    max_pos_terminals = models.PositiveIntegerField(default=0)
 
     # Feature switches
     feature_purchases = models.BooleanField(default=True)
@@ -43,13 +60,63 @@ class Plan(TimeStampedModel):
     feature_white_label = models.BooleanField(default=False)
     feature_custom_roles = models.BooleanField(default=False)
     feature_audit_logs = models.BooleanField(default=True)
-    support_level = models.CharField(max_length=40, default="standard")
+    feature_executive_dashboard = models.BooleanField(default=False)
+    feature_tailoring_module = models.BooleanField(default=False)
+    feature_inventory = models.BooleanField(default=False)
+    feature_sales = models.BooleanField(default=False)
+    feature_customers = models.BooleanField(default=False)
+    feature_suppliers = models.BooleanField(default=False)
+    feature_employees = models.BooleanField(default=False)
+    feature_attendance = models.BooleanField(default=False)
+    feature_payroll = models.BooleanField(default=False)
+    feature_manufacturing = models.BooleanField(default=False)
+    feature_crm = models.BooleanField(default=False)
+    feature_loyalty_program = models.BooleanField(default=False)
+    feature_gift_cards = models.BooleanField(default=False)
+    feature_whatsapp_integration = models.BooleanField(default=False)
+    feature_barcode_printing = models.BooleanField(default=False)
+    feature_kitchen_display = models.BooleanField(default=False)
+    feature_multi_currency = models.BooleanField(default=False)
+    feature_offline_mode = models.BooleanField(default=False)
+    feature_mobile_app = models.BooleanField(default=False)
+    feature_owner_dashboard_app = models.BooleanField(default=False)
+    feature_ai_reports = models.BooleanField(default=False)
+    feature_ai_forecast = models.BooleanField(default=False)
+    feature_ai_sales_prediction = models.BooleanField(default=False)
+    feature_ai_assistant = models.BooleanField(default=False)
+    feature_daily_backup = models.BooleanField(default=False)
+    feature_weekly_backup = models.BooleanField(default=False)
+    feature_priority_restore = models.BooleanField(default=False)
+    feature_email_integration = models.BooleanField(default=False)
+    feature_sms_integration = models.BooleanField(default=False)
+    feature_payment_gateway = models.BooleanField(default=False)
+    feature_custom_domain = models.BooleanField(default=False)
+    feature_logo_replacement = models.BooleanField(default=False)
+    feature_email_branding = models.BooleanField(default=False)
+    feature_receipt_branding = models.BooleanField(default=False)
+    feature_invoice_branding = models.BooleanField(default=False)
+    support_level = models.CharField(
+        max_length=40,
+        choices=SupportLevel.choices,
+        default=SupportLevel.STANDARD,
+    )
 
     class Meta:
         ordering = ["sort_order", "monthly_price"]
 
     def __str__(self):
         return self.name
+
+    def has_feature(self, feature: str) -> bool:
+        return bool(getattr(self, f"feature_{feature}", False))
+
+    @property
+    def has_tailoring_module(self) -> bool:
+        return self.has_feature("tailoring_module")
+
+    @property
+    def has_executive_dashboard(self) -> bool:
+        return self.has_feature("executive_dashboard")
 
 
 class Subscription(TimeStampedModel):
@@ -149,6 +216,14 @@ class Subscription(TimeStampedModel):
     @property
     def is_read_only(self) -> bool:
         return not self.is_operational
+
+    @property
+    def has_tailoring_module(self) -> bool:
+        return bool(self.plan_id and self.plan.has_tailoring_module)
+
+    @property
+    def has_executive_dashboard(self) -> bool:
+        return bool(self.plan_id and self.plan.has_executive_dashboard)
 
 
 class Coupon(TimeStampedModel):
