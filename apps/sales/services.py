@@ -11,7 +11,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
-from apps.core.money import D, money, round_to_precision
+from apps.core.money import D, money
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
@@ -25,6 +25,7 @@ from .models import (
     SaleReturn,
     SaleReturnItem,
 )
+from . import calculations
 
 ZERO = Decimal("0")
 
@@ -106,39 +107,19 @@ def compute_line(
     product, variant, quantity, unit_price, discount_amount,
     prices_include_tax, tax_rate=None,
 ):
-    """Compute one cart line. Returns dict of money parts (tax-exclusive base)."""
-    quantity = D(quantity)
-    unit_price = money(unit_price)
-    discount_amount = money(discount_amount)
-    rate = D(product.effective_tax_rate() if tax_rate is None else tax_rate)
-
-    gross = unit_price * quantity - discount_amount
-    if gross < 0:
-        raise SaleError("Line discount cannot exceed the line amount.")
-
-    include = (
-        product.price_includes_tax
-        if product.price_includes_tax is not None
-        else prices_include_tax
-    )
-    if rate > 0:
-        if include:
-            base = gross / (1 + rate / 100)
-            tax = gross - base
-        else:
-            base = gross
-            tax = gross * rate / 100
-    else:
-        base, tax = gross, ZERO
-    return {
-        "quantity": quantity,
-        "unit_price": unit_price,
-        "discount_amount": discount_amount,
-        "tax_rate": rate,
-        "base": money(base),
-        "tax": money(tax),
-        "total": money(base + tax),
-    }
+    """Backward-compatible wrapper around the commercial calculation engine."""
+    try:
+        return calculations.compute_line(
+            product,
+            variant,
+            quantity,
+            unit_price,
+            discount_amount,
+            prices_include_tax=prices_include_tax,
+            tax_rate=tax_rate,
+        )
+    except calculations.CalculationError as exc:
+        raise SaleError(str(exc)) from exc
 
 
 @transaction.atomic
@@ -172,13 +153,10 @@ def complete_sale(
         raise SaleError("Cannot complete a sale with no items.")
 
     settings_obj = business.settings
-    prices_include_tax = settings_obj.prices_include_tax
-    tax_rate = settings_obj.effective_vat_rate
     invoice_discount = money(invoice_discount)
 
-    # ---- compute totals --------------------------------------------------
-    computed = []
-    subtotal = tax_total = line_discounts = ZERO
+    # ---- validate cart ---------------------------------------------------
+    normalized_items = []
     for line in items:
         product, variant = line["product"], line.get("variant")
         if product.business_id != business.id:
@@ -200,26 +178,29 @@ def complete_sale(
         discount = money(line.get("discount_amount", ZERO))
         if discount > 0 and not product.allow_discount:
             raise SaleError(f"Discounts are not allowed on {product.name}.")
-        parts = compute_line(
-            product, variant, qty, unit_price, discount,
-            prices_include_tax, tax_rate=tax_rate,
-        )
-        computed.append((line, parts))
-        subtotal += parts["base"]
-        tax_total += parts["tax"]
-        line_discounts += discount
+        normalized_items.append({
+            "product": product,
+            "variant": variant,
+            "quantity": qty,
+            "unit_price": unit_price,
+            "discount_amount": discount,
+        })
 
-    if invoice_discount < 0:
-        raise SaleError("Invoice discount cannot be negative.")
-    if invoice_discount > subtotal + tax_total:
-        raise SaleError("Invoice discount cannot exceed the sale amount.")
+    try:
+        totals = calculations.calculate_sale_totals(
+            business=business,
+            items=normalized_items,
+            invoice_discount=invoice_discount,
+        )
+    except calculations.CalculationError as exc:
+        raise SaleError(str(exc)) from exc
 
     # Discount permission / cap check
-    total_discount = line_discounts + invoice_discount
+    total_discount = totals["discount_total"]
     if total_discount > 0:
         if membership and not membership.has_perm("sales.discount"):
             raise SaleError("You do not have permission to apply discounts.")
-        gross_before = subtotal + tax_total + line_discounts
+        gross_before = totals["subtotal"] + totals["line_discounts"]
         cap = settings_obj.max_discount_percent
         if cap < 100 and gross_before > 0:
             pct = total_discount / gross_before * 100
@@ -228,41 +209,23 @@ def complete_sale(
                     f"Total discount {pct:.1f}% exceeds the allowed maximum of {cap}%."
                 )
 
-    # Grand total is rounded to the business's display precision so that
-    # what the cashier sees IS the amount owed (no hidden 3rd decimal that
-    # would make an exact payment look insufficient). The delta is stored
-    # on the sale as `rounding`.
-    raw_total = money(subtotal + tax_total - invoice_discount)
-    if settings_obj.price_rounding == "nearest":
-        precision_total = money(
-            round_to_precision(raw_total, business.currency_precision)
-        )
-    else:
-        precision_total = raw_total
-    rounding_delta = money(precision_total - raw_total)
-
     # ---- payments --------------------------------------------------------
-    pay_total = ZERO
-    credit_amount = ZERO
-    store_credit_amount = ZERO
-    cash_tendered = ZERO
-    clean_payments = []
     for p in payments:
-        amount = money(p["amount"])
-        if amount <= 0:
-            raise SaleError("Payment amounts must be positive.")
         method = p["method"]
         if method.business_id != business.id:
             raise SaleError("Invalid payment method.")
-        if method.kind == PaymentMethod.Kind.CUSTOMER_CREDIT:
-            credit_amount += amount
-        elif method.kind == PaymentMethod.Kind.STORE_CREDIT:
-            store_credit_amount += amount
-        elif method.kind == PaymentMethod.Kind.CASH:
-            cash_tendered += amount
-        pay_total += amount
-        clean_payments.append({"method": method, "amount": amount,
-                               "reference": p.get("reference", "")})
+    try:
+        clean_payments, payment_totals = calculations.calculate_payment_totals(
+            payments,
+            lambda method: method.kind,
+        )
+    except calculations.CalculationError as exc:
+        raise SaleError(str(exc)) from exc
+    pay_total = payment_totals["pay_total"]
+    credit_amount = payment_totals["credit_amount"]
+    store_credit_amount = payment_totals["store_credit_amount"]
+    cash_tendered = payment_totals["cash_tendered"]
+    precision_total = totals["total"]
 
     change_due = ZERO
     if pay_total > precision_total:
@@ -310,10 +273,10 @@ def complete_sale(
         invoice_number=next_invoice_number(business, branch),
         status=Sale.Status.COMPLETED,
         sale_date=timezone.now(),
-        subtotal=money(subtotal),
+        subtotal=totals["subtotal"],
         discount_amount=total_discount,
-        tax_amount=money(tax_total),
-        rounding=rounding_delta,
+        tax_amount=totals["tax_total"],
+        rounding=totals["rounding"],
         total=precision_total,
         amount_paid=money(pay_total - change_due - credit_amount),
         change_due=change_due,
@@ -323,7 +286,7 @@ def complete_sale(
     )
 
     total_cost = ZERO
-    for line, parts in computed:
+    for line, parts in totals["lines"]:
         product, variant = line["product"], line.get("variant")
         unit_cost = money(_resolve_cost(product, variant))
         line_cost = money(unit_cost * parts["quantity"])
@@ -359,7 +322,7 @@ def complete_sale(
             )
 
     sale.total_cost = money(total_cost)
-    sale.gross_profit = money(subtotal - invoice_discount - total_cost)
+    sale.gross_profit = money(totals["subtotal"] - invoice_discount - total_cost)
 
     for p in clean_payments:
         amount = p["amount"]

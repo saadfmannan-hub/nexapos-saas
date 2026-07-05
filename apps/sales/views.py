@@ -16,7 +16,7 @@ from apps.inventory.models import StockLevel
 from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
 
-from . import services
+from . import calculations, services
 from .models import HeldSale, PaymentMethod, Sale, SaleItem, SaleReturn
 from .services import SaleError
 
@@ -129,8 +129,8 @@ def pos_products(request):
             stock_map[(row["product_id"], row["variant_id"])] = float(row["quantity"])
 
     items = []
-    vat_rate = request.business.settings.effective_vat_rate
     for p in qs:
+        tax_rate = calculations.resolve_tax_rate(request.business, p)
         if p.has_variants:
             for v in p.variants.all():
                 if not v.is_active:
@@ -140,7 +140,7 @@ def pos_products(request):
                     "name": f"{p.name} — {v.name}",
                     "price": str(v.sale_price if v.sale_price > 0 else p.sale_price),
                     "sku": v.sku or p.sku,
-                    "tax_rate": str(vat_rate),
+                    "tax_rate": str(tax_rate),
                     "stocked": p.is_stocked,
                     "allow_discount": p.allow_discount,
                     "min_price": str(p.minimum_sale_price),
@@ -153,7 +153,7 @@ def pos_products(request):
                 "name": p.name,
                 "price": str(p.sale_price),
                 "sku": p.sku,
-                "tax_rate": str(vat_rate),
+                "tax_rate": str(tax_rate),
                 "stocked": p.is_stocked,
                 "allow_discount": p.allow_discount,
                 "min_price": str(p.minimum_sale_price),
@@ -171,7 +171,6 @@ def pos_barcode(request):
     code = request.GET.get("code", "").strip()
     if not code:
         return JsonResponse({"found": False})
-    vat_rate = request.business.settings.effective_vat_rate
     variant = (
         ProductVariant.objects.for_business(request.business)
         .filter(Q(barcode=code) | Q(sku=code), is_active=True)
@@ -180,11 +179,12 @@ def pos_barcode(request):
     )
     if variant and not variant.product.is_archived:
         p = variant.product
+        tax_rate = calculations.resolve_tax_rate(request.business, p)
         return JsonResponse({"found": True, "item": {
             "product_id": p.id, "variant_id": variant.id,
             "name": f"{p.name} — {variant.name}",
             "price": str(variant.sale_price if variant.sale_price > 0 else p.sale_price),
-            "sku": variant.sku or p.sku, "tax_rate": str(vat_rate),
+            "sku": variant.sku or p.sku, "tax_rate": str(tax_rate),
             "stocked": p.is_stocked, "allow_discount": p.allow_discount,
             "min_price": str(p.minimum_sale_price),
         }})
@@ -195,10 +195,11 @@ def pos_barcode(request):
         .first()
     )
     if product and not product.has_variants:
+        tax_rate = calculations.resolve_tax_rate(request.business, product)
         return JsonResponse({"found": True, "item": {
             "product_id": product.id, "variant_id": None,
             "name": product.name, "price": str(product.sale_price),
-            "sku": product.sku, "tax_rate": str(vat_rate),
+            "sku": product.sku, "tax_rate": str(tax_rate),
             "stocked": product.is_stocked, "allow_discount": product.allow_discount,
             "min_price": str(product.minimum_sale_price),
         }})

@@ -337,30 +337,43 @@ function pos() {
                            tax_rate: p.tax_rate, allow_discount: p.allow_discount});
       this.$refs.barcode.focus();
     },
-    lineTotal(l) {
+    lineParts(l, invoiceShare = 0) {
       const gross = (+l.unit_price * +l.quantity) - (+l.discount_amount || 0);
-      {% if not request.business.settings.prices_include_tax %}
-      return gross * (1 + (+l.tax_rate || 0) / 100);
-      {% else %}
-      return gross;
-      {% endif %}
+      const rate = (+l.tax_rate || 0) / 100;
+      const incl = {{ request.business.settings.prices_include_tax|yesno:"true,false" }};
+      const baseBefore = (rate > 0 && incl) ? gross / (1 + rate) : gross;
+      const base = Math.max(0, baseBefore - invoiceShare);
+      const tax = rate > 0 ? base * rate : 0;
+      return {baseBefore, base, tax, total: base + tax};
+    },
+    lineTotal(l) {
+      return this.lineParts(l).total;
     },
     get totals() {
       let base = 0, tax = 0, lineDisc = 0;
-      const incl = {{ request.business.settings.prices_include_tax|yesno:"true,false" }};
+      const lines = [];
       this.cart.forEach(l => {
-        const gross = (+l.unit_price * +l.quantity) - (+l.discount_amount || 0);
         lineDisc += (+l.discount_amount || 0);
-        const rate = (+l.tax_rate || 0) / 100;
-        if (rate > 0) {
-          if (incl) { const b = gross / (1 + rate); base += b; tax += gross - b; }
-          else { base += gross; tax += gross * rate; }
-        } else base += gross;
+        const parts = this.lineParts(l);
+        base += parts.baseBefore;
+        lines.push({line: l, baseBefore: parts.baseBefore});
+      });
+      const invoiceDiscount = Math.max(0, +this.invoiceDiscount || 0);
+      const allocatedDiscount = Math.min(invoiceDiscount, base);
+      let allocated = 0;
+      lines.forEach((entry, index) => {
+        const share = (base > 0)
+          ? (index === lines.length - 1
+              ? allocatedDiscount - allocated
+              : allocatedDiscount * entry.baseBefore / base)
+          : 0;
+        allocated += share;
+        tax += this.lineParts(entry.line, share).tax;
       });
       // Round the grand total to the business currency precision — this is
       // exactly what the server charges (it stores the delta as rounding),
       // so "Exact amount" and Remaining=0 always validate.
-      const raw = Math.max(0, base + tax - (+this.invoiceDiscount || 0));
+      const raw = Math.max(0, base - allocatedDiscount + tax);
       const total = parseFloat(raw.toFixed(PREC));
       return {base, tax, discount: lineDisc + (+this.invoiceDiscount || 0), total};
     },
@@ -386,9 +399,7 @@ function pos() {
       }
     },
     quickDiscount(pct) {
-      let gross = 0;
-      this.cart.forEach(l => { gross += this.lineTotal(l); });
-      this.invoiceDiscount = (gross * pct / 100).toFixed(PREC);
+      this.invoiceDiscount = (this.totals.base * pct / 100).toFixed(PREC);
     },
     get cashSuggestions() {
       // Common round tender amounts above the total (e.g. 31.40 → 32, 35, 40)

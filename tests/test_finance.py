@@ -46,10 +46,43 @@ class TaxAndDiscountTests(TenantTestCase):
         sale = self.make_sale(
             items=[{"product": self.product_a, "quantity": D("2"),
                     "unit_price": D("10.000")}],
-            payments=[{"method": self.cash_a, "amount": D("16.000")}],
+            payments=[{"method": self.cash_a, "amount": D("15.750")}],
             invoice_discount=D("5.000"),
         )
-        self.assertEqual(sale.total, D("16.000"))
+        # Commercial rule: invoice discount reduces the taxable subtotal
+        # before VAT is calculated: (20.000 - 5.000) + 5% = 15.750.
+        self.assertEqual(sale.tax_amount, D("0.750"))
+        self.assertEqual(sale.total, D("15.750"))
+
+    def test_business_default_vat_applies_when_product_has_no_tax(self):
+        settings_obj = self.business_a.settings
+        settings_obj.vat_enabled = True
+        settings_obj.vat_percentage = D("5.000")
+        settings_obj.save()
+        product = Product.objects.create(
+            business=self.business_a, name="Default VAT", sku="VAT-DEFAULT",
+            sale_price=D("20.000"), track_inventory=False, product_type="non_stock",
+        )
+        sale = self.make_sale(
+            items=[{"product": product, "quantity": D("1"),
+                    "unit_price": D("20.000")}],
+            payments=[{"method": self.cash_a, "amount": D("21.000")}],
+        )
+        self.assertEqual(sale.tax_amount, D("1.000"))
+        self.assertEqual(sale.total, D("21.000"))
+
+    def test_no_tax_without_product_tax_or_enabled_business_vat(self):
+        product = Product.objects.create(
+            business=self.business_a, name="No VAT", sku="NO-VAT",
+            sale_price=D("20.000"), track_inventory=False, product_type="non_stock",
+        )
+        sale = self.make_sale(
+            items=[{"product": product, "quantity": D("1"),
+                    "unit_price": D("20.000")}],
+            payments=[{"method": self.cash_a, "amount": D("20.000")}],
+        )
+        self.assertEqual(sale.tax_amount, D("0.000"))
+        self.assertEqual(sale.total, D("20.000"))
 
     def test_discount_cap_enforced(self):
         settings_obj = self.business_a.settings
