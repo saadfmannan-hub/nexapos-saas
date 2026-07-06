@@ -6,8 +6,9 @@ from unittest.mock import patch
 from django.urls import reverse
 
 from apps.inventory import services as inventory
+from apps.inventory.services import InsufficientStock
 from apps.sales import services as sales
-from apps.sales.models import Sale
+from apps.sales.models import Sale, SaleReturn
 from apps.sales.services import SaleError
 
 from .base import TenantTestCase
@@ -79,7 +80,7 @@ class SaleServiceTests(TenantTestCase):
             self.make_sale(payments=[{"method": self.cash_a, "amount": D("5.000")}])
 
     def test_insufficient_stock_blocked(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(InsufficientStock):
             self.make_sale(items=[{"product": self.product_a,
                                    "quantity": D("1000"),
                                    "unit_price": D("10.000")}])
@@ -297,10 +298,34 @@ class PosEndpointTests(TenantTestCase):
 
     def test_a4_invoice_shows_discounted_summary_and_item_subtotal(self):
         sale = self.discounted_credit_sale()
+        self.business_a.phone = "24500000"
+        self.business_a.email = "accounts@example.com"
+        self.business_a.address = "Main Business Address"
+        self.business_a.save(update_fields=["phone", "email", "address"])
+        sale.customer.mobile = "99001122"
+        sale.customer.save(update_fields=["mobile"])
+        sale.branch.address = "Branch Address"
+        sale.branch.save(update_fields=["address"])
+        settings_obj = self.business_a.settings
+        settings_obj.vat_enabled = True
+        settings_obj.vat_registration_number = "VAT-12345"
+        settings_obj.terms_and_conditions = "Payment due on receipt."
+        settings_obj.save(update_fields=[
+            "vat_enabled", "vat_registration_number", "terms_and_conditions",
+        ])
         response = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
         html = response.content.decode()
         self.assertIn('<td class="r"><strong>100.000</strong></td>', html)
         self.assertNotIn('<td class="r"><strong>94.500</strong></td>', html)
+        self.assertContains(response, "TAX INVOICE")
+        self.assertContains(response, "ORIGINAL COPY")
+        self.assertContains(response, "24500000")
+        self.assertContains(response, "accounts@example.com")
+        self.assertContains(response, "Branch Address")
+        self.assertContains(response, "Customer ID")
+        self.assertContains(response, "INV-DISC")
+        self.assertContains(response, "99001122")
+        self.assertContains(response, "VAT No: VAT-12345")
         self.assertContains(response, "Invoice Discount")
         self.assertContains(response, "−10.000")
         self.assertContains(response, "Discounted Subtotal")
@@ -311,6 +336,85 @@ class PosEndpointTests(TenantTestCase):
         self.assertContains(response, "80.500")
         self.assertContains(response, "Balance Due")
         self.assertContains(response, "14.000")
+        self.assertContains(response, "Payment due on receipt.")
+        self.assertContains(response, "Powered by Nexa Business Solutions")
+
+    def test_a4_invoice_without_vat_uses_normal_invoice_label(self):
+        from apps.catalog.models import Product
+
+        settings_obj = self.business_a.settings
+        settings_obj.vat_enabled = False
+        settings_obj.save(update_fields=["vat_enabled"])
+        product = Product.objects.create(
+            business=self.business_a, name="No VAT Service", sku="NO-VAT-POS",
+            sale_price=D("20.000"), track_inventory=False, product_type="non_stock",
+        )
+        sale = self.make_sale(
+            items=[{"product": product, "quantity": D("1.000"),
+                    "unit_price": D("20.000")}],
+            payments=[{"method": self.cash_a, "amount": D("20.000")}],
+        )
+        response = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        self.assertContains(response, "<h1>INVOICE</h1>", html=True)
+        self.assertNotContains(response, "TAX INVOICE")
+        self.assertNotContains(response, "VAT 0.000%")
+
+    def test_invoice_and_receipt_show_partial_and_split_payment_history(self):
+        from apps.customers.models import Customer
+
+        customer = Customer.objects.create(
+            business=self.business_a, code="SPLIT-CUST", full_name="Split Customer",
+            credit_limit=D("100.000"),
+        )
+        sale = self.make_sale(
+            customer=customer,
+            items=[{"product": self.product_a, "quantity": D("2.000"),
+                    "unit_price": D("25.000")}],
+            payments=[
+                {"method": self.cash_a, "amount": D("30.000"), "reference": "CASH-1"},
+                {"method": self.card_a, "amount": D("12.500"), "reference": "CARD-1"},
+                {"method": self.credit_a, "amount": D("10.000"), "reference": "CR-1"},
+            ],
+        )
+        response = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        self.assertContains(response, "Cash")
+        self.assertContains(response, "CASH-1")
+        self.assertContains(response, "Card")
+        self.assertContains(response, "CARD-1")
+        self.assertContains(response, self.owner_a.full_name)
+        self.assertContains(response, "Balance Due")
+        self.assertContains(response, "10.000")
+
+        receipt = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        self.assertContains(receipt, "Ref: CASH-1")
+        self.assertContains(receipt, "Ref: CARD-1")
+        self.assertContains(receipt, f"By: {self.owner_a.full_name}")
+
+    def test_invoice_outputs_show_partial_return_refund_summary(self):
+        sale = self.discounted_credit_sale()
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        sale.refresh_from_db()
+
+        invoice = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        self.assertContains(invoice, "RETURN / REFUND SUMMARY")
+        self.assertContains(invoice, "1.000 returned")
+        self.assertContains(invoice, "Cash")
+        self.assertContains(invoice, "NET TOTAL")
+        self.assertContains(invoice, "70.875")
+        self.assertContains(invoice, "Net paid")
+        self.assertContains(invoice, "56.875")
+
+        receipt = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        self.assertContains(receipt, "REFUND")
+        self.assertContains(receipt, "1.000 returned - Cash")
+        self.assertContains(receipt, "NET TOTAL")
+        self.assertContains(receipt, "NET PAID")
 
     def test_invoice_pdf_uses_same_context_values_as_a4_invoice(self):
         sale = self.discounted_credit_sale()
@@ -327,6 +431,35 @@ class PosEndpointTests(TenantTestCase):
         self.assertEqual(context["sale"].total, D("94.500"))
         self.assertEqual(context["sale"].amount_paid, D("80.500"))
         self.assertEqual(context["sale"].balance, D("14.000"))
+        self.assertEqual(context["invoice_label"], "INVOICE")
+        self.assertEqual(context["copy_label"], "ORIGINAL COPY")
+        self.assertEqual(context["returns"], [])
+
+    def test_pdf_context_includes_return_summary_values(self):
+        sale = self.discounted_credit_sale()
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:
+            response = self.client.get(reverse("sales:invoice_pdf",
+                                               args=[sale.public_id]))
+        self.assertEqual(response.status_code, 200)
+        context = render_pdf.call_args.args[1]
+        self.assertEqual(context["sale"].net_total, D("70.875"))
+        self.assertEqual(context["sale"].net_amount_paid, D("56.875"))
+        self.assertEqual(context["returns"][0].display_returned_quantity, D("1.000"))
+
+    def test_receipt_context_values_include_commercial_labels(self):
+        sale = self.discounted_credit_sale()
+        response = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        self.assertEqual(response.context["invoice_label"], "INVOICE")
+        self.assertEqual(response.context["copy_label"], "ORIGINAL COPY")
+        self.assertEqual(response.context["discounted_subtotal"], D("90.000"))
+        self.assertEqual(response.context["vat_rate"], D("5.000"))
 
     def test_invoice_list_shows_invoice_discount_and_final_total(self):
         sale = self.discounted_credit_sale()

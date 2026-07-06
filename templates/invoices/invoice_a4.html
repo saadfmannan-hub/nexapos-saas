@@ -47,19 +47,22 @@
       <div class="muted">
         {{ sale.branch.name }}{% if sale.branch.address %} · {{ sale.branch.address }}{% endif %}<br>
         {% if business.phone %}Tel: {{ business.phone }} · {% endif %}{{ business.email }}<br>
+        {% if business.address and not sale.branch.address %}{{ business.address }}<br>{% endif %}
+        {% if business.city or business.country %}{{ business.city }}{% if business.city and business.country %}, {% endif %}{{ business.country }}<br>{% endif %}
         {% if show_vat and vat_number %}VAT No: {{ vat_number }}{% endif %}
       </div>
     </td>
     <td class="r">
-      <h1>TAX INVOICE</h1>
+      <h1>{{ invoice_label }}</h1>
       <div><strong>{{ sale.invoice_number }}</strong></div>
       <div class="muted">Date: {{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+      <div class="muted">Branch: {{ sale.branch.name }}</div>
       {% if sale.delivery_date %}
       <div class="muted"><strong>Delivery date: {{ sale.delivery_date|date:"d-M-Y" }}</strong>
         ({{ sale.get_delivery_status_display }})</div>
       {% endif %}
       <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
-      {% if is_reprint %}<div class="muted"><em>DUPLICATE COPY</em></div>{% endif %}
+      <div class="muted"><em>{{ copy_label }}</em></div>
       {% if sale.status == "voided" %}<div class="badge-void">VOIDED</div>{% endif %}
     </td>
   </tr>
@@ -70,6 +73,7 @@
     <div class="muted">BILL TO</div>
     <strong>{{ sale.customer.full_name }}</strong><br>
     <span class="muted">
+      {% if sale.customer.code %}Customer ID: {{ sale.customer.code }}<br>{% endif %}
       {% if sale.customer.mobile %}{{ sale.customer.mobile }}<br>{% endif %}
       {% if sale.customer.address %}{{ sale.customer.address }}<br>{% endif %}
       {% if sale.customer.tax_number %}Tax No: {{ sale.customer.tax_number }}{% endif %}
@@ -104,8 +108,16 @@
       {% for p in payments %}
         <div>{{ p.payment_date|default:p.created_at|date:"Y-m-d" }} —
           {{ p.method.name }}: {{ p.amount }} {{ business.currency_display }}
-          {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}</div>
+          {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}
+          {% if p.received_by %}<span class="muted"> - {{ p.received_by.full_name }}</span>{% endif %}</div>
       {% empty %}<div class="muted">No payments recorded</div>{% endfor %}
+      {% if returns %}
+        <div class="muted" style="margin-top:8px">RETURN / REFUND SUMMARY</div>
+        {% for r in returns %}
+          <div>{{ r.created_at|date:"Y-m-d" }} - {{ r.display_returned_quantity }} returned -
+            {{ r.get_refund_method_display }}: -{{ r.refund_amount }} {{ business.currency_display }}</div>
+        {% endfor %}
+      {% endif %}
       <div style="margin-top:4px">Total paid: <strong>{{ sale.amount_paid }} {{ business.currency_display }}</strong></div>
       {% if sale.refunded_amount > 0 %}
         <div>Refunded: <strong>-{{ sale.refunded_amount }} {{ business.currency_display }}</strong></div>
@@ -151,8 +163,10 @@
 </table>
 
 <div class="footer">
+  <strong>Thank you for your business.</strong><br>
   {% if settings_obj.invoice_footer %}{{ settings_obj.invoice_footer|linebreaksbr }}<br>{% endif %}
   {% if settings_obj.terms_and_conditions %}<em>{{ settings_obj.terms_and_conditions|linebreaksbr }}</em>{% endif %}
+  <div style="margin-top:6px">Powered by Nexa Business Solutions</div>
 </div>
 </div>
 </body>

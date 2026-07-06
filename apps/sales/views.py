@@ -3,11 +3,11 @@ import json
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q, Sum
-from django.http import Http404, HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
-from apps.core.decorators import business_required, require_permission
+from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D, money
 from apps.customers import services as customer_services
@@ -17,7 +17,7 @@ from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
 
 from . import calculations, services
-from .models import HeldSale, PaymentMethod, Sale, SaleItem, SaleReturn
+from .models import HeldSale, PaymentMethod, Sale, SaleReturn
 from .services import SaleError
 
 
@@ -495,7 +495,10 @@ def sale_detail(request, public_id):
     )
     items = _invoice_display_items(list(sale.items.select_related("product", "variant")))
     payments = sale.payments.select_related("method", "received_by")
-    returns = sale.returns.prefetch_related("items")
+    returns = _invoice_display_returns(list(sale.returns.prefetch_related("items")))
+    settings_obj = request.business.settings
+    first_taxed_item = next((item for item in items if item.tax_rate), None)
+    vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     show_profit = request.membership.has_perm("profit.view")
     collect_methods = PaymentMethod.objects.for_business(request.business).filter(
         is_active=True
@@ -505,6 +508,9 @@ def sale_detail(request, public_id):
         "active_nav": "sales", "show_profit": show_profit,
         "collect_methods": collect_methods,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
+        "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
+        "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
+        "vat_rate": vat_rate,
     })
 
 
@@ -516,24 +522,45 @@ def _invoice_display_items(items):
     return items
 
 
-def _render_invoice(request, sale, template, mark_reprint=False):
-    items = _invoice_display_items(list(sale.items.all()))
-    payments = sale.payments.select_related("method")
-    is_reprint = sale.reprint_count > 0
-    if mark_reprint:
-        sale.reprint_count += 1
-        sale.save(update_fields=["reprint_count"])
+def _invoice_display_returns(returns):
+    for sale_return in returns:
+        sale_return.display_returned_quantity = sum(
+            (item.quantity for item in sale_return.items.all()), D("0")
+        )
+    return returns
+
+
+def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
+                     pdf_mode=False):
+    items = _invoice_display_items(list(items if items is not None else sale.items.all()))
+    payments = payments if payments is not None else sale.payments.select_related(
+        "method", "received_by"
+    )
+    returns = _invoice_display_returns(list(
+        returns if returns is not None else sale.returns.prefetch_related("items")
+    ))
     settings_obj = sale.business.settings
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     show_vat = bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount))
-    return render(request, template, {
+    return {
         "sale": sale, "items": items, "payments": payments,
+        "returns": returns,
         "business": sale.business, "settings_obj": settings_obj,
-        "is_reprint": is_reprint, "vat_rate": vat_rate,
+        "is_reprint": is_reprint, "copy_label": "DUPLICATE COPY" if is_reprint else "ORIGINAL COPY",
+        "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
+        "pdf_mode": pdf_mode, "vat_rate": vat_rate,
         "show_vat": show_vat, "vat_number": settings_obj.vat_number,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
-    })
+    }
+
+
+def _render_invoice(request, sale, template, mark_reprint=False):
+    is_reprint = sale.reprint_count > 0
+    if mark_reprint:
+        sale.reprint_count += 1
+        sale.save(update_fields=["reprint_count"])
+    return render(request, template, _invoice_context(sale, is_reprint=is_reprint))
 
 
 @require_permission("sales.view")
@@ -567,19 +594,12 @@ def sale_invoice_pdf(request, public_id):
         request.business, public_id=public_id,
     )
     items = _invoice_display_items(list(sale.items.all()))
-    payments = sale.payments.select_related("method")
-    settings_obj = sale.business.settings
-    first_taxed_item = next((item for item in items if item.tax_rate), None)
-    vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
-    pdf = render_pdf("invoices/invoice_a4.html", {
-        "sale": sale, "items": items, "payments": payments,
-        "business": sale.business, "settings_obj": settings_obj,
-        "is_reprint": False, "pdf_mode": True,
-        "vat_rate": vat_rate,
-        "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
-        "vat_number": settings_obj.vat_number,
-        "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
-    })
+    payments = sale.payments.select_related("method", "received_by")
+    pdf = render_pdf(
+        "invoices/invoice_a4.html",
+        _invoice_context(sale, items=items, payments=payments, is_reprint=False,
+                         pdf_mode=True),
+    )
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
         f'attachment; filename="invoice-{sale.invoice_number}.pdf"'

@@ -26,20 +26,26 @@
     <img src="{{ business.logo.url }}" style="max-height:40px"><br>
   {% endif %}
   <span class="b lg">{{ business.name }}</span><br>
+  {% if sale.branch.address %}{{ sale.branch.address|truncatechars:36 }}<br>{% elif business.address %}{{ business.address|truncatechars:36 }}<br>{% endif %}
+  {% if business.phone %}Tel: {{ business.phone }}<br>{% endif %}
+  {% if business.email %}{{ business.email|truncatechars:36 }}<br>{% endif %}
   {{ sale.branch.name }}{% if sale.branch.phone %} · {{ sale.branch.phone }}{% endif %}<br>
   {% if show_vat and vat_number %}VAT No: {{ vat_number }}<br>{% endif %}
 </div>
 <hr>
 <table>
+  <tr><td colspan="2" class="c b">{{ invoice_label }}</td></tr>
   <tr><td>Invoice</td><td class="r b">{{ sale.invoice_number }}</td></tr>
   <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
+  <tr><td>Branch</td><td class="r">{{ sale.branch.name|truncatechars:18 }}</td></tr>
   <tr><td>Cashier</td><td class="r">{{ sale.cashier.full_name|truncatechars:18 }}</td></tr>
   {% if not sale.customer.is_walk_in %}
   <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:18 }}</td></tr>
+  {% if sale.customer.code %}<tr><td>Customer ID</td><td class="r">{{ sale.customer.code|truncatechars:18 }}</td></tr>{% endif %}
   {% if sale.customer.mobile %}<tr><td>Phone</td><td class="r">{{ sale.customer.mobile|truncatechars:18 }}</td></tr>{% endif %}
   {% endif %}
-  {% if sale.delivery_date %}<tr><td class="b">DELIVERY</td><td class="r b">{{ sale.delivery_date|date:"d-M-Y" }}</td></tr>{% endif %}
-  {% if is_reprint %}<tr><td colspan="2" class="c b">*** DUPLICATE COPY ***</td></tr>{% endif %}
+  {% if sale.delivery_date %}<tr><td class="b">DELIVERY</td><td class="r b">{{ sale.delivery_date|date:"d-M-Y" }}</td></tr><tr><td>Status</td><td class="r">{{ sale.get_delivery_status_display }}</td></tr>{% endif %}
+  <tr><td colspan="2" class="c b">*** {{ copy_label }} ***</td></tr>
   {% if sale.status == "voided" %}<tr><td colspan="2" class="c b lg">*** VOIDED ***</td></tr>{% endif %}
 </table>
 <hr>
@@ -54,6 +60,7 @@
 <table>
   <tr><td>Subtotal</td><td class="r">{{ sale.subtotal }}</td></tr>
   {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>{% endif %}
+  <tr><td>Discounted Subtotal</td><td class="r">{{ discounted_subtotal }}</td></tr>
   {% if show_vat %}<tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
   {% if sale.returned_amount > 0 %}
   <tr><td>Original Total</td><td class="r">{{ sale.total }}</td></tr>
@@ -66,7 +73,13 @@
 <hr>
 <table>
   {% for p in payments %}
-  <tr><td>{{ p.method.name }}</td><td class="r">{{ p.amount }}</td></tr>
+  <tr><td>{{ p.payment_date|default:p.created_at|date:"Y-m-d" }} {{ p.method.name }}</td><td class="r">{{ p.amount }}</td></tr>
+  {% if p.reference %}<tr><td colspan="2">Ref: {{ p.reference|truncatechars:28 }}</td></tr>{% endif %}
+  {% if p.received_by %}<tr><td colspan="2">By: {{ p.received_by.full_name|truncatechars:28 }}</td></tr>{% endif %}
+  {% endfor %}
+  {% for r in returns %}
+  <tr><td>REFUND {{ r.created_at|date:"Y-m-d" }}</td><td class="r">-{{ r.refund_amount }}</td></tr>
+  <tr><td colspan="2">{{ r.display_returned_quantity }} returned - {{ r.get_refund_method_display }}</td></tr>
   {% endfor %}
   {% if sale.refunded_amount > 0 %}
   <tr><td>REFUNDED</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
@@ -79,6 +92,8 @@
 <div class="c">
   {{ settings_obj.receipt_footer|default:""|linebreaksbr }}
   {% if sale.branch.receipt_footer %}<br>{{ sale.branch.receipt_footer|linebreaksbr }}{% endif %}
+  {% if settings_obj.terms_and_conditions %}<br>{{ settings_obj.terms_and_conditions|linebreaksbr }}{% endif %}
+  <br>Powered by Nexa Business Solutions
 </div>
 <div class="c" style="margin-top:6px">
   <svg id="bc"></svg>

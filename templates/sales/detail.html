@@ -3,7 +3,7 @@
 {% block title %}{{ sale.invoice_number }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h1 class="page-title">Invoice {{ sale.invoice_number }}
+  <h1 class="page-title">{{ invoice_label }} {{ sale.invoice_number }}
     <span class="badge badge-status bs-{{ sale.status }} ms-2 fs-6">{{ sale.get_status_display }}</span></h1>
   <div class="d-flex gap-2 flex-wrap">
     <a href="{% url 'sales:receipt' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Receipt</a>
@@ -54,12 +54,13 @@
     <div class="card mt-3">
       <div class="card-header">Returns against this invoice</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Return #</th><th>Date</th><th>Refund method</th><th class="text-end">Refund</th><th>By</th></tr></thead>
+        <thead><tr><th>Return #</th><th>Date</th><th class="text-end">Qty</th><th>Refund method</th><th class="text-end">Refund</th><th>By</th></tr></thead>
         <tbody>
           {% for r in returns %}
           <tr>
             <td class="fw-semibold">{{ r.return_number }}</td>
             <td class="small">{{ r.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="text-end">{{ r.display_returned_quantity }}</td>
             <td>{{ r.get_refund_method_display }}</td>
             <td class="text-end">{{ r.refund_amount }}</td>
             <td class="small">{{ r.processed_by.full_name|default:"—" }}</td>
@@ -76,11 +77,14 @@
       <table class="table table-sm small mb-0">
         <tr><th>Date</th><td>{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
         <tr><th>Customer</th><td>{{ sale.customer.full_name }}</td></tr>
+        {% if sale.customer.code %}<tr><th>Customer ID</th><td>{{ sale.customer.code }}</td></tr>{% endif %}
+        {% if sale.customer.mobile %}<tr><th>Customer Phone</th><td>{{ sale.customer.mobile }}</td></tr>{% endif %}
         <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
         <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
         <tr><th>Invoice Discount</th><td>-{% money sale.discount_amount %}</td></tr>
         <tr><th>Discounted Subtotal</th><td>{% money discounted_subtotal %}</td></tr>
+        {% if show_vat %}<tr><th>VAT %</th><td>{{ vat_rate }}%</td></tr>{% endif %}
         <tr><th>VAT Amount</th><td>{% money sale.tax_amount %}</td></tr>
         {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
         {% if sale.returned_amount > 0 %}
