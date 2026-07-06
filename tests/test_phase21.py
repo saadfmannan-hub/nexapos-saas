@@ -145,6 +145,82 @@ class CustomerImportTests(TenantTestCase):
         self.assertIn("Measurement", body)
         self.assertIn("42cm", body)
 
+    def test_import_multiple_tailoring_more_options(self):
+        settings_obj = self.business_a.settings
+        labels = [
+            "Toul", "Shoulders", "Chest", "Side", "Sleeves", "Design 3d No",
+            "Daraz (1,2,3) Line", "Computer Design",
+        ]
+        for index, label in enumerate(labels, start=1):
+            setattr(settings_obj, f"more_option_label_{index}", label)
+        settings_obj.save(update_fields=[
+            f"more_option_label_{index}" for index in range(1, len(labels) + 1)
+        ])
+        csv_text = (
+            "customer code,customer name,mobile,Toul, shoulders ,CHEST,Side,"
+            "Sleeves,Design 3D No,Daraz 1 2 3 Line,Computer Design\n"
+            "TAILOR-1,Tailoring Customer,999002,60,18,40,22,24,D3-10,Line A,Logo\n"
+        )
+        r = self.client.post(reverse("customers:import"),
+                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        self.assertEqual(r.context["results"]["summary"]["imported"], 1)
+        customer = Customer.objects.for_business(self.business_a).get(
+            code="TAILOR-1")
+        self.assertEqual(customer.more_options, {
+            "1": "60",
+            "2": "18",
+            "3": "40",
+            "4": "22",
+            "5": "24",
+            "6": "D3-10",
+            "7": "Line A",
+            "8": "Logo",
+        })
+
+    def test_import_updates_existing_more_options_and_skips_blanks(self):
+        settings_obj = self.business_a.settings
+        settings_obj.more_option_label_1 = "Toul"
+        settings_obj.more_option_label_2 = "Shoulders"
+        settings_obj.more_option_label_3 = "Chest"
+        settings_obj.save(update_fields=[
+            "more_option_label_1", "more_option_label_2", "more_option_label_3",
+        ])
+        Customer.objects.create(
+            business=self.business_a, code="TAILOR-2",
+            full_name="Existing Tailor", mobile="999003",
+            more_options={"1": "55", "2": "17", "3": "38"},
+        )
+        csv_text = (
+            "customer code,customer name,mobile,Toul,Shoulders,Chest\n"
+            "TAILOR-2,Existing Tailor Updated,999003,56,,39\n"
+        )
+        r = self.client.post(reverse("customers:import"),
+                             {"file": _csv_upload(csv_text), "mode": "update"})
+        self.assertEqual(r.context["results"]["summary"]["updated"], 1)
+        customer = Customer.objects.for_business(self.business_a).get(
+            code="TAILOR-2")
+        self.assertEqual(customer.full_name, "Existing Tailor Updated")
+        self.assertEqual(customer.more_options, {
+            "1": "56",
+            "2": "17",
+            "3": "39",
+        })
+
+    def test_import_reports_unmapped_custom_field_columns(self):
+        csv_text = (
+            "customer code,customer name,mobile,Custom Sleeve\n"
+            "TAILOR-3,Unmapped Custom,999004,24\n"
+        )
+        r = self.client.post(reverse("customers:import"),
+                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        self.assertEqual(r.context["results"]["summary"]["failed"], 1)
+        self.assertIn(
+            "Unmapped customer custom field column",
+            r.context["results"]["errors"][0][1],
+        )
+        self.assertFalse(Customer.objects.for_business(self.business_a).filter(
+            code="TAILOR-3").exists())
+
     def test_import_requires_permission(self):
         self.client.force_login(self.cashier_a)
         r = self.client.get(reverse("customers:import"))

@@ -1,4 +1,5 @@
 """Customer helpers and balance maintenance."""
+import re
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
@@ -21,6 +22,7 @@ BASE_IMPORT_COLUMNS = [
     "address", "city", "country", "group", "credit limit",
     "opening balance", "notes", "active",
 ]
+CUSTOM_FIELD_HEADER_WORDS = ("custom", "measurement", "moreoption", "moreoptions")
 
 
 def ensure_walk_in_customer(business):
@@ -52,6 +54,53 @@ def import_columns(business):
     return BASE_IMPORT_COLUMNS + [
         option["label"].lower() for option in business.settings.more_option_labels
     ]
+
+
+def _header_token(value):
+    """Normalize import headers enough to match punctuation-heavy tailoring labels."""
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _more_option_column_map(business, row):
+    exact = {str(key).strip(): key for key in row}
+    casefolded = {str(key).strip().lower(): key for key in row}
+    normalized = {_header_token(key): key for key in row if _header_token(key)}
+    mapped = {}
+    used_columns = set()
+    for option in business.settings.more_option_labels:
+        label = option["label"]
+        column = None
+        for candidate in (label, label.strip()):
+            if candidate in exact:
+                column = exact[candidate]
+                break
+        if column is None:
+            lowered = label.strip().lower()
+            column = casefolded.get(lowered)
+        if column is None:
+            column = normalized.get(_header_token(label))
+        if column is not None:
+            mapped[option["key"]] = column
+            used_columns.add(column)
+    return mapped, used_columns
+
+
+def _unknown_custom_columns(business, row, used_more_option_columns):
+    known_headers = {_header_token(column) for column in BASE_IMPORT_COLUMNS}
+    known_headers.update(
+        _header_token(option["label"])
+        for option in business.settings.more_option_labels
+    )
+    unknowns = []
+    for column, value in row.items():
+        if column in used_more_option_columns or not str(value or "").strip():
+            continue
+        token = _header_token(column)
+        if not token or token in known_headers:
+            continue
+        if any(word in token for word in CUSTOM_FIELD_HEADER_WORDS):
+            unknowns.append(str(column).strip())
+    return unknowns
 
 
 def next_customer_code(business):
@@ -109,6 +158,19 @@ def import_customers(*, business, rows, mode, user):
 
     for idx, raw in enumerate(rows, start=2):  # row 1 = header
         r = normalize_row(raw)
+        more_option_columns, used_more_option_columns = _more_option_column_map(
+            business, raw)
+        unknown_custom_columns = _unknown_custom_columns(
+            business, raw, used_more_option_columns)
+        if unknown_custom_columns:
+            errors.append((
+                idx,
+                "Unmapped customer custom field column(s): "
+                f"{', '.join(unknown_custom_columns)}. Configure matching More "
+                "Options labels or remove those columns.",
+            ))
+            summary["failed"] += 1
+            continue
         name = r.get("customer name", "")
         code = r.get("customer code", "")
         mobile = r.get("mobile", "")
@@ -157,7 +219,7 @@ def import_customers(*, business, rows, mode, user):
                 continue
             # update mode
             try:
-                _apply_fields(business, existing, r)
+                _apply_fields(business, existing, r, raw, more_option_columns)
                 existing.save()
                 summary["updated"] += 1
             except Exception as exc:
@@ -168,7 +230,7 @@ def import_customers(*, business, rows, mode, user):
             try:
                 customer = Customer(business=business,
                                     code=code or next_customer_code(business))
-                _apply_fields(business, customer, r)
+                _apply_fields(business, customer, r, raw, more_option_columns)
                 customer.full_clean(exclude=["public_id"])
                 customer.save()
                 summary["imported"] += 1
@@ -188,7 +250,7 @@ def import_customers(*, business, rows, mode, user):
     return summary, errors
 
 
-def _apply_fields(business, customer, r):
+def _apply_fields(business, customer, r, raw, more_option_columns):
     customer.full_name = r.get("customer name", customer.full_name)[:160]
     if r.get("mobile"):
         customer.mobile = r["mobile"][:30]
@@ -209,9 +271,12 @@ def _apply_fields(business, customer, r):
         customer.is_active = active.lower() not in ("0", "false", "no", "inactive")
     more_options = dict(customer.more_options or {})
     for option in business.settings.more_option_labels:
-        key = option["label"].lower()
-        if key in r:
-            more_options[option["key"]] = r[key]
+        column = more_option_columns.get(option["key"])
+        if column is None:
+            continue
+        value = str(raw.get(column, "") or "").strip()
+        if value:
+            more_options[option["key"]] = value
     customer.more_options = more_options
     group_name = r.get("group", "")
     if group_name:
