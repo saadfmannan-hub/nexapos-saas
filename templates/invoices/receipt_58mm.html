@@ -48,8 +48,18 @@
 <table>
   {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>{% endif %}
   {% if show_vat %}<tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
+  {% if sale.returned_amount > 0 %}
+  <tr><td>Orig Total</td><td class="r">{{ sale.total }}</td></tr>
+  <tr><td>Returned</td><td class="r">-{{ sale.returned_amount }}</td></tr>
+  <tr class="b lg"><td>NET TOTAL</td><td class="r">{{ sale.net_total }}</td></tr>
+  {% else %}
   <tr class="b lg"><td>TOTAL</td><td class="r">{{ sale.total }}</td></tr>
+  {% endif %}
   {% for p in payments %}<tr><td>{{ p.method.name|truncatechars:12 }}</td><td class="r">{{ p.amount }}</td></tr>{% endfor %}
+  {% if sale.refunded_amount > 0 %}
+  <tr><td>REFUNDED</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
+  <tr class="b"><td>NET PAID</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
+  {% endif %}
   {% if sale.change_due > 0 %}<tr class="b"><td>CHANGE</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
 </table>
 <hr>

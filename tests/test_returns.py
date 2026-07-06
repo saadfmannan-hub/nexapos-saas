@@ -1,6 +1,8 @@
 """Sales return / refund tests."""
 from decimal import Decimal
 
+from django.urls import reverse
+
 from apps.inventory import services as inventory
 from apps.sales import services as sales
 from apps.sales.models import Sale, SaleReturn
@@ -18,6 +20,25 @@ class ReturnTests(TenantTestCase):
             "product": self.product_a, "quantity": D("4"),
             "unit_price": D("10.000"),
         }])  # total 42.000 (40 + 5% tax)
+
+    def discounted_credit_sale(self, product=None):
+        from apps.customers.models import Customer
+
+        product = product or self.product_a
+        customer = Customer.objects.create(
+            business=self.business_a, code="RET-NET", full_name="Return Net",
+            credit_limit=D("500.000"),
+        )
+        return self.make_sale(
+            customer=customer,
+            items=[{"product": product, "quantity": D("4.000"),
+                    "unit_price": D("25.000")}],
+            payments=[
+                {"method": self.cash_a, "amount": D("84.500")},
+                {"method": self.credit_a, "amount": D("10.000")},
+            ],
+            invoice_discount=D("10.000"),
+        )
 
     def test_partial_return_restores_stock_and_refund(self):
         item = self.sale.items.get()
@@ -102,6 +123,105 @@ class ReturnTests(TenantTestCase):
         )
         customer.refresh_from_db()
         self.assertEqual(customer.balance, D("0.000"))
+
+        from apps.customers.views import _statement_entries
+
+        entries, balance = _statement_entries(self.business_a, customer)
+        return_entries = [e for e in entries if e["type"] == "Return credited"]
+        self.assertEqual(return_entries[0]["credit"], D("21.000"))
+        self.assertEqual(balance, D("0.000"))
+
+    def test_partial_cash_return_updates_net_total_paid_and_balance(self):
+        sale = self.discounted_credit_sale()
+        item = sale.items.get()
+
+        ret = sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+
+        sale.refresh_from_db()
+        self.assertEqual(ret.refund_amount, D("23.625"))
+        self.assertEqual(sale.total, D("94.500"))
+        self.assertEqual(sale.returned_amount, D("23.625"))
+        self.assertEqual(sale.net_total, D("70.875"))
+        self.assertEqual(sale.amount_paid, D("84.500"))
+        self.assertEqual(sale.refunded_amount, D("23.625"))
+        self.assertEqual(sale.net_amount_paid, D("60.875"))
+        self.assertEqual(sale.balance, D("10.000"))
+        self.assertEqual(sale.payment_state, "Partially Paid")
+
+    def test_returned_invoice_detail_receipt_and_a4_show_net_summary(self):
+        sale = self.discounted_credit_sale()
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        self.client.force_login(self.owner_a)
+
+        detail = self.client.get(reverse("sales:detail", args=[sale.public_id]))
+        self.assertContains(detail, "Original Total")
+        self.assertContains(detail, "Returned/Refunded")
+        self.assertContains(detail, "Net Total")
+        self.assertContains(detail, "70.88")
+        self.assertContains(detail, "Net Paid")
+        self.assertContains(detail, "60.88")
+        self.assertContains(detail, "10.00")
+
+        receipt = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        self.assertContains(receipt, "NET TOTAL")
+        self.assertContains(receipt, "70.875")
+        self.assertContains(receipt, "NET PAID")
+        self.assertContains(receipt, "60.875")
+
+        invoice = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        self.assertContains(invoice, "NET TOTAL")
+        self.assertContains(invoice, "70.875")
+        self.assertContains(invoice, "Net Paid")
+        self.assertContains(invoice, "60.875")
+
+    def test_reports_use_net_sales_and_net_returned_quantity(self):
+        from apps.catalog.models import Product
+        from apps.reports.queries import customer_sales, product_sales, sales_summary
+
+        product = Product.objects.create(
+            business=self.business_a, name="Returned Report Product",
+            sku="RET-REPORT", sale_price=D("25.000"), tax_rate=self.tax_a,
+            track_inventory=False, product_type="non_stock",
+        )
+        sale = self.discounted_credit_sale(product=product)
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        filters = {"date_from": None, "date_to": None, "branch_id": None}
+
+        product_row = [
+            row for row in product_sales(self.business_a, filters)["rows"]
+            if row[0] == "Returned Report Product"
+        ][0]
+        self.assertEqual(product_row[1], D("3.000"))
+        self.assertEqual(product_row[2], D("1.000"))
+        self.assertEqual(product_row[3], D("70.875"))
+        self.assertEqual(product_row[4], D("67.500"))
+
+        summary = sales_summary(self.business_a, filters)["rows"][0]
+        self.assertEqual(summary[2], D("112.875"))
+        self.assertEqual(summary[4], D("5.375"))
+        self.assertEqual(summary[5], D("91.500"))
+
+        customer = customer_sales(self.business_a, filters)["rows"][0]
+        self.assertEqual(customer[3], D("70.875"))
+        self.assertEqual(customer[4], D("60.875"))
+        self.assertEqual(customer[5], D("10.000"))
 
     def test_non_restock_return_keeps_stock_out(self):
         item = self.sale.items.get()

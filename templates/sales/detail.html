@@ -83,9 +83,19 @@
         <tr><th>Discounted Subtotal</th><td>{% money discounted_subtotal %}</td></tr>
         <tr><th>VAT Amount</th><td>{% money sale.tax_amount %}</td></tr>
         {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
+        {% if sale.returned_amount > 0 %}
+        <tr><th>Original Total</th><td>{% money sale.total %}</td></tr>
+        <tr><th>Returned/Refunded</th><td class="text-danger">-{% money sale.returned_amount %}</td></tr>
+        <tr><th>Net Total</th><td class="fw-bold">{% money sale.net_total symbol=1 %}</td></tr>
+        {% else %}
         <tr><th>Total</th><td class="fw-bold">{% money sale.total symbol=1 %}</td></tr>
+        {% endif %}
         <tr><th>Paid</th><td>{% money sale.amount_paid %}
           <span class="badge text-bg-light border ms-1">{{ sale.payment_state }}</span></td></tr>
+        {% if sale.refunded_amount > 0 %}
+        <tr><th>Refunded</th><td class="text-danger">-{% money sale.refunded_amount %}</td></tr>
+        <tr><th>Net Paid</th><td>{% money sale.net_amount_paid %}</td></tr>
+        {% endif %}
         <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>
         {% if show_profit %}
         <tr><th>Cost</th><td>{% money sale.total_cost %}</td></tr>
@@ -140,6 +150,12 @@
         <tfoot>
           <tr class="table-light fw-bold"><td colspan="3">Total paid</td>
             <td class="text-end">{% money sale.amount_paid %}</td><td></td></tr>
+          {% if sale.refunded_amount > 0 %}
+          <tr class="table-light"><td colspan="3">Refunded</td>
+            <td class="text-end text-danger">-{% money sale.refunded_amount %}</td><td></td></tr>
+          <tr class="table-light fw-bold"><td colspan="3">Net paid</td>
+            <td class="text-end">{% money sale.net_amount_paid %}</td><td></td></tr>
+          {% endif %}
           {% if sale.balance > 0 %}
           <tr class="text-danger fw-bold"><td colspan="3">Balance due</td>
             <td class="text-end">{% money sale.balance %}</td><td></td></tr>

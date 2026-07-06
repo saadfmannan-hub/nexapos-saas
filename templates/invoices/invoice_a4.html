@@ -107,6 +107,10 @@
           {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}</div>
       {% empty %}<div class="muted">No payments recorded</div>{% endfor %}
       <div style="margin-top:4px">Total paid: <strong>{{ sale.amount_paid }} {{ business.currency_display }}</strong></div>
+      {% if sale.refunded_amount > 0 %}
+        <div>Refunded: <strong>-{{ sale.refunded_amount }} {{ business.currency_display }}</strong></div>
+        <div>Net paid: <strong>{{ sale.net_amount_paid }} {{ business.currency_display }}</strong></div>
+      {% endif %}
       {% if sale.balance > 0 %}
         <div><strong>BALANCE DUE: {{ sale.balance }} {{ business.currency_display }}</strong></div>
       {% endif %}
@@ -120,8 +124,18 @@
         {% if show_vat %}
         <tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>
         {% endif %}
+        {% if sale.returned_amount > 0 %}
+        <tr><td>Original Total</td><td class="r">{{ sale.total }}</td></tr>
+        <tr><td>Returned/Refunded</td><td class="r">-{{ sale.returned_amount }}</td></tr>
+        <tr class="grand"><td>NET TOTAL</td><td class="r">{{ sale.net_total }} {{ business.currency_display }}</td></tr>
+        {% else %}
         <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
+        {% endif %}
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
+        {% if sale.refunded_amount > 0 %}
+        <tr><td>Refunded</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
+        <tr><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
+        {% endif %}
         {% if sale.balance > 0 %}<tr><td>Balance Due</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>

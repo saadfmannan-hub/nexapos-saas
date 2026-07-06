@@ -8,11 +8,45 @@ numbers always match what is on screen.
 """
 from decimal import Decimal
 
-from django.db.models import Avg, Count, DecimalField, F, Q, Sum, Value
-from django.db.models.functions import Coalesce, TruncDate
+from django.db.models import Avg, Count, F, Sum
 
 ZERO = Decimal("0")
-DEC = DecimalField(max_digits=14, decimal_places=3)
+
+
+def _money(value):
+    from apps.core.money import money
+
+    return money(value or ZERO)
+
+
+def _net_item_values(item):
+    net_qty = item.quantity - item.returned_quantity
+    if not item.quantity:
+        return {
+            "qty": ZERO,
+            "returned": item.returned_quantity,
+            "revenue": ZERO,
+            "tax": ZERO,
+            "cost": ZERO,
+            "profit": ZERO,
+        }
+    ratio = net_qty / item.quantity
+    return {
+        "qty": net_qty,
+        "returned": item.returned_quantity,
+        "revenue": _money(item.line_total * ratio),
+        "tax": _money(item.tax_amount * ratio),
+        "cost": _money(item.unit_cost * net_qty),
+        "profit": _money(item.gross_profit * ratio),
+    }
+
+
+def _net_sale_tax(sale):
+    return sum((_net_item_values(item)["tax"] for item in sale.items.all()), ZERO)
+
+
+def _net_sale_profit(sale):
+    return sum((_net_item_values(item)["profit"] for item in sale.items.all()), ZERO)
 
 
 def _sales_base(business, f, exclude_voided=True):
@@ -31,16 +65,25 @@ def _sales_base(business, f, exclude_voided=True):
 
 
 def sales_summary(business, f):
-    qs = (
-        _sales_base(business, f)
-        .annotate(day=TruncDate("sale_date"))
-        .values("day")
-        .annotate(invoices=Count("id"), total=Sum("total"), tax=Sum("tax_amount"),
-                  discount=Sum("discount_amount"), profit=Sum("gross_profit"))
-        .order_by("day")
-    )
-    rows = [[r["day"], r["invoices"], r["total"], r["discount"], r["tax"], r["profit"]]
-            for r in qs]
+    by_day = {}
+    qs = _sales_base(business, f).prefetch_related("returns", "items").order_by("sale_date")
+    for sale in qs:
+        day = sale.sale_date.date()
+        row = by_day.setdefault(day, {
+            "invoices": 0,
+            "total": ZERO,
+            "discount": ZERO,
+            "tax": ZERO,
+            "profit": ZERO,
+        })
+        row["invoices"] += 1
+        row["total"] += sale.net_total
+        row["discount"] += sale.discount_amount
+        row["tax"] += _net_sale_tax(sale)
+        row["profit"] += _net_sale_profit(sale)
+    rows = [[day, r["invoices"], _money(r["total"]), _money(r["discount"]),
+             _money(r["tax"]), _money(r["profit"])]
+            for day, r in sorted(by_day.items())]
     totals = ["TOTAL", sum(r[1] for r in rows),
               sum((r[2] or ZERO) for r in rows), sum((r[3] or ZERO) for r in rows),
               sum((r[4] or ZERO) for r in rows), sum((r[5] or ZERO) for r in rows)]
@@ -52,11 +95,12 @@ def sales_detailed(business, f):
     qs = (
         _sales_base(business, f, exclude_voided=False)
         .select_related("customer", "branch", "cashier")
+        .prefetch_related("returns")
         .order_by("-sale_date")[:2000]
     )
     rows = [[s.invoice_number, s.sale_date.strftime("%Y-%m-%d %H:%M"),
              s.customer.full_name, s.branch.name, s.cashier.full_name,
-             s.total, s.amount_paid, s.total - s.amount_paid,
+             s.net_total, s.net_amount_paid, s.balance,
              s.get_status_display()] for s in qs]
     return {"columns": ["Invoice", "Date", "Customer", "Branch", "Cashier",
                         "Total", "Paid", "Balance", "Status"],
@@ -70,14 +114,24 @@ def product_sales(business, f):
         sale__in=_sales_base(business, f))
     if f.get("category_id"):
         qs = qs.filter(product__category_id=f["category_id"])
-    qs = (
-        qs.values("product__name")
-        .annotate(qty=Sum("quantity"), returned=Sum("returned_quantity"),
-                  revenue=Sum("line_total"), profit=Sum("gross_profit"))
-        .order_by("-revenue")
-    )
-    rows = [[r["product__name"], r["qty"], r["returned"], r["revenue"], r["profit"]]
-            for r in qs]
+    by_product = {}
+    for item in qs.select_related("product"):
+        values = _net_item_values(item)
+        row = by_product.setdefault(item.product.name, {
+            "qty": ZERO,
+            "returned": ZERO,
+            "revenue": ZERO,
+            "profit": ZERO,
+        })
+        row["qty"] += values["qty"]
+        row["returned"] += values["returned"]
+        row["revenue"] += values["revenue"]
+        row["profit"] += values["profit"]
+    rows = [[name, r["qty"], r["returned"], _money(r["revenue"]),
+             _money(r["profit"])]
+            for name, r in sorted(
+                by_product.items(), key=lambda item: item[1]["revenue"],
+                reverse=True)]
     totals = ["TOTAL", sum((r[1] or ZERO) for r in rows),
               sum((r[2] or ZERO) for r in rows),
               sum((r[3] or ZERO) for r in rows), sum((r[4] or ZERO) for r in rows)]
@@ -91,27 +145,46 @@ def category_sales(business, f):
     qs = (
         SaleItem.objects.for_business(business)
         .filter(sale__in=_sales_base(business, f))
-        .annotate(cat=Coalesce("product__category__name", Value("(Uncategorized)")))
-        .values("cat")
-        .annotate(qty=Sum("quantity"), revenue=Sum("line_total"),
-                  profit=Sum("gross_profit"))
-        .order_by("-revenue")
+        .select_related("product__category")
     )
-    rows = [[r["cat"], r["qty"], r["revenue"], r["profit"]] for r in qs]
+    by_category = {}
+    for item in qs:
+        values = _net_item_values(item)
+        name = item.product.category.name if item.product.category else "(Uncategorized)"
+        row = by_category.setdefault(name, {"qty": ZERO, "revenue": ZERO, "profit": ZERO})
+        row["qty"] += values["qty"]
+        row["revenue"] += values["revenue"]
+        row["profit"] += values["profit"]
+    rows = [[name, r["qty"], _money(r["revenue"]), _money(r["profit"])]
+            for name, r in sorted(
+                by_category.items(), key=lambda item: item[1]["revenue"],
+                reverse=True)]
     return {"columns": ["Category", "Qty", "Revenue", "Gross profit"],
             "rows": rows, "totals": None}
 
 
 def cashier_sales(business, f):
-    qs = (
+    by_cashier = {}
+    for sale in (
         _sales_base(business, f)
-        .values("cashier__full_name")
-        .annotate(invoices=Count("id"), total=Sum("total"),
-                  avg=Avg("total"), profit=Sum("gross_profit"))
-        .order_by("-total")
-    )
-    rows = [[r["cashier__full_name"], r["invoices"], r["total"],
-             round(r["avg"] or 0, 3), r["profit"]] for r in qs]
+        .select_related("cashier")
+        .prefetch_related("returns", "items")
+    ):
+        name = sale.cashier.full_name
+        row = by_cashier.setdefault(name, {
+            "invoices": 0,
+            "total": ZERO,
+            "profit": ZERO,
+        })
+        row["invoices"] += 1
+        row["total"] += sale.net_total
+        row["profit"] += _net_sale_profit(sale)
+    rows = [[name, r["invoices"], _money(r["total"]),
+             round((_money(r["total"]) / r["invoices"]) if r["invoices"] else ZERO, 3),
+             _money(r["profit"])]
+            for name, r in sorted(
+                by_cashier.items(), key=lambda item: item[1]["total"],
+                reverse=True)]
     return {"columns": ["Cashier", "Invoices", "Sales", "Avg invoice", "Gross profit"],
             "rows": rows, "totals": None}
 
@@ -167,13 +240,15 @@ def tax_report(business, f):
     qs = (
         SaleItem.objects.for_business(business)
         .filter(sale__in=_sales_base(business, f), tax_rate__gt=0)
-        .values("tax_rate")
-        .annotate(base=Sum(F("line_total") - F("tax_amount"),
-                           output_field=DEC),
-                  tax=Sum("tax_amount"))
-        .order_by("tax_rate")
     )
-    rows = [[f'{r["tax_rate"]}%', r["base"], r["tax"]] for r in qs]
+    by_rate = {}
+    for item in qs:
+        values = _net_item_values(item)
+        row = by_rate.setdefault(item.tax_rate, {"base": ZERO, "tax": ZERO})
+        row["base"] += values["revenue"] - values["tax"]
+        row["tax"] += values["tax"]
+    rows = [[f"{rate}%", _money(r["base"]), _money(r["tax"])]
+            for rate, r in sorted(by_rate.items())]
     totals = ["TOTAL", sum((r[1] or ZERO) for r in rows),
               sum((r[2] or ZERO) for r in rows)]
     return {"columns": ["Tax rate", "Taxable amount", "Tax collected"],
@@ -289,15 +364,21 @@ def customer_receivables(business, f):
 
 
 def top_customers(business, f):
-    qs = (
+    by_customer = {}
+    for sale in (
         _sales_base(business, f)
         .exclude(customer__is_walk_in=True)
-        .values("customer__full_name", "customer__mobile")
-        .annotate(invoices=Count("id"), total=Sum("total"))
-        .order_by("-total")[:100]
-    )
-    rows = [[r["customer__full_name"], r["customer__mobile"], r["invoices"],
-             r["total"]] for r in qs]
+        .select_related("customer")
+        .prefetch_related("returns")
+    ):
+        key = (sale.customer.full_name, sale.customer.mobile)
+        row = by_customer.setdefault(key, {"invoices": 0, "total": ZERO})
+        row["invoices"] += 1
+        row["total"] += sale.net_total
+    rows = [[name, mobile, r["invoices"], _money(r["total"])]
+            for (name, mobile), r in sorted(
+                by_customer.items(), key=lambda item: item[1]["total"],
+                reverse=True)[:100]]
     return {"columns": ["Customer", "Mobile", "Invoices", "Total purchases"],
             "rows": rows, "totals": None}
 
@@ -329,8 +410,13 @@ def profit_summary(business, f):
     """Estimated net profit = gross profit − operating expenses."""
     from apps.expenses.models import Expense
 
-    sales = _sales_base(business, f).aggregate(
-        revenue=Sum("subtotal"), profit=Sum("gross_profit"), cost=Sum("total_cost"))
+    revenue = cost = gross = ZERO
+    for sale in _sales_base(business, f).prefetch_related("items"):
+        for item in sale.items.all():
+            values = _net_item_values(item)
+            revenue += values["revenue"] - values["tax"]
+            cost += values["cost"]
+            gross += values["profit"]
     exp_qs = Expense.objects.for_business(business).exclude(
         status__in=["rejected", "cancelled"])
     if f.get("date_from"):
@@ -340,15 +426,12 @@ def profit_summary(business, f):
     if f.get("branch_id"):
         exp_qs = exp_qs.filter(branch_id=f["branch_id"])
     expenses = exp_qs.aggregate(t=Sum("amount"))["t"] or ZERO
-    revenue = sales["revenue"] or ZERO
-    cost = sales["cost"] or ZERO
-    gross = sales["profit"] or ZERO
     rows = [
-        ["Revenue (net of tax)", revenue],
-        ["Cost of goods sold", cost],
-        ["Gross profit", gross],
+        ["Revenue (net of tax)", _money(revenue)],
+        ["Cost of goods sold", _money(cost)],
+        ["Gross profit", _money(gross)],
         ["Operating expenses", expenses],
-        ["Estimated net profit", gross - expenses],
+        ["Estimated net profit", _money(gross - expenses)],
     ]
     return {"columns": ["Measure", "Amount"], "rows": rows, "totals": None}
 
@@ -378,10 +461,14 @@ def profit_loss(business, f):
     category → estimated net profit."""
     from apps.expenses.models import Expense
 
-    sales = _sales_base(business, f).aggregate(
-        revenue=Sum("subtotal"), cost=Sum("total_cost"),
-        profit=Sum("gross_profit"), tax=Sum("tax_amount"),
-        discount=Sum("discount_amount"))
+    revenue = cost = gross = discount = ZERO
+    for sale in _sales_base(business, f).prefetch_related("items"):
+        discount += sale.discount_amount
+        for item in sale.items.all():
+            values = _net_item_values(item)
+            revenue += values["revenue"] - values["tax"]
+            cost += values["cost"]
+            gross += values["profit"]
     exp_qs = Expense.objects.for_business(business).exclude(
         status__in=["rejected", "cancelled"])
     if f.get("date_from"):
@@ -393,13 +480,13 @@ def profit_loss(business, f):
     by_category = exp_qs.values("category__name").annotate(
         t=Sum("amount")).order_by("-t")
 
-    revenue = sales["revenue"] or ZERO
-    cost = sales["cost"] or ZERO
-    gross = sales["profit"] or ZERO
+    revenue = _money(revenue)
+    cost = _money(cost)
+    gross = _money(gross)
     rows = [
         ["INCOME", ""],
         ["Revenue (net of tax)", revenue],
-        ["Sales discounts given", -(sales["discount"] or ZERO)],
+        ["Sales discounts given", -discount],
         ["Cost of goods sold", -cost],
         ["GROSS PROFIT", gross],
         ["", ""],
@@ -500,16 +587,30 @@ def expense_analysis(business, f):
 
 
 def customer_sales(business, f):
-    qs = (
+    by_customer = {}
+    for sale in (
         _sales_base(business, f)
-        .values("customer__full_name", "customer__code")
-        .annotate(invoices=Count("id"), total=Sum("total"),
-                  paid=Sum("amount_paid"), profit=Sum("gross_profit"))
-        .order_by("-total")
-    )
-    rows = [[r["customer__full_name"], r["customer__code"], r["invoices"],
-             r["total"], r["paid"], (r["total"] or ZERO) - (r["paid"] or ZERO),
-             r["profit"]] for r in qs[:1000]]
+        .select_related("customer")
+        .prefetch_related("returns", "items")
+    ):
+        key = (sale.customer.full_name, sale.customer.code)
+        row = by_customer.setdefault(key, {
+            "invoices": 0,
+            "total": ZERO,
+            "paid": ZERO,
+            "balance": ZERO,
+            "profit": ZERO,
+        })
+        row["invoices"] += 1
+        row["total"] += sale.net_total
+        row["paid"] += sale.net_amount_paid
+        row["balance"] += sale.balance
+        row["profit"] += _net_sale_profit(sale)
+    rows = [[name, code, r["invoices"], _money(r["total"]), _money(r["paid"]),
+             _money(r["balance"]), _money(r["profit"])]
+            for (name, code), r in sorted(
+                by_customer.items(), key=lambda item: item[1]["total"],
+                reverse=True)[:1000]]
     totals = ["TOTAL", "", sum(r[2] for r in rows),
               sum((r[3] or ZERO) for r in rows), sum((r[4] or ZERO) for r in rows),
               sum((r[5] or ZERO) for r in rows), sum((r[6] or ZERO) for r in rows)]

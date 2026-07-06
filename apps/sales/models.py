@@ -4,11 +4,18 @@ Financial records are immutable snapshots: item prices, costs and tax
 are frozen at completion time. Completed sales are never edited —
 corrections happen through void, return or credit note.
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
+from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
 
+from apps.core.money import money
 from apps.core.models import TenantModel
+
+
+ZERO = Decimal("0")
 
 
 class PaymentMethod(TenantModel):
@@ -160,8 +167,47 @@ class Sale(TenantModel):
         return self.invoice_number or f"Sale #{self.pk}"
 
     @property
+    def returned_amount(self):
+        if hasattr(self, "_prefetched_objects_cache") and "returns" in self._prefetched_objects_cache:
+            total = sum((r.refund_amount for r in self.returns.all()), ZERO)
+        else:
+            total = self.returns.aggregate(t=Sum("refund_amount"))["t"] or ZERO
+        return money(total)
+
+    @property
+    def refunded_amount(self):
+        refund_methods = (
+            SaleReturn.RefundMethod.CASH,
+            SaleReturn.RefundMethod.CARD,
+            SaleReturn.RefundMethod.BANK,
+            SaleReturn.RefundMethod.STORE_CREDIT,
+        )
+        if hasattr(self, "_prefetched_objects_cache") and "returns" in self._prefetched_objects_cache:
+            total = sum(
+                (r.refund_amount for r in self.returns.all()
+                 if r.refund_method in refund_methods),
+                ZERO,
+            )
+        else:
+            total = (
+                self.returns
+                .filter(refund_method__in=refund_methods)
+                .aggregate(t=Sum("refund_amount"))["t"]
+                or ZERO
+            )
+        return money(total)
+
+    @property
+    def net_total(self):
+        return money(self.total - self.returned_amount)
+
+    @property
+    def net_amount_paid(self):
+        return money(self.amount_paid - self.refunded_amount)
+
+    @property
     def balance(self):
-        return self.total - self.amount_paid
+        return money(self.net_total - self.net_amount_paid)
 
     @property
     def is_delivery_overdue(self):
@@ -178,11 +224,13 @@ class Sale(TenantModel):
     @property
     def payment_state(self):
         """Unpaid / Partially Paid / Paid / Overpaid — derived, never stored."""
-        if self.amount_paid <= 0 and self.total > 0:
+        net_total = self.net_total
+        net_paid = self.net_amount_paid
+        if net_paid <= 0 and net_total > 0:
             return "Unpaid"
-        if self.amount_paid > self.total:
+        if net_paid > net_total:
             return "Overpaid"
-        if self.amount_paid < self.total:
+        if net_paid < net_total:
             return "Partially Paid"
         return "Paid"
 
