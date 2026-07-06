@@ -99,8 +99,9 @@ def inventory_import_template(request):
 
     data = {
         "columns": [c.title() for c in services.IMPORT_COLUMNS],
-        "rows": [["WID-A", "1000000000017", "Head Office", "Main Warehouse",
-                  "50", "10", "Opening count", "Initial load"]],
+        "rows": [["WID-A", "1000000000017", "Widget A", "", "", "Head Office",
+                  "Main Warehouse", "50", "10", "Opening count",
+                  "Initial load", "4.000"]],
         "totals": None,
     }
     if request.GET.get("format") == "xlsx":

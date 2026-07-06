@@ -11,14 +11,15 @@ from apps.core.money import D
 from .models import Customer, CustomerGroup
 
 # Export column order ↔ model field mapping (reused by export + import template)
-EXPORT_COLUMNS = [
+BASE_EXPORT_COLUMNS = [
     "Customer Code", "Customer Name", "Mobile", "WhatsApp", "Email", "Address",
     "City", "Country", "Group", "Credit Limit", "Outstanding Balance",
-    "Store Credit", "Status", "Created Date",
+    "Opening Balance", "Store Credit", "Notes", "Status", "Created Date",
 ]
-IMPORT_COLUMNS = [
+BASE_IMPORT_COLUMNS = [
     "customer code", "customer name", "mobile", "whatsapp", "email",
     "address", "city", "country", "group", "credit limit",
+    "opening balance", "notes", "active",
 ]
 
 
@@ -39,6 +40,18 @@ def more_option_values(business, customer):
         if value:
             options.append({"label": option["label"], "value": value})
     return options
+
+
+def export_columns(business):
+    return BASE_EXPORT_COLUMNS + [
+        option["label"] for option in business.settings.more_option_labels
+    ]
+
+
+def import_columns(business):
+    return BASE_IMPORT_COLUMNS + [
+        option["label"].lower() for option in business.settings.more_option_labels
+    ]
 
 
 def next_customer_code(business):
@@ -66,15 +79,18 @@ def apply_store_credit_change(customer_id, delta: Decimal):
 def export_dataset(business, queryset):
     """Build {columns, rows} for customer export (CSV/XLSX)."""
     rows = []
+    option_labels = business.settings.more_option_labels
     for c in queryset.select_related("group"):
+        more_values = c.more_options or {}
         rows.append([
             c.code, c.full_name, c.mobile, c.whatsapp, c.email, c.address,
             c.city, c.country, c.group.name if c.group else "",
-            c.credit_limit, c.balance, c.store_credit,
+            c.credit_limit, c.balance, c.opening_balance, c.store_credit, c.notes,
             "Active" if c.is_active else "Inactive",
             c.created_at.strftime("%Y-%m-%d"),
+            *[more_values.get(option["key"], "") for option in option_labels],
         ])
-    return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
+    return {"columns": export_columns(business), "rows": rows, "totals": None}
 
 
 @transaction.atomic
@@ -183,6 +199,20 @@ def _apply_fields(business, customer, r):
     customer.country = r.get("country", customer.country)[:100]
     if r.get("credit limit"):
         customer.credit_limit = D(r["credit limit"])
+    if r.get("opening balance"):
+        customer.opening_balance = D(r["opening balance"])
+        if not customer.pk:
+            customer.balance = customer.opening_balance
+    customer.notes = r.get("notes", customer.notes)
+    active = r.get("active", "")
+    if active:
+        customer.is_active = active.lower() not in ("0", "false", "no", "inactive")
+    more_options = dict(customer.more_options or {})
+    for option in business.settings.more_option_labels:
+        key = option["label"].lower()
+        if key in r:
+            more_options[option["key"]] = r[key]
+    customer.more_options = more_options
     group_name = r.get("group", "")
     if group_name:
         customer.group, _ = CustomerGroup.objects.get_or_create(

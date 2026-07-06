@@ -173,7 +173,7 @@ def _statement_entries(business, customer, branch_id=None):
     Credits: standalone collections, per-sale settlement payments,
     returns credited to the account.
     """
-    from apps.sales.models import Sale, SalePayment, SaleReturn
+    from apps.sales.models import Sale, SaleReturn
 
     entries = []
     if customer.opening_balance:
@@ -264,11 +264,14 @@ def customer_export(request):
 def customer_import_template(request):
     from apps.reports import exports
 
+    columns = [c.title() for c in services.import_columns(request.business)]
+    sample = ["CUST-00001", "Sample Customer", "99000000", "99000000",
+              "sample@example.com", "123 Market St", "Muscat", "Oman",
+              "Retail", "100.000", "0.000", "VIP notes", "Active"]
+    sample += ["Sample value" for _ in request.business.settings.more_option_labels]
     data = {
-        "columns": [c.title() for c in services.IMPORT_COLUMNS],
-        "rows": [["CUST-00001", "Sample Customer", "99000000", "99000000",
-                  "sample@example.com", "123 Market St", "Muscat", "Oman",
-                  "Retail", "100.000"]],
+        "columns": columns,
+        "rows": [sample],
         "totals": None,
     }
     if request.GET.get("format") == "xlsx":
@@ -316,7 +319,7 @@ def customer_import(request):
                                        f"{summary['failed']} failed."))
     return render(request, "customers/import.html", {
         "results": results, "active_nav": "customers",
-        "columns": [c.title() for c in services.IMPORT_COLUMNS],
+        "columns": [c.title() for c in services.import_columns(request.business)],
     })
 
 

@@ -8,9 +8,10 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import F, Max, Sum
+from django.db.models import Max, Sum
 
-from apps.core.money import D, money, qty as q3
+from apps.core.money import D, money
+from apps.core.money import qty as q3
 
 from .models import StockLevel, StockMovement
 
@@ -163,14 +164,16 @@ def set_opening_stock(*, business, warehouse, product, variant=None, quantity, u
 
 
 EXPORT_COLUMNS = [
-    "SKU", "Barcode", "Product Name", "Category", "Branch", "Warehouse",
+    "SKU", "Barcode", "Product Name", "Variant SKU", "Variant Barcode",
+    "Category", "Branch", "Warehouse",
     "Current Stock", "Reserved Stock", "Available Stock", "Minimum Stock Level",
-    "Stock Value", "Last Purchase Price", "Last Selling Price",
+    "Stock Value", "Unit Cost", "Last Purchase Price", "Last Selling Price",
     "Last Stock Movement Date", "Status",
 ]
 IMPORT_COLUMNS = [
-    "sku", "barcode", "branch", "warehouse", "quantity",
-    "minimum stock level", "adjustment type", "notes",
+    "sku", "barcode", "product name", "variant sku", "variant barcode",
+    "branch", "warehouse", "quantity", "minimum stock level",
+    "adjustment type", "reason / notes", "unit cost",
 ]
 IMPORT_MODES = {"add", "replace", "opening", "minimum"}
 
@@ -207,15 +210,17 @@ def inventory_export_dataset(business, filters):
         cost = D(target.average_cost) or D(getattr(target, "purchase_price", 0))
         last = last_moves.get((level.product_id, level.warehouse_id))
         rows.append([
-            (level.variant.sku if level.variant else level.product.sku) or "",
-            (level.variant.barcode if level.variant else level.product.barcode) or "",
+            level.product.sku or "",
+            level.product.barcode or "",
             str(level.variant or level.product),
+            level.variant.sku if level.variant else "",
+            level.variant.barcode if level.variant else "",
             level.product.category.name if level.product.category else "",
             level.warehouse.branch.name if level.warehouse.branch else "",
             level.warehouse.name,
             level.quantity, ZERO, level.quantity,
             level.product.reorder_level,
-            money(level.quantity * cost),
+            money(level.quantity * cost), cost,
             level.product.purchase_price, level.product.sale_price,
             last.strftime("%Y-%m-%d") if last else "",
             "Active" if level.product.is_active else "Inactive",
@@ -243,7 +248,8 @@ def import_inventory(*, business, rows, mode, user):
 
     for idx, raw in enumerate(rows, start=2):
         r = normalize_row(raw)
-        sku, barcode = r.get("sku", ""), r.get("barcode", "")
+        sku = r.get("variant sku") or r.get("sku", "")
+        barcode = r.get("variant barcode") or r.get("barcode", "")
         wh_name = r.get("warehouse", "")
         branch_name = r.get("branch", "")
 
@@ -277,9 +283,8 @@ def import_inventory(*, business, rows, mode, user):
         # Resolve warehouse (by name, optionally within branch)
         wh_qs = Warehouse.objects.for_business(business).filter(is_active=True)
         if branch_name:
-            branch_match = wh_qs.filter(branch__name__iexact=branch_name)
-            if not branch_match.exists() and not wh_qs.filter(
-                branch__isnull=True).exists():
+            wh_qs = wh_qs.filter(branch__name__iexact=branch_name)
+            if not wh_qs.exists():
                 errors.append((idx, f"Branch not found: {branch_name}"))
                 summary["failed"] += 1
                 continue
@@ -300,7 +305,10 @@ def import_inventory(*, business, rows, mode, user):
             continue
         seen.add(key)
 
-        notes = (f"{r.get('adjustment type', '')} {r.get('notes', '')}").strip() or \
+        notes = (
+            f"{r.get('adjustment type', '')} "
+            f"{r.get('reason / notes') or r.get('notes', '')}"
+        ).strip() or \
             f"Bulk import ({mode})"
 
         # Minimum-stock-only mode: no ledger movement
@@ -348,6 +356,18 @@ def import_inventory(*, business, rows, mode, user):
             errors.append((idx, f"Quantity cannot be negative: {qty_raw}"))
             summary["failed"] += 1
             continue
+        unit_cost_override = None
+        if r.get("unit cost", "") != "":
+            try:
+                unit_cost_override = _Dec(str(r["unit cost"]))
+            except (_InvOp, ValueError):
+                errors.append((idx, f"Invalid unit cost: {r['unit cost']}"))
+                summary["failed"] += 1
+                continue
+            if unit_cost_override < 0:
+                errors.append((idx, "Unit cost cannot be negative."))
+                summary["failed"] += 1
+                continue
 
         if not product.is_stocked:
             errors.append((idx, f"{product.name} does not track inventory."))
@@ -356,7 +376,8 @@ def import_inventory(*, business, rows, mode, user):
 
         try:
             current = get_stock(business, warehouse, product, variant)
-            unit_cost = D(getattr(variant or product, "average_cost", 0)) or \
+            unit_cost = D(unit_cost_override) or \
+                D(getattr(variant or product, "average_cost", 0)) or \
                 D(getattr(variant or product, "purchase_price", 0))
             if mode == "add":
                 if quantity > 0:

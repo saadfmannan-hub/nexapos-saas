@@ -1,11 +1,10 @@
-import csv
 import io
 import json
 
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Q, Sum
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
@@ -442,15 +441,16 @@ def tax_list(request):
                         "Tax rate", perm="settings.manage")
 
 
-# ---------------------------------------------------------------------------
-# Import
-# ---------------------------------------------------------------------------
-IMPORT_COLUMNS = ["name", "sku", "barcode", "category", "brand", "unit",
-                  "purchase_price", "sale_price", "opening_stock", "reorder_level"]
-
-
 @require_permission("products.import")
 def product_import(request):
+    from apps.core.imports import error_report_response, parse_tabular_file
+
+    from . import services as catalog_services
+
+    if request.GET.get("errors") == "1":
+        errors = request.session.get("product_import_errors", [])
+        return error_report_response("product_import_errors.csv", errors)
+
     form = ProductImportForm(request.POST or None, request.FILES or None)
     results = None
     if request.method == "POST" and form.is_valid():
@@ -459,127 +459,41 @@ def product_import(request):
         except subscriptions.SubscriptionInactive as exc:
             messages.error(request, str(exc))
             return redirect("catalog:product_list")
-        rows, parse_errors = _parse_import_file(form.cleaned_data["file"])
-        if parse_errors:
-            messages.error(request, parse_errors)
+        rows, parse_error = parse_tabular_file(form.cleaned_data["file"])
+        if parse_error:
+            messages.error(request, parse_error)
         else:
-            results = _import_rows(request, rows, form.cleaned_data["match_by"])
+            summary, errors = catalog_services.import_products(
+                business=request.business, rows=rows,
+                match_by=form.cleaned_data["match_by"], user=request.user)
+            request.session["product_import_errors"] = errors
+            results = {"summary": summary, "errors": errors, "total": len(rows)}
             audit.log("products.imported", request=request, module="catalog",
-                      description=(f"Product import: {results['created']} created, "
-                                   f"{len(results['errors'])} errors, "
-                                   f"{results['skipped']} skipped."))
+                      description=(f"Product import: {summary['created']} created, "
+                                   f"{summary['failed']} failed, "
+                                   f"{summary['skipped']} skipped."))
     return render(request, "catalog/product_import.html",
-                  {"form": form, "results": results, "columns": IMPORT_COLUMNS,
+                  {"form": form, "results": results,
+                   "columns": catalog_services.IMPORT_COLUMNS,
                    "active_nav": "products"})
 
 
 @require_permission("products.import")
 def import_template(request):
-    response = HttpResponse(content_type="text/csv")
-    response["Content-Disposition"] = 'attachment; filename="product_import_template.csv"'
-    writer = csv.writer(response)
-    writer.writerow(IMPORT_COLUMNS)
-    writer.writerow(["Example T-Shirt", "TSH-001", "6291041500213", "Clothing",
-                     "Generic", "Piece", "2.500", "4.900", "10", "5"])
-    return response
+    from apps.reports import exports
 
+    from . import services as catalog_services
 
-def _parse_import_file(file):
-    name = file.name.lower()
-    rows = []
-    try:
-        if name.endswith(".csv"):
-            text = io.TextIOWrapper(file.file, encoding="utf-8-sig")
-            reader = csv.DictReader(text)
-            rows = [dict(r) for r in reader]
-        elif name.endswith(".xlsx"):
-            from openpyxl import load_workbook
-
-            wb = load_workbook(file, read_only=True, data_only=True)
-            ws = wb.active
-            headers = [str(c.value or "").strip().lower() for c in next(ws.iter_rows(max_row=1))]
-            for row in ws.iter_rows(min_row=2):
-                values = [c.value for c in row]
-                if not any(v not in (None, "") for v in values):
-                    continue
-                rows.append(dict(zip(headers, values)))
-        else:
-            return [], "Unsupported file type. Upload .csv or .xlsx."
-    except Exception as exc:  # parsing must never 500
-        return [], f"Could not read file: {exc}"
-    if len(rows) > 5000:
-        return [], "File exceeds the 5000-row limit per import."
-    return rows, None
-
-
-def _import_rows(request, rows, match_by):
-    from django.db import transaction
-
-    business = request.business
-    created, skipped, errors = 0, 0, []
-    from apps.branches.models import Warehouse
-
-    default_warehouse = (
-        Warehouse.objects.for_business(business).filter(is_active=True)
-        .order_by("-is_default").first()
-    )
-    for idx, row in enumerate(rows, start=2):
-        norm = {str(k).strip().lower(): ("" if v is None else str(v).strip())
-                for k, v in row.items() if k}
-        name = norm.get("name", "")
-        if not name:
-            errors.append(f"Row {idx}: missing product name.")
-            continue
-        match_value = norm.get(match_by, "")
-        if match_value and Product.objects.for_business(business).filter(
-            **{match_by: match_value}
-        ).exists():
-            skipped += 1
-            continue
-        if not match_value and match_by == "name" and Product.objects.for_business(
-            business
-        ).filter(name__iexact=name).exists():
-            skipped += 1
-            continue
-        try:
-            _current, limit, allowed = subscriptions.limit_state(business, "products")
-            if not allowed:
-                errors.append(f"Row {idx}: plan product limit ({limit}) reached.")
-                break
-            with transaction.atomic():
-                sku, bc = norm.get("sku", ""), norm.get("barcode", "")
-                if sku and Product.objects.for_business(business).filter(sku=sku).exists():
-                    raise ValueError(f"duplicate SKU {sku}")
-                if bc and Product.objects.for_business(business).filter(barcode=bc).exists():
-                    raise ValueError(f"duplicate barcode {bc}")
-                category = None
-                if norm.get("category"):
-                    category, _ = Category.objects.get_or_create(
-                        business=business, name=norm["category"], parent=None)
-                brand = None
-                if norm.get("brand"):
-                    brand, _ = Brand.objects.get_or_create(business=business,
-                                                           name=norm["brand"])
-                unit = None
-                if norm.get("unit"):
-                    unit = Unit.objects.for_business(business).filter(
-                        name__iexact=norm["unit"]).first()
-                product = Product.objects.create(
-                    business=business, name=name[:200], sku=sku[:60],
-                    barcode=bc[:80], category=category, brand=brand, unit=unit,
-                    purchase_price=D(norm.get("purchase_price")),
-                    sale_price=D(norm.get("sale_price")),
-                    reorder_level=D(norm.get("reorder_level")),
-                )
-                opening = D(norm.get("opening_stock"))
-                if opening > 0 and default_warehouse:
-                    inventory.set_opening_stock(
-                        business=business, warehouse=default_warehouse,
-                        product=product, quantity=opening,
-                        unit_cost=product.purchase_price, user=request.user,
-                    )
-            created += 1
-        except Exception as exc:
-            errors.append(f"Row {idx}: {exc}")
-    return {"created": created, "skipped": skipped, "errors": errors,
-            "total": len(rows)}
+    data = {
+        "columns": [c.title() for c in catalog_services.IMPORT_COLUMNS],
+        "rows": [[
+            "Example T-Shirt", "TSH-001", "6291041500213", "Clothing",
+            "Generic", "standard", "Piece", "2.500", "4.900", "2.500",
+            "5", "No", "Yes", "10", "5", "Head Office", "Main Warehouse",
+            "", "", "", "", "", "", "Active", "No",
+        ]],
+        "totals": None,
+    }
+    if request.GET.get("format") == "xlsx":
+        return exports.export_xlsx("product_import_template", data)
+    return exports.export_csv("product_import_template", data)

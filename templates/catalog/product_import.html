@@ -19,17 +19,22 @@
     </div></div>
   </div>
   <div class="col-lg-7">
-    {% if results %}
-    <div class="card"><div class="card-header">Import result</div><div class="card-body">
-      <div class="d-flex gap-3 mb-3">
-        <span class="badge text-bg-success fs-6">{{ results.created }} created</span>
-        <span class="badge text-bg-secondary fs-6">{{ results.skipped }} skipped (already exist)</span>
-        <span class="badge text-bg-danger fs-6">{{ results.errors|length }} errors</span>
+      {% if results %}
+      <div class="card"><div class="card-header">Import result</div><div class="card-body">
+      <div class="d-flex gap-2 mb-3 flex-wrap">
+        <span class="badge text-bg-success fs-6">{{ results.summary.created }} created</span>
+        <span class="badge text-bg-primary fs-6">{{ results.summary.updated }} updated</span>
+        <span class="badge text-bg-secondary fs-6">{{ results.summary.skipped }} skipped</span>
+        <span class="badge text-bg-danger fs-6">{{ results.summary.failed }} failed</span>
       </div>
       {% if results.errors %}
+      <a href="{% url 'catalog:product_import' %}?errors=1" class="btn btn-sm btn-outline-danger mb-2">
+        <i class="bi bi-download"></i> Download error report</a>
       <div class="border rounded p-2 bg-danger-subtle small" style="max-height:300px;overflow:auto">
-        {% for e in results.errors %}<div>{{ e }}</div>{% endfor %}
+        {% for row_no, msg in results.errors %}<div>Row {{ row_no }}: {{ msg }}</div>{% endfor %}
       </div>
+      {% else %}
+      <div class="alert alert-success py-2 mb-0">All rows processed without errors.</div>
       {% endif %}
     </div></div>
     {% endif %}

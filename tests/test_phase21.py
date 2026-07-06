@@ -1,12 +1,11 @@
 """Phase 2.1 tests: customer import/export, product export,
 inventory import/export, customer statement PDF."""
-import io
 from decimal import Decimal
 
 from django.urls import reverse
 
 from apps.audit.models import AuditLog
-from apps.catalog.models import Product
+from apps.catalog.models import Product, ProductVariant
 from apps.customers.models import Customer
 from apps.inventory import services as inventory
 
@@ -121,7 +120,30 @@ class CustomerImportTests(TenantTestCase):
                          {"file": _csv_upload(csv_text), "mode": "skip"})
         r = self.client.get(reverse("customers:import"), {"errors": "1"})
         self.assertIn("text/csv", r["Content-Type"])
+        self.assertIn("Row,Field,Error", r.content.decode())
         self.assertIn("Error", r.content.decode())
+
+    def test_import_export_more_options_notes_and_status(self):
+        settings_obj = self.business_a.settings
+        settings_obj.more_option_label_1 = "Measurement"
+        settings_obj.save(update_fields=["more_option_label_1"])
+        csv_text = (
+            "customer code,customer name,mobile,opening balance,notes,active,measurement\n"
+            "MEAS-1,Measured Customer,999001,25.000,Prefers SMS,No,42cm\n"
+        )
+        r = self.client.post(reverse("customers:import"),
+                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        self.assertEqual(r.context["results"]["summary"]["imported"], 1)
+        customer = Customer.objects.for_business(self.business_a).get(code="MEAS-1")
+        self.assertEqual(customer.balance, D("25.000"))
+        self.assertEqual(customer.notes, "Prefers SMS")
+        self.assertFalse(customer.is_active)
+        self.assertEqual(customer.more_options, {"1": "42cm"})
+
+        export = self.client.get(reverse("customers:export"))
+        body = export.content.decode()
+        self.assertIn("Measurement", body)
+        self.assertIn("42cm", body)
 
     def test_import_requires_permission(self):
         self.client.force_login(self.cashier_a)
@@ -139,6 +161,8 @@ class ProductExportTests(TenantTestCase):
         self.assertEqual(r.status_code, 200)
         body = r.content.decode()
         self.assertIn("Current Stock", body)
+        self.assertIn("Tax/VAT Rate", body)
+        self.assertIn("Track Inventory", body)
         self.assertIn("Widget A", body)
         # 100 opening stock from base fixture
         self.assertIn("100", body)
@@ -172,6 +196,90 @@ class ProductExportTests(TenantTestCase):
             business=self.business_a, action="product.exported").exists())
 
 
+class ProductImportTests(TenantTestCase):
+    def setUp(self):
+        self.client.force_login(self.owner_a)
+
+    def _post(self, csv_text, match_by="sku"):
+        return self.client.post(
+            reverse("catalog:product_import"),
+            {"file": _csv_upload(csv_text), "match_by": match_by},
+        )
+
+    def test_template_headers_include_commercial_columns(self):
+        r = self.client.get(reverse("catalog:import_template"))
+        body = r.content.decode()
+        for header in [
+            "Product Name", "Tax/Vat Rate", "Tax Inclusive", "Track Inventory",
+            "Opening Stock", "Warehouse", "Variant Parent", "Variant Sku",
+        ]:
+            self.assertIn(header, body)
+        xlsx = self.client.get(reverse("catalog:import_template"), {"format": "xlsx"})
+        self.assertTrue(xlsx.content.startswith(b"PK"))
+
+    def test_product_import_with_vat_and_opening_stock(self):
+        csv_text = (
+            "product name,sku,barcode,category,brand,product type,unit,"
+            "purchase price,sale price,cost price,tax/vat rate,tax inclusive,"
+            "track inventory,opening stock,minimum stock,branch,warehouse\n"
+            "Imported VAT,IMP-VAT,IMP-BC,Imported Cat,Imported Brand,standard,Piece,"
+            "3.000,9.000,3.000,5,Yes,Yes,7,2,Head Office,Main Warehouse\n"
+        )
+        r = self._post(csv_text)
+        self.assertEqual(r.context["results"]["summary"]["created"], 1)
+        product = Product.objects.for_business(self.business_a).get(sku="IMP-VAT")
+        self.assertEqual(product.tax_rate.rate, D("5.000"))
+        self.assertTrue(product.price_includes_tax)
+        self.assertEqual(product.reorder_level, D("2.000"))
+        self.assertEqual(
+            inventory.get_stock(self.business_a, self.warehouse_a, product),
+            D("7.000"),
+        )
+
+    def test_duplicate_sku_and_barcode_are_row_errors(self):
+        csv_text = (
+            "product name,sku,barcode\n"
+            "Duplicate SKU,WID-A,UNIQUE-BC\n"
+            "Duplicate Barcode,UNIQUE-SKU,1000000000017\n"
+        )
+        r = self._post(csv_text, match_by="name")
+        summary = r.context["results"]["summary"]
+        self.assertEqual(summary["failed"], 2)
+        messages = [msg for _row, msg in r.context["results"]["errors"]]
+        self.assertTrue(any("Duplicate SKU" in msg for msg in messages))
+        self.assertTrue(any("Duplicate barcode" in msg for msg in messages))
+
+    def test_variant_import_and_export(self):
+        csv_text = (
+            "product name,sku,product type,unit,purchase price,sale price,"
+            "variant option name,variant option value,variant sku,variant barcode,"
+            "opening stock,warehouse\n"
+            "Imported Shirt,IMP-SHIRT,variant,Piece,4.000,12.000,"
+            "Size,Large,IMP-SHIRT-L,IMP-SHIRT-L-BC,3,Main Warehouse\n"
+        )
+        r = self._post(csv_text)
+        self.assertEqual(r.context["results"]["summary"]["created"], 2)
+        product = Product.objects.for_business(self.business_a).get(sku="IMP-SHIRT")
+        variant = ProductVariant.objects.for_business(self.business_a).get(
+            sku="IMP-SHIRT-L")
+        self.assertEqual(variant.product, product)
+        self.assertEqual(variant.attributes, {"Size": "Large"})
+        self.assertEqual(
+            inventory.get_stock(self.business_a, self.warehouse_a, product, variant),
+            D("3.000"),
+        )
+        export = self.client.get(reverse("catalog:product_export"))
+        body = export.content.decode()
+        self.assertIn("Variant Parent", body)
+        self.assertIn("IMP-SHIRT-L", body)
+
+    def test_error_report_download(self):
+        self._post("product name,sku\n,WID-X\n")
+        r = self.client.get(reverse("catalog:product_import"), {"errors": "1"})
+        self.assertIn("text/csv", r["Content-Type"])
+        self.assertIn("Row,Field,Error", r.content.decode())
+
+
 class InventoryExportTests(TenantTestCase):
     def setUp(self):
         self.client.force_login(self.owner_a)
@@ -180,7 +288,7 @@ class InventoryExportTests(TenantTestCase):
         r = self.client.get(reverse("inventory:export"))
         body = r.content.decode()
         for col in ["Current Stock", "Available Stock", "Stock Value",
-                    "Warehouse", "Branch"]:
+                    "Warehouse", "Branch", "Variant SKU", "Unit Cost"]:
             self.assertIn(col, body)
         self.assertIn("Widget A", body)
 
@@ -261,6 +369,57 @@ class InventoryImportTests(TenantTestCase):
         csv_text = ("sku,warehouse,quantity\nWID-B,Main Warehouse,5\n")
         r = self._post(csv_text, "add")
         self.assertEqual(r.context["results"]["summary"]["failed"], 1)
+
+    def test_template_headers_include_variant_and_unit_cost(self):
+        r = self.client.get(reverse("inventory:import_template"))
+        body = r.content.decode()
+        self.assertIn("Variant Sku", body)
+        self.assertIn("Variant Barcode", body)
+        self.assertIn("Reason / Notes", body)
+        self.assertIn("Unit Cost", body)
+
+    def test_invalid_branch_warehouse_pair_rejected(self):
+        from apps.branches.models import Branch, Warehouse
+
+        other_branch = Branch.objects.create(
+            business=self.business_a, name="Other Branch", code="OB")
+        Warehouse.objects.create(
+            business=self.business_a, branch=other_branch, name="Other Warehouse",
+            code="OW")
+        csv_text = (
+            "sku,branch,warehouse,quantity\n"
+            "WID-A,Other Branch,Main Warehouse,5\n"
+        )
+        r = self._post(csv_text, "add")
+        self.assertEqual(r.context["results"]["summary"]["failed"], 1)
+        self.assertEqual(
+            inventory.get_stock(self.business_a, self.warehouse_a, self.product_a),
+            D("100"),
+        )
+
+    def test_variant_sku_import_and_unit_cost_validation(self):
+        parent = Product.objects.create(
+            business=self.business_a, name="Variant Import Parent",
+            sku="VAR-PARENT", product_type="variant", purchase_price=D("2.000"),
+            sale_price=D("6.000"),
+        )
+        variant = ProductVariant.objects.create(
+            business=self.business_a, product=parent, name="Blue",
+            sku="VAR-BLUE", purchase_price=D("2.000"), sale_price=D("6.000"),
+        )
+        csv_text = (
+            "variant sku,warehouse,quantity,unit cost,reason / notes\n"
+            "VAR-BLUE,Main Warehouse,4,2.500,variant load\n"
+            "VAR-BLUE,Main Warehouse,1,bad,bad cost\n"
+        )
+        r = self._post(csv_text, "add")
+        summary = r.context["results"]["summary"]
+        self.assertEqual(summary["imported"], 1)
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(
+            inventory.get_stock(self.business_a, self.warehouse_a, parent, variant),
+            D("4.000"),
+        )
 
 
 class StatementPdfTests(TenantTestCase):

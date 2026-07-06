@@ -38,7 +38,7 @@ def parse_tabular_file(uploaded_file, max_rows=MAX_IMPORT_ROWS):
                 values = [c.value for c in row]
                 if not any(v not in (None, "") for v in values):
                     continue
-                rows.append(dict(zip(headers, values)))
+                rows.append(dict(zip(headers, values, strict=False)))
         else:
             return [], "Unsupported file type. Upload a .csv or .xlsx file."
     except Exception as exc:  # parsing must never 500
@@ -57,11 +57,16 @@ def normalize_row(row):
 
 
 def error_report_response(filename, errors):
-    """Build a downloadable CSV error report: Row, Error."""
+    """Build a downloadable CSV error report: Row, Field, Error."""
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     writer = csv.writer(response)
-    writer.writerow(["Row", "Error"])
-    for row_no, message in errors:
-        writer.writerow([row_no, message])
+    writer.writerow(["Row", "Field", "Error"])
+    for error in errors:
+        if len(error) == 3:
+            row_no, field, message = error
+        else:
+            row_no, message = error
+            field = ""
+        writer.writerow([row_no, field, message])
     return response
