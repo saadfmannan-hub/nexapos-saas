@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.inventory import services as inventory
 from apps.inventory.services import InsufficientStock
@@ -335,7 +336,7 @@ class PosEndpointTests(TenantTestCase):
         self.assertContains(response, "4.500")
         self.assertContains(response, "94.500")
         self.assertContains(response, "80.500")
-        self.assertContains(response, "Balance Due")
+        self.assertContains(response, "BALANCE DUE")
         self.assertContains(response, "14.000")
         self.assertContains(response, "Payment due on receipt.")
         self.assertContains(response, "Powered by Nexa Business Solutions")
@@ -383,7 +384,7 @@ class PosEndpointTests(TenantTestCase):
         self.assertContains(response, "Card")
         self.assertContains(response, "CARD-1")
         self.assertContains(response, self.owner_a.full_name)
-        self.assertContains(response, "Balance Due")
+        self.assertContains(response, "BALANCE DUE")
         self.assertContains(response, "10.000")
 
         receipt = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
@@ -476,3 +477,62 @@ class PosEndpointTests(TenantTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(response.content.startswith(b"%PDF"))
+
+    def test_workshop_job_card_renders_premium_tailoring_sections(self):
+        from django.template.loader import render_to_string
+
+        settings_obj = self.business_a.settings
+        labels = [
+            "Toul", "Shoulders", "Chest", "Side", "Sleeves", "Design 3d No",
+            "Daraz (1,2,3) Line", "Computer Design",
+        ]
+        for index, label in enumerate(labels, start=1):
+            setattr(settings_obj, f"more_option_label_{index}", label)
+        settings_obj.save(update_fields=[
+            f"more_option_label_{index}" for index in range(1, len(labels) + 1)
+        ])
+        from apps.customers.models import Customer
+
+        customer = Customer.objects.create(
+            business=self.business_a, code="TAILOR-JOB",
+            full_name="Tailoring Job Customer",
+        )
+        customer.mobile = "99001122"
+        customer.address = "Do not show this address"
+        customer.email = "hidden@example.com"
+        customer.more_options = {
+            "1": "60", "2": "18", "3": "40", "4": "22",
+            "5": "24", "6": "D3-10", "7": "Line A", "8": "Logo",
+        }
+        customer.save(update_fields=["mobile", "address", "email", "more_options"])
+        self.product_a.description = "Use premium cuff finish."
+        self.product_a.save(update_fields=["description"])
+        sale = self.make_sale(customer=customer, delivery_date=timezone.localdate())
+        html = render_to_string("invoices/workshop_job_card.html", {
+            "sale": sale,
+            "items": sale.items.select_related("product__unit", "variant"),
+            "business": self.business_a,
+            "more_options": [
+                {"label": label, "value": customer.more_options[str(index)]}
+                for index, label in enumerate(labels, start=1)
+            ],
+        })
+        self.assertIn("Workshop Job Card", html)
+        self.assertIn("Phone Number", html)
+        self.assertIn("99001122", html)
+        self.assertNotIn("Do not show this address", html)
+        self.assertNotIn("hidden@example.com", html)
+        for label in labels:
+            self.assertIn(label, html)
+        self.assertIn("Line A", html)
+        self.assertIn("Workshop Workflow", html)
+        self.assertIn("Cutting", html)
+        self.assertIn("Quality Check", html)
+        self.assertIn("Assigned Tailor / Employee", html)
+        self.assertIn("Normal", html)
+        self.assertIn("Urgent", html)
+        self.assertIn("VIP", html)
+        self.assertIn("Tailor Notes", html)
+        self.assertIn("Supervisor signature", html)
+        self.assertIn("Tailor signature", html)
+        self.assertIn("Use premium cuff finish.", html)

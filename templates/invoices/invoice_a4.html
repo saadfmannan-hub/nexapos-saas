@@ -260,7 +260,7 @@
   <tr>
     <td class="left-panel">
       <div class="section">
-        <div class="section-title">Payment History</div>
+        <div class="section-title">PAYMENT HISTORY</div>
         <table class="ledger">
           {% for p in payments %}
           <tr>
@@ -324,7 +324,7 @@
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
         <tr><td>Refunded</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
         <tr class="emphasis"><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
-        <tr class="emphasis"><td>Balance Due</td><td class="r">{{ sale.balance }}</td></tr>
+        <tr class="emphasis"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>
     </td>
