@@ -557,7 +557,6 @@ def _job_card_context(sale, request, items):
         copy_label = "Reprint"
     else:
         copy_label = "Original"
-    payment_status = "Refunded" if sale.returned_amount > 0 else sale.payment_state
     return {
         "sale": sale,
         "items": items,
@@ -570,7 +569,6 @@ def _job_card_context(sale, request, items):
         "copy_type": copy_label,
         "priority_label": priority_label,
         "priority_class": priority_class,
-        "payment_status": payment_status,
     }
 
 

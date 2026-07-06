@@ -517,14 +517,15 @@ class PosEndpointTests(TenantTestCase):
             "copy_type": "Original",
             "priority_label": "VIP",
             "priority_class": "vip",
-            "payment_status": sale.payment_state,
             "more_options": [
                 {"label": label, "value": customer.more_options[str(index)]}
                 for index, label in enumerate(labels, start=1)
             ],
         })
         self.assertIn("JOB CARD", html)
-        self.assertIn("NexaPOS", html)
+        self.assertIn(self.business_a.name, html)
+        self.assertNotIn("NexaPOS", html)
+        self.assertIn("Powered by Nexa Business Solutions", html)
         self.assertIn("Job Card Number", html)
         self.assertIn(f"JC-{sale.invoice_number}", html)
         self.assertIn("Workshop Copy Number", html)
@@ -557,7 +558,8 @@ class PosEndpointTests(TenantTestCase):
         self.assertIn("Iron", html)
         self.assertIn("QC", html)
         self.assertIn("Ready", html)
-        self.assertIn("Payment Status", html)
+        self.assertNotIn("Payment Status", html)
+        self.assertNotIn(sale.payment_state, html)
         self.assertIn("Order Status", html)
         self.assertIn("Booked", html)
         self.assertIn("In Process", html)
