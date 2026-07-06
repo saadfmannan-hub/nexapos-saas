@@ -4,93 +4,248 @@
 <meta charset="utf-8">
 <title>Invoice {{ sale.invoice_number }}</title>
 <style>
-  @page { size: A4; margin: 14mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #1e293b; margin: 0; }
-  .inv-wrap { max-width: 800px; margin: 0 auto; padding: 16px; }
+  @page { size: A4; margin: 11mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Helvetica, Arial, sans-serif;
+    font-size: 9.4pt;
+    line-height: 1.35;
+    color: #172033;
+    margin: 0;
+    background: #fff;
+  }
+  .no-print { text-align: right; margin-bottom: 8px; }
+  .no-print button, .no-print a {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    color: #172033;
+    padding: 6px 14px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .invoice { max-width: 790px; margin: 0 auto; }
   table { width: 100%; border-collapse: collapse; }
-  .head td { vertical-align: top; }
-  h1 { font-size: 18pt; margin: 0 0 2px; color: #0f172a; }
-  .muted { color: #64748b; font-size: 9pt; }
-  .items th { background: #f1f5f9; text-align: left; padding: 6px 8px; font-size: 9pt;
-              text-transform: uppercase; border-bottom: 2px solid #cbd5e1; }
-  .items td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; }
   .r { text-align: right; }
-  .totals td { padding: 3px 8px; }
-  .totals .grand { font-size: 13pt; font-weight: bold; border-top: 2px solid #0f172a; }
-  .badge-void { color: #b91c1c; border: 3px solid #b91c1c; padding: 6px 18px;
-                font-size: 16pt; font-weight: bold; display: inline-block;
-                transform: rotate(-8deg); }
-  .footer { margin-top: 26px; font-size: 9pt; color: #475569; }
-  .sig { margin-top: 40px; }
-  .sig td { width: 50%; padding-top: 24px; }
-  .sig .line { border-top: 1px solid #94a3b8; width: 70%; padding-top: 4px; font-size: 9pt; color: #64748b; }
-  @media print { .no-print { display: none; } }
+  .c { text-align: center; }
+  .muted { color: #667085; font-size: 8.3pt; }
+  .label { color: #667085; font-size: 7.4pt; text-transform: uppercase; letter-spacing: .04em; }
+  .header {
+    border-bottom: 2px solid #111827;
+    padding-bottom: 13px;
+    margin-bottom: 12px;
+  }
+  .brand-cell { width: 56%; vertical-align: top; }
+  .doc-cell { width: 44%; vertical-align: top; text-align: right; }
+  .brand-name { font-size: 19pt; font-weight: 700; margin: 0 0 2px; color: #101828; }
+  h1 { font-size: 18pt; margin: 0 0 5px; color: #101828; }
+  .status {
+    display: inline-block;
+    border: 1px solid #101828;
+    border-radius: 999px;
+    padding: 3px 11px;
+    margin: 4px 0 8px;
+    font-size: 8pt;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .status.paid { border-color: #047857; color: #047857; background: #ecfdf5; }
+  .status.partially-paid { border-color: #b45309; color: #92400e; background: #fffbeb; }
+  .status.unpaid { border-color: #b91c1c; color: #991b1b; background: #fef2f2; }
+  .status.refunded { border-color: #4338ca; color: #3730a3; background: #eef2ff; }
+  .badge-void {
+    color: #b91c1c;
+    border: 3px solid #b91c1c;
+    padding: 6px 18px;
+    font-size: 15pt;
+    font-weight: 700;
+    display: inline-block;
+    transform: rotate(-6deg);
+  }
+  .info-grid { margin: 10px 0 13px; }
+  .info-grid td {
+    width: 33.333%;
+    vertical-align: top;
+    border: 1px solid #e4e7ec;
+    padding: 8px 10px;
+  }
+  .info-title { font-size: 8pt; color: #667085; text-transform: uppercase; margin-bottom: 3px; }
+  .info-value { font-weight: 700; color: #101828; }
+  .items {
+    table-layout: fixed;
+    border: 1px solid #d9dee8;
+    margin-top: 8px;
+  }
+  .items th {
+    background: #f3f5f8;
+    border-bottom: 1px solid #cdd5df;
+    color: #344054;
+    font-size: 7.6pt;
+    font-weight: 700;
+    padding: 7px 6px;
+    text-align: left;
+    text-transform: uppercase;
+  }
+  .items td {
+    border-bottom: 1px solid #edf0f4;
+    padding: 7px 6px;
+    vertical-align: top;
+  }
+  .items tr:last-child td { border-bottom: 0; }
+  .items .num { width: 5%; }
+  .items .item { width: 31%; }
+  .items .sku { width: 14%; }
+  .items .qty { width: 8%; }
+  .items .money { width: 10.5%; }
+  .item-name {
+    font-weight: 700;
+    color: #101828;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+  .sku-small { color: #667085; font-size: 8pt; margin-top: 2px; }
+  .summary-layout { margin-top: 12px; page-break-inside: avoid; }
+  .summary-layout > tbody > tr > td { vertical-align: top; }
+  .left-panel { width: 56%; padding-right: 14px; }
+  .right-panel { width: 44%; }
+  .section {
+    border: 1px solid #e4e7ec;
+    padding: 9px 10px;
+    margin-bottom: 8px;
+  }
+  .section-title {
+    font-size: 8pt;
+    color: #667085;
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  .ledger td { padding: 4px 0; border-bottom: 1px solid #f0f2f5; }
+  .ledger tr:last-child td { border-bottom: 0; }
+  .totals {
+    border: 1px solid #cdd5df;
+  }
+  .totals td {
+    padding: 5px 9px;
+    border-bottom: 1px solid #edf0f4;
+  }
+  .totals tr:last-child td { border-bottom: 0; }
+  .totals .emphasis td {
+    background: #f8fafc;
+    font-weight: 700;
+  }
+  .totals .grand td {
+    background: #111827;
+    color: #fff;
+    font-size: 12pt;
+    font-weight: 700;
+    border-bottom: 0;
+  }
+  .notes {
+    min-height: 42px;
+    white-space: pre-line;
+  }
+  .signatures {
+    margin-top: 22px;
+    page-break-inside: avoid;
+  }
+  .signatures td {
+    width: 50%;
+    padding-top: 24px;
+  }
+  .line {
+    border-top: 1px solid #98a2b3;
+    width: 78%;
+    padding-top: 5px;
+    color: #667085;
+    font-size: 8pt;
+  }
+  .footer {
+    margin-top: 15px;
+    border-top: 1px solid #e4e7ec;
+    padding-top: 8px;
+    color: #475467;
+    font-size: 8.4pt;
+  }
+  @media print { .no-print { display: none; } .invoice { max-width: none; } }
 </style>
 </head>
 <body>
-<div class="inv-wrap">
+<div class="invoice">
 {% if not pdf_mode %}
-<div class="no-print" style="text-align:right;margin-bottom:8px">
-  <button onclick="window.print()" style="padding:6px 16px;cursor:pointer">🖨 Print</button>
-  <a href="{% url 'sales:invoice_pdf' sale.public_id %}" style="padding:6px 16px">⬇ PDF</a>
+<div class="no-print">
+  <button onclick="window.print()">Print</button>
+  <a href="{% url 'sales:invoice_pdf' sale.public_id %}">PDF</a>
 </div>
 {% endif %}
 
-<table class="head">
+<table class="header">
   <tr>
-    <td>
+    <td class="brand-cell">
       {% if settings_obj.show_logo_on_invoice and business.logo %}
-        <img src="{{ business.logo.url }}" style="max-height:54px;margin-bottom:6px"><br>
+        <img src="{{ business.logo.url }}" style="max-height:50px;margin-bottom:6px"><br>
       {% endif %}
-      <h1>{{ business.name }}</h1>
+      <div class="brand-name">{{ business.name }}</div>
       {% if business.legal_name %}<div class="muted">{{ business.legal_name }}</div>{% endif %}
       <div class="muted">
-        {{ sale.branch.name }}{% if sale.branch.address %} · {{ sale.branch.address }}{% endif %}<br>
-        {% if business.phone %}Tel: {{ business.phone }} · {% endif %}{{ business.email }}<br>
-        {% if business.address and not sale.branch.address %}{{ business.address }}<br>{% endif %}
-        {% if business.city or business.country %}{{ business.city }}{% if business.city and business.country %}, {% endif %}{{ business.country }}<br>{% endif %}
+        {{ sale.branch.name }}{% if sale.branch.address %} | {{ sale.branch.address }}{% endif %}<br>
+        {% if business.phone %}Phone: {{ business.phone }}{% endif %}{% if business.phone and business.email %} | {% endif %}{% if business.email %}{{ business.email }}{% endif %}<br>
         {% if show_vat and vat_number %}VAT No: {{ vat_number }}{% endif %}
       </div>
     </td>
-    <td class="r">
+    <td class="doc-cell">
       <h1>{{ invoice_label }}</h1>
-      <div><strong>{{ sale.invoice_number }}</strong></div>
-      <div class="muted">Date: {{ sale.sale_date|date:"Y-m-d H:i" }}</div>
-      <div class="muted">Branch: {{ sale.branch.name }}</div>
-      {% if sale.delivery_date %}
-      <div class="muted"><strong>Delivery date: {{ sale.delivery_date|date:"d-M-Y" }}</strong>
-        ({{ sale.get_delivery_status_display }})</div>
-      {% endif %}
-      <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
-      <div class="muted"><em>{{ copy_label }}</em></div>
+      <div class="status {{ invoice_status_class }}">{{ invoice_status_label }}</div>
       {% if sale.status == "voided" %}<div class="badge-void">VOIDED</div>{% endif %}
+      <div class="muted"><em>{{ copy_label }}</em></div>
     </td>
   </tr>
 </table>
 
-<table style="margin-top:14px">
-  <tr><td>
-    <div class="muted">BILL TO</div>
-    <strong>{{ sale.customer.full_name }}</strong><br>
-    <span class="muted">
-      {% if sale.customer.code %}Customer ID: {{ sale.customer.code }}<br>{% endif %}
-      {% if sale.customer.mobile %}{{ sale.customer.mobile }}<br>{% endif %}
-      {% if sale.customer.address %}{{ sale.customer.address }}<br>{% endif %}
-      {% if sale.customer.tax_number %}Tax No: {{ sale.customer.tax_number }}{% endif %}
-    </span>
-  </td></tr>
+<table class="info-grid">
+  <tr>
+    <td>
+      <div class="info-title">Invoice</div>
+      <div class="info-value">{{ sale.invoice_number }}</div>
+      <div class="muted">{{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+    </td>
+    <td>
+      <div class="info-title">Customer</div>
+      <div class="info-value">{{ sale.customer.full_name }}</div>
+      {% if sale.customer.mobile %}<div class="muted">Phone: {{ sale.customer.mobile }}</div>{% endif %}
+    </td>
+    <td>
+      <div class="info-title">Sale Details</div>
+      <div class="muted">Branch: {{ sale.branch.name }}</div>
+      <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
+      {% if sale.delivery_date %}
+        <div class="muted">Delivery: {{ sale.delivery_date|date:"d-M-Y" }} ({{ sale.get_delivery_status_display }})</div>
+      {% endif %}
+    </td>
+  </tr>
 </table>
 
-<table class="items" style="margin-top:14px">
-  <thead><tr>
-    <th>#</th><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th>
-    <th class="r">Discount</th><th class="r">VAT</th><th class="r">Total</th>
-  </tr></thead>
+<table class="items">
+  <thead>
+    <tr>
+      <th class="num">#</th>
+      <th class="item">Item</th>
+      <th class="sku">SKU</th>
+      <th class="qty r">Qty</th>
+      <th class="money r">Unit Price</th>
+      <th class="money r">Discount</th>
+      <th class="money r">VAT</th>
+      <th class="money r">Total</th>
+    </tr>
+  </thead>
   <tbody>
     {% for item in items %}
     <tr>
       <td>{{ forloop.counter }}</td>
-      <td>{{ item.product_name }}{% if item.sku %}<br><span class="muted">{{ item.sku }}</span>{% endif %}</td>
+      <td>
+        <div class="item-name">{{ item.product_name }}</div>
+        {% if item.sku %}<div class="sku-small">SKU {{ item.sku }}</div>{% endif %}
+      </td>
+      <td class="muted">{{ item.sku|default:"-" }}</td>
       <td class="r">{{ item.quantity }}</td>
       <td class="r">{{ item.unit_price }}</td>
       <td class="r">{{ item.discount_amount }}</td>
@@ -101,61 +256,82 @@
   </tbody>
 </table>
 
-<table style="margin-top:10px">
+<table class="summary-layout">
   <tr>
-    <td style="width:55%; vertical-align:top">
-      <div class="muted">PAYMENT HISTORY</div>
-      {% for p in payments %}
-        <div>{{ p.payment_date|default:p.created_at|date:"Y-m-d" }} —
-          {{ p.method.name }}: {{ p.amount }} {{ business.currency_display }}
-          {% if p.reference %}<span class="muted">({{ p.reference }})</span>{% endif %}
-          {% if p.received_by %}<span class="muted"> - {{ p.received_by.full_name }}</span>{% endif %}</div>
-      {% empty %}<div class="muted">No payments recorded</div>{% endfor %}
+    <td class="left-panel">
+      <div class="section">
+        <div class="section-title">Payment History</div>
+        <table class="ledger">
+          {% for p in payments %}
+          <tr>
+            <td>
+              <strong>{{ p.method.name }}</strong>
+              <div class="muted">
+                {{ p.payment_date|default:p.created_at|date:"Y-m-d" }}
+                {% if p.reference %} | Ref: {{ p.reference }}{% endif %}
+                {% if p.received_by %} | By: {{ p.received_by.full_name }}{% endif %}
+              </div>
+            </td>
+            <td class="r">{{ p.amount }}</td>
+          </tr>
+          {% empty %}
+          <tr><td class="muted">No payments recorded</td><td></td></tr>
+          {% endfor %}
+        </table>
+      </div>
+
       {% if returns %}
-        <div class="muted" style="margin-top:8px">RETURN / REFUND SUMMARY</div>
-        {% for r in returns %}
-          <div>{{ r.created_at|date:"Y-m-d" }} - {{ r.display_returned_quantity }} returned -
-            {{ r.get_refund_method_display }}: -{{ r.refund_amount }} {{ business.currency_display }}</div>
-        {% endfor %}
+      <div class="section">
+        <div class="section-title">RETURN / REFUND SUMMARY</div>
+        <table class="ledger">
+          {% for r in returns %}
+          <tr>
+            <td>
+              <strong>{{ r.return_number }}</strong>
+              <div class="muted">
+                {{ r.created_at|date:"Y-m-d H:i" }} | {{ r.display_returned_quantity }} returned |
+                {{ r.get_refund_method_display }}
+                {% if r.processed_by %} | By: {{ r.processed_by.full_name }}{% endif %}
+              </div>
+              {% if r.reason %}<div class="muted">{{ r.reason }}</div>{% endif %}
+            </td>
+            <td class="r">-{{ r.refund_amount }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
       {% endif %}
-      <div style="margin-top:4px">Total paid: <strong>{{ sale.amount_paid }} {{ business.currency_display }}</strong></div>
-      {% if sale.refunded_amount > 0 %}
-        <div>Refunded: <strong>-{{ sale.refunded_amount }} {{ business.currency_display }}</strong></div>
-        <div>Net paid: <strong>{{ sale.net_amount_paid }} {{ business.currency_display }}</strong></div>
-      {% endif %}
-      {% if sale.balance > 0 %}
-        <div><strong>BALANCE DUE: {{ sale.balance }} {{ business.currency_display }}</strong></div>
-      {% endif %}
-      {% if sale.notes %}<div class="muted" style="margin-top:8px">Notes: {{ sale.notes }}</div>{% endif %}
+
+      <div class="section notes">
+        <div class="section-title">Notes</div>
+        {% if sale.notes %}{{ sale.notes }}{% else %}<span class="muted">No notes</span>{% endif %}
+      </div>
     </td>
-    <td style="width:45%">
+    <td class="right-panel">
       <table class="totals">
         <tr><td>Subtotal</td><td class="r">{{ sale.subtotal }}</td></tr>
-        <tr><td>Invoice Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>
+        <tr><td>Invoice Discount</td><td class="r">-{{ sale.discount_amount }}</td></tr>
         <tr><td>Discounted Subtotal</td><td class="r">{{ discounted_subtotal }}</td></tr>
-        {% if show_vat %}
-        <tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>
-        {% endif %}
+        {% if show_vat %}<tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
+        <tr class="emphasis"><td>Original Total</td><td class="r">{{ sale.total }}</td></tr>
         {% if sale.returned_amount > 0 %}
-        <tr><td>Original Total</td><td class="r">{{ sale.total }}</td></tr>
         <tr><td>Returned/Refunded</td><td class="r">-{{ sale.returned_amount }}</td></tr>
         <tr class="grand"><td>NET TOTAL</td><td class="r">{{ sale.net_total }} {{ business.currency_display }}</td></tr>
         {% else %}
+        <tr><td>Returned/Refunded</td><td class="r">0.000</td></tr>
         <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
         {% endif %}
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
-        {% if sale.refunded_amount > 0 %}
         <tr><td>Refunded</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
-        <tr><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
-        {% endif %}
-        {% if sale.balance > 0 %}<tr><td>Balance Due</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
+        <tr class="emphasis"><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
+        <tr class="emphasis"><td>Balance Due</td><td class="r">{{ sale.balance }}</td></tr>
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>
     </td>
   </tr>
 </table>
 
-<table class="sig">
+<table class="signatures">
   <tr>
     <td><div class="line">Customer signature</div></td>
     <td class="r"><div class="line" style="margin-left:auto">Authorized signature</div></td>
@@ -165,8 +341,8 @@
 <div class="footer">
   <strong>Thank you for your business.</strong><br>
   {% if settings_obj.invoice_footer %}{{ settings_obj.invoice_footer|linebreaksbr }}<br>{% endif %}
-  {% if settings_obj.terms_and_conditions %}<em>{{ settings_obj.terms_and_conditions|linebreaksbr }}</em>{% endif %}
-  <div style="margin-top:6px">Powered by Nexa Business Solutions</div>
+  {% if settings_obj.terms_and_conditions %}<em>{{ settings_obj.terms_and_conditions|linebreaksbr }}</em><br>{% endif %}
+  Powered by Nexa Business Solutions
 </div>
 </div>
 </body>

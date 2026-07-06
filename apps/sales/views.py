@@ -530,6 +530,16 @@ def _invoice_display_returns(returns):
     return returns
 
 
+def _invoice_status_label(sale):
+    if sale.returned_amount > 0:
+        return "Refunded"
+    if sale.balance <= 0:
+        return "Paid"
+    if sale.net_amount_paid > 0:
+        return "Partially Paid"
+    return "Unpaid"
+
+
 def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
                      pdf_mode=False):
     items = _invoice_display_items(list(items if items is not None else sale.items.all()))
@@ -543,12 +553,15 @@ def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprin
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     show_vat = bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount))
+    status_label = _invoice_status_label(sale)
     return {
         "sale": sale, "items": items, "payments": payments,
         "returns": returns,
         "business": sale.business, "settings_obj": settings_obj,
         "is_reprint": is_reprint, "copy_label": "DUPLICATE COPY" if is_reprint else "ORIGINAL COPY",
         "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
+        "invoice_status_label": status_label,
+        "invoice_status_class": status_label.lower().replace(" ", "-"),
         "pdf_mode": pdf_mode, "vat_rate": vat_rate,
         "show_vat": show_vat, "vat_number": settings_obj.vat_number,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),

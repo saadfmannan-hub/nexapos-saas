@@ -5,80 +5,115 @@
 <title>Receipt {{ sale.invoice_number }}</title>
 <style>
   @page { size: 58mm auto; margin: 1.5mm; }
-  body { font-family: "Courier New", monospace; font-size: 8.5pt; width: 52mm;
-         margin: 0 auto; color: #000; }
-  .c { text-align: center; } .r { text-align: right; }
-  hr { border: none; border-top: 1px dashed #000; margin: 3px 0; }
+  body {
+    font-family: "Courier New", monospace;
+    font-size: 8.2pt;
+    line-height: 1.22;
+    width: 52mm;
+    margin: 0 auto;
+    color: #000;
+  }
+  .c { text-align: center; }
+  .r { text-align: right; }
+  .b { font-weight: bold; }
+  .lg { font-size: 9.7pt; }
+  .xs { font-size: 7.4pt; }
+  hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
   table { width: 100%; border-collapse: collapse; }
   td { padding: 1px 0; vertical-align: top; }
-  .b { font-weight: bold; }
-  .lg { font-size: 10pt; }
+  .item-name { font-weight: bold; word-break: break-word; }
+  .total-row td { border-top: 1px solid #000; padding-top: 3px; }
   @media print { .no-print { display: none; } }
 </style>
 </head>
 <body onload="{% if request.GET.autoprint %}window.print(){% endif %}">
 <div class="no-print c" style="margin:6px 0">
-  <button onclick="window.print()" style="padding:4px 12px;cursor:pointer">🖨 Print</button>
+  <button onclick="window.print()" style="padding:4px 12px;cursor:pointer">Print</button>
 </div>
+
 <div class="c">
   <span class="b lg">{{ business.name }}</span><br>
-  {% if sale.branch.address %}{{ sale.branch.address|truncatechars:26 }}<br>{% elif business.address %}{{ business.address|truncatechars:26 }}<br>{% endif %}
-  {% if business.phone %}{{ business.phone|truncatechars:20 }}<br>{% endif %}
-  {% if business.email %}{{ business.email|truncatechars:26 }}<br>{% endif %}
-  {{ sale.branch.name }}<br>
-  {% if show_vat and vat_number %}VAT No: {{ vat_number }}<br>{% endif %}
+  {{ sale.branch.name|truncatechars:24 }}<br>
+  {% if sale.branch.address %}{{ sale.branch.address|truncatechars:28 }}<br>{% elif business.address %}{{ business.address|truncatechars:28 }}<br>{% endif %}
+  {% if business.phone %}{{ business.phone|truncatechars:22 }}<br>{% endif %}
+  {% if show_vat and vat_number %}VAT No: {{ vat_number|truncatechars:22 }}<br>{% endif %}
 </div>
 <hr>
 <table>
   <tr><td colspan="2" class="c b">{{ invoice_label }}</td></tr>
+  <tr><td>Status</td><td class="r b">{{ invoice_status_label }}</td></tr>
   <tr><td>Inv</td><td class="r b">{{ sale.invoice_number }}</td></tr>
   <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"y-m-d H:i" }}</td></tr>
-  <tr><td>Branch</td><td class="r">{{ sale.branch.name|truncatechars:14 }}</td></tr>
   <tr><td>Cashier</td><td class="r">{{ sale.cashier.full_name|truncatechars:14 }}</td></tr>
   {% if not sale.customer.is_walk_in %}
-  <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:14 }}</td></tr>
-  {% if sale.customer.code %}<tr><td>Cust ID</td><td class="r">{{ sale.customer.code|truncatechars:14 }}</td></tr>{% endif %}
-  {% if sale.customer.mobile %}<tr><td>Phone</td><td class="r">{{ sale.customer.mobile|truncatechars:14 }}</td></tr>{% endif %}
+  <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:16 }}</td></tr>
+  {% if sale.customer.mobile %}<tr><td>Phone</td><td class="r">{{ sale.customer.mobile|truncatechars:16 }}</td></tr>{% endif %}
   {% endif %}
-  {% if sale.delivery_date %}<tr><td>Delivery</td><td class="r">{{ sale.delivery_date|date:"d-M-y" }}</td></tr><tr><td>Status</td><td class="r">{{ sale.get_delivery_status_display|truncatechars:14 }}</td></tr>{% endif %}
+  {% if sale.delivery_date %}
+  <tr><td>Delivery</td><td class="r">{{ sale.delivery_date|date:"d-M-y" }}</td></tr>
+  <tr><td>Status</td><td class="r">{{ sale.get_delivery_status_display|truncatechars:14 }}</td></tr>
+  {% endif %}
   <tr><td colspan="2" class="c b">** {{ copy_label }} **</td></tr>
   {% if sale.status == "voided" %}<tr><td colspan="2" class="c b lg">** VOIDED **</td></tr>{% endif %}
 </table>
 <hr>
+<table><tr class="b xs"><td>ITEM</td><td class="r">AMOUNT</td></tr></table>
 {% for item in items %}
-<div>{{ item.product_name|truncatechars:26 }}</div>
+<div class="item-name">{{ item.product_name|truncatechars:28 }}</div>
+{% if item.sku %}<div class="xs">SKU {{ item.sku|truncatechars:22 }}</div>{% endif %}
 <table><tr>
-  <td>{{ item.quantity }} x {{ item.unit_price }}{% if item.discount_amount > 0 %} −{{ item.discount_amount }}{% endif %}</td>
+  <td>{{ item.quantity }} x {{ item.unit_price }}{% if item.discount_amount > 0 %} -{{ item.discount_amount }}{% endif %}</td>
   <td class="r">{{ item.display_subtotal }}</td>
 </tr></table>
 {% endfor %}
 <hr>
 <table>
   <tr><td>Subtotal</td><td class="r">{{ sale.subtotal }}</td></tr>
-  {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>{% endif %}
+  {% if sale.discount_amount > 0 %}<tr><td>Discount</td><td class="r">-{{ sale.discount_amount }}</td></tr>{% endif %}
   <tr><td>Disc Subtotal</td><td class="r">{{ discounted_subtotal }}</td></tr>
   {% if show_vat %}<tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>{% endif %}
   {% if sale.returned_amount > 0 %}
   <tr><td>Orig Total</td><td class="r">{{ sale.total }}</td></tr>
   <tr><td>Returned</td><td class="r">-{{ sale.returned_amount }}</td></tr>
-  <tr class="b lg"><td>NET TOTAL</td><td class="r">{{ sale.net_total }}</td></tr>
+  <tr class="b lg total-row"><td>NET TOTAL</td><td class="r">{{ sale.net_total }}</td></tr>
   {% else %}
-  <tr class="b lg"><td>TOTAL</td><td class="r">{{ sale.total }}</td></tr>
+  <tr class="b lg total-row"><td>TOTAL</td><td class="r">{{ sale.total }}</td></tr>
   {% endif %}
-  {% for p in payments %}<tr><td>{{ p.payment_date|default:p.created_at|date:"y-m-d" }} {{ p.method.name|truncatechars:8 }}</td><td class="r">{{ p.amount }}</td></tr>
+</table>
+<hr>
+<div class="b">PAYMENTS</div>
+<table>
+  {% for p in payments %}
+  <tr><td>{{ p.payment_date|default:p.created_at|date:"y-m-d" }} {{ p.method.name|truncatechars:8 }}</td><td class="r">{{ p.amount }}</td></tr>
   {% if p.reference %}<tr><td colspan="2">Ref: {{ p.reference|truncatechars:20 }}</td></tr>{% endif %}
   {% if p.received_by %}<tr><td colspan="2">By: {{ p.received_by.full_name|truncatechars:20 }}</td></tr>{% endif %}
+  {% empty %}
+  <tr><td colspan="2">No payments recorded</td></tr>
   {% endfor %}
-  {% for r in returns %}
-  <tr><td>REFUND {{ r.created_at|date:"y-m-d" }}</td><td class="r">-{{ r.refund_amount }}</td></tr>
-  <tr><td colspan="2">{{ r.display_returned_quantity }} returned - {{ r.get_refund_method_display|truncatechars:16 }}</td></tr>
-  {% endfor %}
+  <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
   {% if sale.refunded_amount > 0 %}
   <tr><td>REFUNDED</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
   <tr class="b"><td>NET PAID</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
   {% endif %}
   {% if sale.change_due > 0 %}<tr class="b"><td>CHANGE</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
+  {% if sale.balance > 0 %}<tr class="b"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
 </table>
+{% if returns %}
+<hr>
+<div class="b">REFUNDS</div>
+<table>
+  {% for r in returns %}
+  <tr><td>REFUND {{ r.created_at|date:"y-m-d" }}</td><td class="r">-{{ r.refund_amount }}</td></tr>
+  <tr><td colspan="2">{{ r.display_returned_quantity }} returned - {{ r.get_refund_method_display|truncatechars:16 }}</td></tr>
+  {% if r.processed_by %}<tr><td colspan="2">By: {{ r.processed_by.full_name|truncatechars:20 }}</td></tr>{% endif %}
+  {% endfor %}
+</table>
+{% endif %}
+{% if sale.notes %}
+<hr>
+<div class="b">NOTES</div>
+<div>{{ sale.notes|truncatechars:90 }}</div>
+{% endif %}
 <hr>
 <div class="c">
   {{ settings_obj.receipt_footer|default:""|linebreaksbr }}
