@@ -512,27 +512,71 @@ class PosEndpointTests(TenantTestCase):
             "sale": sale,
             "items": sale.items.select_related("product__unit", "variant"),
             "business": self.business_a,
+            "job_card_number": f"JC-{sale.invoice_number}",
+            "workshop_copy_number": 1,
+            "copy_type": "Original",
+            "priority_label": "VIP",
+            "priority_class": "vip",
+            "payment_status": sale.payment_state,
             "more_options": [
                 {"label": label, "value": customer.more_options[str(index)]}
                 for index, label in enumerate(labels, start=1)
             ],
         })
-        self.assertIn("Workshop Job Card", html)
+        self.assertIn("JOB CARD", html)
+        self.assertIn("NexaPOS", html)
+        self.assertIn("Job Card Number", html)
+        self.assertIn(f"JC-{sale.invoice_number}", html)
+        self.assertIn("Workshop Copy Number", html)
+        self.assertIn("Original", html)
+        self.assertIn("Copy", html)
+        self.assertIn("Reprint", html)
+        self.assertIn("VIP", html)
         self.assertIn("Phone Number", html)
         self.assertIn("99001122", html)
         self.assertNotIn("Do not show this address", html)
         self.assertNotIn("hidden@example.com", html)
+        self.assertNotIn("Customer ID", html)
         for label in labels:
             self.assertIn(label, html)
         self.assertIn("Line A", html)
-        self.assertIn("Workshop Workflow", html)
+        self.assertIn("Customer Requirements", html)
+        self.assertIn("Workshop Notes", html)
+        self.assertIn("Production Tracking", html)
+        self.assertIn("Stage", html)
+        self.assertIn("Done", html)
+        self.assertIn("Date", html)
+        self.assertIn("Initials", html)
         self.assertIn("Cutting", html)
-        self.assertIn("Quality Check", html)
-        self.assertIn("Assigned Tailor / Employee", html)
-        self.assertIn("Normal", html)
-        self.assertIn("Urgent", html)
-        self.assertIn("VIP", html)
-        self.assertIn("Tailor Notes", html)
-        self.assertIn("Supervisor signature", html)
-        self.assertIn("Tailor signature", html)
+        self.assertIn("Body", html)
+        self.assertIn("Sleeves", html)
+        self.assertIn("Collar", html)
+        self.assertIn("Daraz", html)
+        self.assertIn("Design", html)
+        self.assertIn("Button", html)
+        self.assertIn("Iron", html)
+        self.assertIn("QC", html)
+        self.assertIn("Ready", html)
+        self.assertIn("Payment Status", html)
+        self.assertIn("Order Status", html)
+        self.assertIn("Booked", html)
+        self.assertIn("In Process", html)
+        self.assertIn("Finished", html)
+        self.assertIn("Booked By", html)
+        self.assertIn("Received By", html)
+        self.assertIn("Customer Signature", html)
+        self.assertNotIn("Assigned Tailor", html)
+        self.assertNotIn("Trial Required", html)
+        self.assertNotIn("QR Code", html)
+        self.assertNotIn("Product Photo", html)
         self.assertIn("Use premium cuff finish.", html)
+
+    def test_workshop_job_card_pdf_downloads(self):
+        sale = self.make_sale(delivery_date=timezone.localdate())
+        response = self.client.get(
+            reverse("sales:workshop_job_card_pdf", args=[sale.public_id]),
+            {"priority": "urgent", "copy": "copy"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))

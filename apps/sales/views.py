@@ -540,6 +540,40 @@ def _invoice_status_label(sale):
     return "Unpaid"
 
 
+def _job_card_context(sale, request, items):
+    priority_options = {
+        "normal": ("Normal", "normal"),
+        "urgent": ("Urgent", "urgent"),
+        "vip": ("VIP", "vip"),
+    }
+    priority_key = request.GET.get("priority", "normal").strip().lower()
+    priority_label, priority_class = priority_options.get(
+        priority_key, priority_options["normal"]
+    )
+    copy_type = request.GET.get("copy", "").strip().lower()
+    if copy_type == "copy":
+        copy_label = "Copy"
+    elif copy_type == "reprint" or sale.reprint_count > 0:
+        copy_label = "Reprint"
+    else:
+        copy_label = "Original"
+    payment_status = "Refunded" if sale.returned_amount > 0 else sale.payment_state
+    return {
+        "sale": sale,
+        "items": items,
+        "business": sale.business,
+        "more_options": customer_services.more_option_values(
+            request.business, sale.customer
+        ),
+        "job_card_number": f"JC-{sale.invoice_number}",
+        "workshop_copy_number": sale.reprint_count + 1,
+        "copy_type": copy_label,
+        "priority_label": priority_label,
+        "priority_class": priority_class,
+        "payment_status": payment_status,
+    }
+
+
 def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
                      pdf_mode=False):
     items = _invoice_display_items(list(items if items is not None else sale.items.all()))
@@ -630,14 +664,10 @@ def sale_workshop_job_card_pdf(request, public_id):
         public_id=public_id,
     )
     items = sale.items.select_related("product__unit", "variant")
-    pdf = render_pdf("invoices/workshop_job_card.html", {
-        "sale": sale,
-        "items": items,
-        "business": sale.business,
-        "more_options": customer_services.more_option_values(
-            request.business, sale.customer
-        ),
-    })
+    pdf = render_pdf(
+        "invoices/workshop_job_card.html",
+        _job_card_context(sale, request, items),
+    )
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
         f'attachment; filename="workshop-job-card-{sale.invoice_number}.pdf"'
