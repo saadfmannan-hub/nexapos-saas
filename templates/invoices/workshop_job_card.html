@@ -89,6 +89,12 @@
     vertical-align: top;
   }
   .product-list div { margin-bottom: 2px; }
+  .garment td {
+    width: 25%;
+    border: 1px solid #eaecf0;
+    padding: 4px 6px;
+    vertical-align: top;
+  }
   .measurements { table-layout: fixed; }
   .measurements td {
     width: 25%;
@@ -248,7 +254,7 @@
       </td>
       <td>
         <div class="label">Delivery Date</div>
-        <div class="value">{{ sale.delivery_date|date:"Y-m-d"|default:"Not set" }}</div>
+        <div class="value">{{ job_delivery_date|date:"Y-m-d"|default:job_delivery_date|default:"Not set" }}</div>
       </td>
       <td>
         <div class="label">Copy Type</div>
@@ -296,6 +302,32 @@
   </div>
 
   <div class="section">
+    <div class="section-title">Garment Details</div>
+    <div class="section-body">
+      <table class="garment">
+        <tr>
+          <td>
+            <div class="label">Fabric</div>
+            <div class="value">{{ tailoring.fabric|default:"-" }}</div>
+          </td>
+          <td>
+            <div class="label">Design Type</div>
+            <div class="value">{{ tailoring.design_type|default:"-" }}</div>
+          </td>
+          <td>
+            <div class="label">Computer Design</div>
+            <div class="value">{{ tailoring.computer_design|default:"-" }}</div>
+          </td>
+          <td>
+            <div class="label">Measurements</div>
+            <div class="value">{{ tailoring.measurements|default:"Customer Default" }}</div>
+          </td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-title">Measurements</div>
     <div class="section-body">
       {% if more_options %}
@@ -318,14 +350,22 @@
   <div class="section">
     <div class="section-title">Customer Requirements</div>
     <div class="section-body">
+      {% if tailoring.customer_notes %}
+        <div class="value" style="min-height:32px">{{ tailoring.customer_notes }}</div>
+      {% else %}
       <div class="notes-box"><div class="rule"></div><div class="rule"></div><div class="rule"></div></div>
+      {% endif %}
     </div>
   </div>
 
   <div class="section">
     <div class="section-title">Workshop Notes</div>
     <div class="section-body">
+      {% if tailoring.workshop_notes %}
+        <div class="value" style="min-height:32px">{{ tailoring.workshop_notes }}</div>
+      {% else %}
       <div class="notes-box"><div class="rule"></div><div class="rule"></div><div class="rule"></div></div>
+      {% endif %}
     </div>
   </div>
 
@@ -351,7 +391,12 @@
           <td>{{ item.sku|default:"-" }}</td>
           <td class="r">{{ item.quantity|floatformat:"-3" }}</td>
           <td>{{ item.product.unit.abbreviation|default:"Pcs" }}</td>
-          <td>{% if item.product.description %}{{ item.product.description }}{% else %}<span class="muted">-</span>{% endif %}</td>
+          <td>
+            {% if tailoring.fabric %}Fabric: {{ tailoring.fabric }}<br>{% endif %}
+            {% if tailoring.design_type %}Design: {{ tailoring.design_type }}<br>{% endif %}
+            {% if item.product.description %}{{ item.product.description }}{% endif %}
+            {% if not tailoring.fabric and not tailoring.design_type and not item.product.description %}<span class="muted">-</span>{% endif %}
+          </td>
         </tr>
         {% empty %}
         <tr><td colspan="5" class="muted">No items</td></tr>

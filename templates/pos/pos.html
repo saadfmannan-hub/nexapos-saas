@@ -127,7 +127,11 @@
           <div class="cart-row">
             <div class="d-flex justify-content-between align-items-start">
               <div class="fw-semibold small" x-text="line.name"></div>
-              <button class="btn btn-sm p-0 text-danger" @click="cart.splice(i,1)"><i class="bi bi-x-lg"></i></button>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm p-0 text-secondary" title="Add separate garment"
+                        @click="duplicateLine(i)"><i class="bi bi-files"></i></button>
+                <button class="btn btn-sm p-0 text-danger" @click="cart.splice(i,1)"><i class="bi bi-x-lg"></i></button>
+              </div>
             </div>
             <div class="d-flex gap-2 align-items-center mt-1">
               <div class="input-group input-group-sm" style="width: 110px">
@@ -147,6 +151,58 @@
               </div>
               {% endif %}
               <div class="ms-auto fw-bold small" x-text="fmt(lineTotal(line))"></div>
+            </div>
+            <div class="mt-2">
+              <button class="btn btn-sm btn-outline-secondary w-100 text-start" type="button"
+                      @click="line.expanded = !line.expanded">
+                <i class="bi bi-scissors me-1"></i>Tailoring details
+                <span class="float-end" x-text="line.expanded ? 'â–´' : 'â–¾'"></span>
+              </button>
+              <div class="border rounded p-2 mt-2 bg-light" x-show="line.expanded" x-cloak>
+                <div class="row g-2">
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Fabric</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.fabric" placeholder="Hisofy Red">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Design Type</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.design_type" placeholder="Daraz 3 Line">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Computer Design</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.computer_design" placeholder="Sultani / MM3">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Priority</label>
+                    <select class="form-select form-select-sm" x-model="line.tailoring_details.priority">
+                      <option value="">Normal</option>
+                      <option value="normal">Normal</option>
+                      <option value="urgent">Urgent</option>
+                      <option value="vip">VIP</option>
+                    </select>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Measurements</label>
+                    <select class="form-select form-select-sm" x-model="line.tailoring_details.measurements">
+                      <option value="">Customer Default</option>
+                      <option value="Customer Default">Customer Default</option>
+                      <option value="Custom for this garment">Custom for this garment</option>
+                    </select>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Expected Delivery</label>
+                    <input type="date" class="form-control form-control-sm" x-model="line.tailoring_details.expected_delivery">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Customer Notes</label>
+                    <textarea class="form-control form-control-sm" rows="2" x-model="line.tailoring_details.customer_notes" placeholder="Loose fitting"></textarea>
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">Workshop Notes</label>
+                    <textarea class="form-control form-control-sm" rows="2" x-model="line.tailoring_details.workshop_notes" placeholder="Premium stitching"></textarea>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </template>
@@ -344,12 +400,32 @@ function pos() {
     },
     addToCart(p) {
       const existing = this.cart.find(l => l.product_id === p.product_id && l.variant_id === p.variant_id
-                                          && +l.unit_price === +p.price);
+                                          && +l.unit_price === +p.price
+                                          && !this.hasTailoringDetails(l));
       if (existing) { existing.quantity = +existing.quantity + 1; }
       else this.cart.push({product_id: p.product_id, variant_id: p.variant_id, name: p.name,
                            quantity: 1, unit_price: p.price, discount_amount: 0,
-                           tax_rate: p.tax_rate, allow_discount: p.allow_discount});
+                           tax_rate: p.tax_rate, allow_discount: p.allow_discount,
+                           expanded: false, tailoring_details: this.blankTailoringDetails()});
       this.$refs.barcode.focus();
+    },
+    blankTailoringDetails() {
+      return {
+        fabric: '', design_type: '', computer_design: '', measurements: '',
+        priority: '', customer_notes: '', expected_delivery: '', workshop_notes: ''
+      };
+    },
+    hasTailoringDetails(line) {
+      return Object.values(line.tailoring_details || {}).some(value => String(value || '').trim());
+    },
+    duplicateLine(index) {
+      const source = this.cart[index];
+      this.cart.splice(index + 1, 0, {
+        ...source,
+        quantity: 1,
+        expanded: true,
+        tailoring_details: this.blankTailoringDetails()
+      });
     },
     lineParts(l, invoiceShare = 0) {
       const gross = (+l.unit_price * +l.quantity) - (+l.discount_amount || 0);
@@ -508,6 +584,10 @@ function pos() {
     },
     resumeHeld(h) {
       this.cart = h.cart.items || [];
+      this.cart.forEach(line => {
+        line.expanded = !!line.expanded;
+        line.tailoring_details = {...this.blankTailoringDetails(), ...(line.tailoring_details || {})};
+      });
       if (h.cart.customer) this.customer = h.cart.customer;
       this.invoiceDiscount = h.cart.invoice_discount || 0;
       this.notes = h.cart.notes || '';

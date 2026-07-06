@@ -9,7 +9,11 @@
     <a href="{% url 'sales:receipt' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Receipt</a>
     <a href="{% url 'sales:invoice' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> A4 invoice</a>
     <a href="{% url 'sales:invoice_pdf' sale.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
-    <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-clipboard-check"></i> Workshop Job Card</a>
+    {% if has_tailoring_jobs %}
+      <span class="btn btn-outline-primary btn-sm disabled"><i class="bi bi-clipboard-check"></i> Job Cards on items</span>
+    {% else %}
+      <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-clipboard-check"></i> Workshop Job Card</a>
+    {% endif %}
     {% if "sales.refund" in business_perms and sale.status != "voided" %}
       <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
     {% endif %}
@@ -32,7 +36,7 @@
         <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Price</th>
           <th class="text-end">Discount</th><th class="text-end">VAT</th><th class="text-end">Total</th>
           {% if show_profit %}<th class="text-end">Profit</th>{% endif %}
-          <th class="text-end">Returned</th></tr></thead>
+          <th class="text-end">Returned</th><th class="text-end">Production</th></tr></thead>
         <tbody>
           {% for item in items %}
           <tr>
@@ -44,6 +48,14 @@
             <td class="text-end fw-semibold">{% money item.display_subtotal %}</td>
             {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
+            <td class="text-end">
+              {% if item.has_tailoring_details %}
+                <a href="{% url 'sales:sale_item_workshop_job_card_pdf' sale.public_id item.id %}"
+                   class="btn btn-sm btn-outline-primary" target="_blank">Job Card</a>
+              {% else %}
+                <span class="text-secondary">—</span>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

@@ -17,7 +17,7 @@ from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
 
 from . import calculations, services
-from .models import HeldSale, PaymentMethod, Sale, SaleReturn
+from .models import HeldSale, PaymentMethod, Sale, SaleItem, SaleReturn
 from .services import SaleError
 
 
@@ -43,6 +43,29 @@ def _branch_warehouse(branch):
         .order_by("-is_default")
         .first()
     )
+
+
+TAILORING_CHECKOUT_FIELDS = (
+    "fabric",
+    "design_type",
+    "computer_design",
+    "measurements",
+    "priority",
+    "customer_notes",
+    "expected_delivery",
+    "workshop_notes",
+)
+
+
+def _checkout_tailoring_details(raw):
+    raw_details = raw.get("tailoring_details") or raw.get("tailoring") or {}
+    if not isinstance(raw_details, dict):
+        return {}
+    return {
+        key: str(raw_details.get(key, "") or "").strip()[:500]
+        for key in TAILORING_CHECKOUT_FIELDS
+        if str(raw_details.get(key, "") or "").strip()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +334,7 @@ def pos_checkout(request):
             "quantity": D(raw.get("quantity")),
             "unit_price": D(raw.get("unit_price")),
             "discount_amount": D(raw.get("discount_amount")),
+            "tailoring_details": _checkout_tailoring_details(raw),
         })
 
     payments = []
@@ -494,6 +518,7 @@ def sale_detail(request, public_id):
         request.business, public_id=public_id,
     )
     items = _invoice_display_items(list(sale.items.select_related("product", "variant")))
+    has_tailoring_jobs = any(item.has_tailoring_details for item in items)
     payments = sale.payments.select_related("method", "received_by")
     returns = _invoice_display_returns(list(sale.returns.prefetch_related("items")))
     settings_obj = request.business.settings
@@ -507,6 +532,7 @@ def sale_detail(request, public_id):
         "sale": sale, "items": items, "payments": payments, "returns": returns,
         "active_nav": "sales", "show_profit": show_profit,
         "collect_methods": collect_methods,
+        "has_tailoring_jobs": has_tailoring_jobs,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
         "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
         "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
@@ -540,13 +566,27 @@ def _invoice_status_label(sale):
     return "Unpaid"
 
 
-def _job_card_context(sale, request, items):
+def _sale_item_sequence(sale_item):
+    ids = list(
+        sale_item.sale.items.order_by("id").values_list("id", flat=True)
+    )
+    return ids.index(sale_item.id) + 1 if sale_item.id in ids else 1
+
+
+def _job_card_context(sale, request, items, sale_item=None):
+    items = list(items)
+    if sale_item is not None:
+        items = [sale_item]
     priority_options = {
         "normal": ("Normal", "normal"),
         "urgent": ("Urgent", "urgent"),
         "vip": ("VIP", "vip"),
     }
-    priority_key = request.GET.get("priority", "normal").strip().lower()
+    tailoring = sale_item.tailoring_details if sale_item is not None else {}
+    priority_key = (
+        tailoring.get("priority")
+        or request.GET.get("priority", "normal")
+    ).strip().lower()
     priority_label, priority_class = priority_options.get(
         priority_key, priority_options["normal"]
     )
@@ -557,18 +597,23 @@ def _job_card_context(sale, request, items):
         copy_label = "Reprint"
     else:
         copy_label = "Original"
+    sequence = _sale_item_sequence(sale_item) if sale_item is not None else 1
+    expected_delivery = tailoring.get("expected_delivery") if tailoring else ""
     return {
         "sale": sale,
         "items": items,
+        "job_item": sale_item,
+        "tailoring": tailoring,
         "business": sale.business,
         "more_options": customer_services.more_option_values(
             request.business, sale.customer
         ),
-        "job_card_number": f"JC-{sale.invoice_number}",
+        "job_card_number": f"JC-{sale.invoice_number}-{sequence:02d}",
         "workshop_copy_number": sale.reprint_count + 1,
         "copy_type": copy_label,
         "priority_label": priority_label,
         "priority_class": priority_class,
+        "job_delivery_date": expected_delivery or sale.delivery_date,
     }
 
 
@@ -669,6 +714,33 @@ def sale_workshop_job_card_pdf(request, public_id):
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
         f'attachment; filename="workshop-job-card-{sale.invoice_number}.pdf"'
+    )
+    return response
+
+
+@require_permission("sales.view")
+def sale_item_workshop_job_card_pdf(request, public_id, item_id):
+    from apps.reports.pdf import render_pdf
+
+    sale = get_tenant_object(
+        Sale.objects.select_related("customer", "branch", "business"),
+        request.business,
+        public_id=public_id,
+    )
+    sale_item = get_tenant_object(
+        SaleItem.objects.select_related("sale", "product__unit", "variant"),
+        request.business,
+        pk=item_id,
+        sale=sale,
+    )
+    pdf = render_pdf(
+        "invoices/workshop_job_card.html",
+        _job_card_context(sale, request, [sale_item], sale_item=sale_item),
+    )
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="workshop-job-card-{sale.invoice_number}-'
+        f'{_sale_item_sequence(sale_item):02d}.pdf"'
     )
     return response
 

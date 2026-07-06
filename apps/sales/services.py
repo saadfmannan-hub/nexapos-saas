@@ -16,6 +16,7 @@ from apps.customers import services as customer_services
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
 
+from . import calculations
 from .models import (
     InvoiceSequence,
     PaymentMethod,
@@ -25,9 +26,19 @@ from .models import (
     SaleReturn,
     SaleReturnItem,
 )
-from . import calculations
 
 ZERO = Decimal("0")
+TAILORING_FIELDS = {
+    "fabric",
+    "design_type",
+    "computer_design",
+    "measurements",
+    "priority",
+    "customer_notes",
+    "expected_delivery",
+    "workshop_notes",
+}
+TAILORING_PRIORITIES = {"normal", "urgent", "vip"}
 
 
 class SaleError(Exception):
@@ -122,6 +133,18 @@ def compute_line(
         raise SaleError(str(exc)) from exc
 
 
+def _clean_tailoring_details(raw):
+    if not isinstance(raw, dict):
+        return {}
+    details = {
+        key: str(raw.get(key, "") or "").strip()
+        for key in TAILORING_FIELDS
+    }
+    priority = details.get("priority", "").lower()
+    details["priority"] = priority if priority in TAILORING_PRIORITIES else ""
+    return {key: value[:500] for key, value in details.items() if value}
+
+
 @transaction.atomic
 def complete_sale(
     *,
@@ -184,6 +207,9 @@ def complete_sale(
             "quantity": qty,
             "unit_price": unit_price,
             "discount_amount": discount,
+            "tailoring_details": _clean_tailoring_details(
+                line.get("tailoring_details", {})
+            ),
         })
 
     try:
@@ -306,6 +332,7 @@ def complete_sale(
             line_total=parts["total"],
             unit_cost=unit_cost,
             gross_profit=money(parts["base"] - line_cost),
+            tailoring_details=line.get("tailoring_details", {}),
         )
         if product.is_stocked:
             inventory.record_movement(

@@ -20,6 +20,7 @@ urlpatterns = [
     path("<uuid:public_id>/invoice/", views.sale_invoice, name="invoice"),
     path("<uuid:public_id>/invoice.pdf", views.sale_invoice_pdf, name="invoice_pdf"),
     path("<uuid:public_id>/workshop-job-card.pdf", views.sale_workshop_job_card_pdf, name="workshop_job_card_pdf"),
+    path("<uuid:public_id>/items/<int:item_id>/workshop-job-card.pdf", views.sale_item_workshop_job_card_pdf, name="sale_item_workshop_job_card_pdf"),
     path("<uuid:public_id>/receipt/", views.sale_receipt, name="receipt"),
     path("<uuid:public_id>/void/", views.sale_void, name="void"),
     path("<uuid:public_id>/payments/add/", views.sale_payment_add, name="payment_add"),

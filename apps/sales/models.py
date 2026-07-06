@@ -11,9 +11,8 @@ from django.db import models
 from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
 
-from apps.core.money import money
 from apps.core.models import TenantModel
-
+from apps.core.money import money
 
 ZERO = Decimal("0")
 
@@ -260,6 +259,7 @@ class SaleItem(TenantModel):
     unit_cost = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     gross_profit = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     returned_quantity = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    tailoring_details = models.JSONField(default=dict, blank=True)
 
     def __str__(self):
         return f"{self.product_name} x {self.quantity}"
@@ -267,6 +267,10 @@ class SaleItem(TenantModel):
     @property
     def returnable_quantity(self):
         return self.quantity - self.returned_quantity
+
+    @property
+    def has_tailoring_details(self):
+        return any(str(value or "").strip() for value in self.tailoring_details.values())
 
 
 class SalePayment(TenantModel):
