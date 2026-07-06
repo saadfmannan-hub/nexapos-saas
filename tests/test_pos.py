@@ -228,6 +228,39 @@ class PosEndpointTests(TenantTestCase):
             self.assertEqual(response.status_code, 200)
             self.assertContains(response, sale.invoice_number)
 
+    def test_receipt_and_invoice_show_item_subtotal_before_invoice_discount_and_vat(self):
+        sale = self.make_sale(
+            items=[{"product": self.product_a, "quantity": D("4.000"),
+                    "unit_price": D("25.000")}],
+            payments=[{"method": self.cash_a, "amount": D("99.750")}],
+            invoice_discount=D("5.000"),
+        )
+        self.assertEqual(sale.items.get().line_total, D("99.750"))
+
+        response = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        html = response.content.decode()
+        self.assertIn(
+            '<td>4.000 x 25.000</td>\n  <td class="r">100.000</td>',
+            html,
+        )
+        self.assertContains(response, "TOTAL</td><td class=\"r\">99.750")
+
+        self.register_a.receipt_printer = "58mm"
+        self.register_a.save(update_fields=["receipt_printer"])
+        sale.register = self.register_a
+        sale.save(update_fields=["register"])
+        response = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
+        html = response.content.decode()
+        self.assertIn(
+            '<td>4.000 x 25.000</td>\n  <td class="r">100.000</td>',
+            html,
+        )
+
+        response = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        html = response.content.decode()
+        self.assertIn('<td class="r"><strong>100.000</strong></td>', html)
+        self.assertNotIn('<td class="r"><strong>99.750</strong></td>', html)
+
     def test_invoice_pdf_downloads(self):
         sale = self.make_sale()
         response = self.client.get(reverse("sales:invoice_pdf",

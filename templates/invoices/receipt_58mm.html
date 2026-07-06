@@ -40,8 +40,8 @@
 {% for item in items %}
 <div>{{ item.product_name|truncatechars:26 }}</div>
 <table><tr>
-  <td>{{ item.quantity }} x {{ item.unit_price }}</td>
-  <td class="r">{{ item.line_total }}</td>
+  <td>{{ item.quantity }} x {{ item.unit_price }}{% if item.discount_amount > 0 %} −{{ item.discount_amount }}{% endif %}</td>
+  <td class="r">{{ item.display_subtotal }}</td>
 </tr></table>
 {% endfor %}
 <hr>

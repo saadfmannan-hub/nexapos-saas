@@ -9,7 +9,7 @@ from django.views.decorators.http import require_POST
 
 from apps.core.decorators import business_required, require_permission
 from apps.core.mixins import get_tenant_object
-from apps.core.money import D
+from apps.core.money import D, money
 from apps.customers import services as customer_services
 from apps.customers.models import Customer
 from apps.inventory.models import StockLevel
@@ -503,8 +503,16 @@ def sale_detail(request, public_id):
     })
 
 
+def _invoice_display_items(items):
+    for item in items:
+        item.display_subtotal = money(
+            item.quantity * item.unit_price - item.discount_amount
+        )
+    return items
+
+
 def _render_invoice(request, sale, template, mark_reprint=False):
-    items = sale.items.all()
+    items = _invoice_display_items(list(sale.items.all()))
     payments = sale.payments.select_related("method")
     is_reprint = sale.reprint_count > 0
     if mark_reprint:
@@ -552,7 +560,7 @@ def sale_invoice_pdf(request, public_id):
         Sale.objects.select_related("customer", "branch", "business"),
         request.business, public_id=public_id,
     )
-    items = sale.items.all()
+    items = _invoice_display_items(list(sale.items.all()))
     payments = sale.payments.select_related("method")
     settings_obj = sale.business.settings
     first_taxed_item = next((item for item in items if item.tax_rate), None)
