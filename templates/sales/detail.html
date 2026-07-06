@@ -41,7 +41,7 @@
             <td class="text-end">{% money item.unit_price %}</td>
             <td class="text-end">{% money item.discount_amount %}</td>
             <td class="text-end">{% money item.tax_amount %}</td>
-            <td class="text-end fw-semibold">{% money item.line_total %}</td>
+            <td class="text-end fw-semibold">{% money item.display_subtotal %}</td>
             {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
           </tr>
@@ -79,7 +79,8 @@
         <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
         <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
-        <tr><th>Discount</th><td>{% money sale.discount_amount %}</td></tr>
+        <tr><th>Invoice Discount</th><td>-{% money sale.discount_amount %}</td></tr>
+        <tr><th>Discounted Subtotal</th><td>{% money discounted_subtotal %}</td></tr>
         <tr><th>VAT Amount</th><td>{% money sale.tax_amount %}</td></tr>
         {% if sale.rounding != 0 %}<tr><th>Rounding</th><td>{{ sale.rounding|money_p:3 }}</td></tr>{% endif %}
         <tr><th>Total</th><td class="fw-bold">{% money sale.total symbol=1 %}</td></tr>

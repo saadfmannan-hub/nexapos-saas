@@ -47,6 +47,7 @@
     <span>Invoices</span>
     <span class="small text-secondary">
       Total: <strong>{% money totals.total %}</strong> ·
+      Discount: <strong>{% money totals.discount %}</strong> ·
       Paid: <strong>{% money totals.paid %}</strong> {{ current_business.currency_display }}
     </span>
   </div>
@@ -54,7 +55,7 @@
     <table class="table table-hover mb-0">
       <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Branch</th>
         <th>Delivery</th>
-        <th class="text-end">Total</th><th class="text-end">Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
+        <th class="text-end">Discount</th><th class="text-end">Total</th><th class="text-end">Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
       <tbody>
         {% for s in page_obj %}
         <tr>
@@ -68,6 +69,7 @@
               <span class="badge badge-status bs-{{ s.delivery_status }}">{{ s.get_delivery_status_display }}</span>
             {% else %}—{% endif %}
           </td>
+          <td class="text-end">{% money s.discount_amount %}</td>
           <td class="text-end fw-semibold">{% money s.total %}</td>
           <td class="text-end">{% money s.amount_paid %}</td>
           <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>

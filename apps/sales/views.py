@@ -473,7 +473,11 @@ def sale_list(request):
     elif delivery == "scheduled":
         qs = qs.filter(delivery_date__isnull=False)
 
-    totals = qs.aggregate(total=Sum("total"), paid=Sum("amount_paid"))
+    totals = qs.aggregate(
+        total=Sum("total"),
+        paid=Sum("amount_paid"),
+        discount=Sum("discount_amount"),
+    )
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "sales/list.html", {
@@ -489,7 +493,7 @@ def sale_detail(request, public_id):
         Sale.objects.select_related("customer", "branch", "cashier", "register"),
         request.business, public_id=public_id,
     )
-    items = sale.items.select_related("product", "variant")
+    items = _invoice_display_items(list(sale.items.select_related("product", "variant")))
     payments = sale.payments.select_related("method", "received_by")
     returns = sale.returns.prefetch_related("items")
     show_profit = request.membership.has_perm("profit.view")
@@ -500,6 +504,7 @@ def sale_detail(request, public_id):
         "sale": sale, "items": items, "payments": payments, "returns": returns,
         "active_nav": "sales", "show_profit": show_profit,
         "collect_methods": collect_methods,
+        "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
     })
 
 
@@ -527,6 +532,7 @@ def _render_invoice(request, sale, template, mark_reprint=False):
         "business": sale.business, "settings_obj": settings_obj,
         "is_reprint": is_reprint, "vat_rate": vat_rate,
         "show_vat": show_vat, "vat_number": settings_obj.vat_number,
+        "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
     })
 
 
@@ -572,6 +578,7 @@ def sale_invoice_pdf(request, public_id):
         "vat_rate": vat_rate,
         "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
         "vat_number": settings_obj.vat_number,
+        "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
     })
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (

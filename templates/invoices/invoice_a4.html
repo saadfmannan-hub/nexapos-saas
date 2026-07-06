@@ -115,13 +115,14 @@
     <td style="width:45%">
       <table class="totals">
         <tr><td>Subtotal</td><td class="r">{{ sale.subtotal }}</td></tr>
-        <tr><td>Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>
+        <tr><td>Invoice Discount</td><td class="r">−{{ sale.discount_amount }}</td></tr>
+        <tr><td>Discounted Subtotal</td><td class="r">{{ discounted_subtotal }}</td></tr>
         {% if show_vat %}
-        <tr><td>VAT %</td><td class="r">{{ vat_rate }}%</td></tr>
-        <tr><td>VAT Amount</td><td class="r">{{ sale.tax_amount }}</td></tr>
+        <tr><td>VAT {{ vat_rate }}%</td><td class="r">{{ sale.tax_amount }}</td></tr>
         {% endif %}
         <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
+        {% if sale.balance > 0 %}<tr><td>Balance Due</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>
     </td>

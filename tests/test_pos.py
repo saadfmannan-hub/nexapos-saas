@@ -1,6 +1,7 @@
 """POS / sale completion tests."""
 import json
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.urls import reverse
 
@@ -183,6 +184,24 @@ class PosEndpointTests(TenantTestCase):
             content_type="application/json",
         )
 
+    def discounted_credit_sale(self):
+        from apps.customers.models import Customer
+
+        customer = Customer.objects.create(
+            business=self.business_a, code="INV-DISC", full_name="Invoice Discount",
+            credit_limit=D("500.000"),
+        )
+        return self.make_sale(
+            customer=customer,
+            items=[{"product": self.product_a, "quantity": D("4.000"),
+                    "unit_price": D("25.000")}],
+            payments=[
+                {"method": self.cash_a, "amount": D("80.500")},
+                {"method": self.credit_a, "amount": D("14.000")},
+            ],
+            invoice_discount=D("10.000"),
+        )
+
     def test_checkout_endpoint_completes_sale(self):
         response = self.checkout({
             "branch_id": self.branch_a.id,
@@ -260,6 +279,61 @@ class PosEndpointTests(TenantTestCase):
         html = response.content.decode()
         self.assertIn('<td class="r"><strong>100.000</strong></td>', html)
         self.assertNotIn('<td class="r"><strong>99.750</strong></td>', html)
+
+    def test_invoice_detail_shows_invoice_discount_summary_and_item_subtotal(self):
+        sale = self.discounted_credit_sale()
+        response = self.client.get(reverse("sales:detail", args=[sale.public_id]))
+        html = response.content.decode()
+        self.assertIn('<td class="text-end fw-semibold">100.00</td>', html)
+        self.assertNotIn('<td class="text-end fw-semibold">94.50</td>', html)
+        self.assertContains(response, "Invoice Discount")
+        self.assertContains(response, "-10.00")
+        self.assertContains(response, "Discounted Subtotal")
+        self.assertContains(response, "90.00")
+        self.assertContains(response, "4.50")
+        self.assertContains(response, "94.50")
+        self.assertContains(response, "80.50")
+        self.assertContains(response, "14.00")
+
+    def test_a4_invoice_shows_discounted_summary_and_item_subtotal(self):
+        sale = self.discounted_credit_sale()
+        response = self.client.get(reverse("sales:invoice", args=[sale.public_id]))
+        html = response.content.decode()
+        self.assertIn('<td class="r"><strong>100.000</strong></td>', html)
+        self.assertNotIn('<td class="r"><strong>94.500</strong></td>', html)
+        self.assertContains(response, "Invoice Discount")
+        self.assertContains(response, "−10.000")
+        self.assertContains(response, "Discounted Subtotal")
+        self.assertContains(response, "90.000")
+        self.assertContains(response, "VAT 5.000%")
+        self.assertContains(response, "4.500")
+        self.assertContains(response, "94.500")
+        self.assertContains(response, "80.500")
+        self.assertContains(response, "Balance Due")
+        self.assertContains(response, "14.000")
+
+    def test_invoice_pdf_uses_same_context_values_as_a4_invoice(self):
+        sale = self.discounted_credit_sale()
+        with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:
+            response = self.client.get(reverse("sales:invoice_pdf",
+                                               args=[sale.public_id]))
+        self.assertEqual(response.status_code, 200)
+        template, context = render_pdf.call_args.args
+        self.assertEqual(template, "invoices/invoice_a4.html")
+        self.assertEqual(context["items"][0].display_subtotal, D("100.000"))
+        self.assertEqual(context["discounted_subtotal"], D("90.000"))
+        self.assertEqual(context["sale"].discount_amount, D("10.000"))
+        self.assertEqual(context["sale"].tax_amount, D("4.500"))
+        self.assertEqual(context["sale"].total, D("94.500"))
+        self.assertEqual(context["sale"].amount_paid, D("80.500"))
+        self.assertEqual(context["sale"].balance, D("14.000"))
+
+    def test_invoice_list_shows_invoice_discount_and_final_total(self):
+        sale = self.discounted_credit_sale()
+        response = self.client.get(reverse("sales:list"))
+        self.assertContains(response, sale.invoice_number)
+        self.assertContains(response, "10.00")
+        self.assertContains(response, "94.50")
 
     def test_invoice_pdf_downloads(self):
         sale = self.make_sale()
