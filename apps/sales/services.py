@@ -29,15 +29,15 @@ from .models import (
 
 ZERO = Decimal("0")
 TAILORING_FIELDS = {
-    "fabric",
     "design_type",
+    "daraz_details",
+    "vip_3d_design",
     "computer_design",
-    "measurements",
     "priority",
     "customer_notes",
-    "expected_delivery",
     "workshop_notes",
 }
+TAILORING_DESIGN_TYPES = {"Daraz", "VIP 3D", "Computer Design"}
 TAILORING_PRIORITIES = {"normal", "urgent", "vip"}
 
 
@@ -140,8 +140,15 @@ def _clean_tailoring_details(raw):
         key: str(raw.get(key, "") or "").strip()
         for key in TAILORING_FIELDS
     }
+    if details.get("design_type") not in TAILORING_DESIGN_TYPES:
+        details["design_type"] = ""
     priority = details.get("priority", "").lower()
     details["priority"] = priority if priority in TAILORING_PRIORITIES else ""
+    has_design_detail = any(
+        value for key, value in details.items() if key != "priority"
+    )
+    if details["priority"] == "normal" and not has_design_detail:
+        details["priority"] = ""
     return {key: value[:500] for key, value in details.items() if value}
 
 

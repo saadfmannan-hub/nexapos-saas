@@ -205,6 +205,7 @@ class PosEndpointTests(TenantTestCase):
         )
 
     def test_checkout_endpoint_completes_sale(self):
+        delivery_date = timezone.localdate()
         response = self.checkout({
             "branch_id": self.branch_a.id,
             "customer_id": self.walk_in_a.id,
@@ -213,10 +214,28 @@ class PosEndpointTests(TenantTestCase):
                        "discount_amount": "0"}],
             "payments": [{"method_id": self.cash_a.id, "amount": "21.000"}],
             "invoice_discount": "0",
+            "delivery_date": str(delivery_date),
         })
         data = response.json()
         self.assertTrue(data["ok"], data)
         self.assertIn("invoice_number", data["sale"])
+
+    def test_checkout_endpoint_requires_delivery_date(self):
+        response = self.checkout({
+            "branch_id": self.branch_a.id,
+            "customer_id": self.walk_in_a.id,
+            "items": [{"product_id": self.product_a.id, "variant_id": None,
+                       "quantity": "1", "unit_price": "10.000",
+                       "discount_amount": "0"}],
+            "payments": [{"method_id": self.cash_a.id, "amount": "10.500"}],
+            "invoice_discount": "0",
+        })
+        data = response.json()
+        self.assertFalse(data["ok"])
+        self.assertEqual(
+            data["error"],
+            "Please select delivery date before completing sale.",
+        )
 
     def test_checkout_endpoint_stores_item_tailoring_details(self):
         response = self.checkout({
@@ -227,25 +246,25 @@ class PosEndpointTests(TenantTestCase):
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
                  "tailoring_details": {
-                     "fabric": "Hisofy Red",
-                     "design_type": "Daraz 3 Line",
-                     "measurements": "Customer Default",
+                     "design_type": "Daraz",
+                     "daraz_details": "3 Line",
                      "priority": "urgent",
                      "customer_notes": "Loose fitting",
-                     "expected_delivery": "2026-07-20",
                      "workshop_notes": "Press before packing",
                  }},
                 {"product_id": self.product_a.id, "variant_id": None,
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
                  "tailoring_details": {
-                     "fabric": "Hisofy White",
-                     "computer_design": "VIP 3D MM3",
+                     "design_type": "VIP 3D",
+                     "vip_3d_design": "MM3",
+                     "computer_design": "Sultani",
                      "priority": "vip",
                  }},
             ],
             "payments": [{"method_id": self.cash_a.id, "amount": "21.000"}],
             "invoice_discount": "0",
+            "delivery_date": str(timezone.localdate()),
         })
         data = response.json()
         self.assertTrue(data["ok"], data)
@@ -253,11 +272,17 @@ class PosEndpointTests(TenantTestCase):
             invoice_number=data["sale"]["invoice_number"])
         items = list(sale.items.order_by("id"))
         self.assertEqual(len(items), 2)
-        self.assertEqual(items[0].tailoring_details["fabric"], "Hisofy Red")
+        self.assertEqual(items[0].tailoring_details["design_type"], "Daraz")
+        self.assertEqual(items[0].tailoring_details["daraz_details"], "3 Line")
         self.assertEqual(items[0].tailoring_details["priority"], "urgent")
-        self.assertEqual(items[0].tailoring_details["expected_delivery"], "2026-07-20")
-        self.assertEqual(items[1].tailoring_details["fabric"], "Hisofy White")
+        self.assertEqual(items[1].tailoring_details["design_type"], "VIP 3D")
+        self.assertEqual(items[1].tailoring_details["vip_3d_design"], "MM3")
+        self.assertEqual(items[1].tailoring_details["computer_design"], "Sultani")
         self.assertEqual(items[1].tailoring_details["priority"], "vip")
+        for item in items:
+            self.assertNotIn("fabric", item.tailoring_details)
+            self.assertNotIn("measurements", item.tailoring_details)
+            self.assertNotIn("expected_delivery", item.tailoring_details)
 
     def test_checkout_rejects_cross_tenant_product(self):
         response = self.checkout({
@@ -548,29 +573,49 @@ class PosEndpointTests(TenantTestCase):
         customer.save(update_fields=["mobile", "address", "email", "more_options"])
         self.product_a.description = "Use premium cuff finish."
         self.product_a.save(update_fields=["description"])
-        sale = self.make_sale(customer=customer, delivery_date=timezone.localdate())
-        html = render_to_string("invoices/workshop_job_card.html", {
+        sale = self.make_sale(
+            customer=customer,
+            delivery_date=timezone.localdate(),
+            items=[{
+                "product": self.product_a,
+                "quantity": D("1.000"),
+                "unit_price": D("10.000"),
+                "tailoring_details": {
+                    "design_type": "Daraz",
+                    "daraz_details": "3 Line",
+                    "priority": "vip",
+                    "customer_notes": "Loose fitting",
+                    "workshop_notes": "Press before packing",
+                },
+            }],
+        )
+        item = sale.items.select_related("product__unit", "variant").get()
+        card = {
             "sale": sale,
-            "items": sale.items.select_related("product__unit", "variant"),
+            "items": [item],
+            "job_item": item,
             "business": self.business_a,
-            "job_card_number": f"JC-{sale.invoice_number}",
+            "job_card_number": f"JC-{sale.invoice_number}-01",
             "workshop_copy_number": 1,
             "copy_type": "Original",
             "priority_label": "VIP",
             "priority_class": "vip",
-            "tailoring": {"priority": "vip"},
+            "tailoring": item.tailoring_details,
             "job_delivery_date": sale.delivery_date,
             "more_options": [
                 {"label": label, "value": customer.more_options[str(index)]}
                 for index, label in enumerate(labels, start=1)
             ],
+        }
+        html = render_to_string("invoices/workshop_job_card.html", {
+            "job_cards": [card],
         })
         self.assertIn("JOB CARD", html)
         self.assertIn(self.business_a.name, html)
         self.assertNotIn("NexaPOS", html)
         self.assertIn("Powered by Nexa Business Solutions", html)
         self.assertIn("Job Card Number", html)
-        self.assertIn(f"JC-{sale.invoice_number}", html)
+        self.assertIn(f"JC-{sale.invoice_number}-01", html)
         self.assertIn("Workshop Copy Number", html)
         self.assertIn("Original", html)
         self.assertIn("Copy", html)
@@ -578,6 +623,19 @@ class PosEndpointTests(TenantTestCase):
         self.assertIn("VIP", html)
         self.assertIn("Phone Number", html)
         self.assertIn("99001122", html)
+        self.assertNotIn('<div class="label">Product</div>', html)
+        self.assertIn("Product / Fabric", html)
+        self.assertIn(self.product_a.name, html)
+        self.assertIn("Quantity", html)
+        self.assertIn("Design Type", html)
+        self.assertIn("Daraz", html)
+        self.assertIn("Daraz Details", html)
+        self.assertIn("3 Line", html)
+        self.assertIn("VIP 3D Design", html)
+        self.assertIn("Computer Design", html)
+        self.assertIn("Loose fitting", html)
+        self.assertIn("Press before packing", html)
+        self.assertNotIn("Product Information", html)
         self.assertNotIn("Do not show this address", html)
         self.assertNotIn("hidden@example.com", html)
         self.assertNotIn("Customer ID", html)
@@ -614,7 +672,6 @@ class PosEndpointTests(TenantTestCase):
         self.assertNotIn("Trial Required", html)
         self.assertNotIn("QR Code", html)
         self.assertNotIn("Product Photo", html)
-        self.assertIn("Use premium cuff finish.", html)
 
     def test_workshop_job_card_pdf_downloads(self):
         sale = self.make_sale(delivery_date=timezone.localdate())
@@ -633,9 +690,9 @@ class PosEndpointTests(TenantTestCase):
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
                     "tailoring_details": {
-                        "fabric": "Hisofy Red",
-                        "design_type": "Daraz 3 Line",
-                        "priority": "normal",
+                        "design_type": "Daraz",
+                        "daraz_details": "3 Line",
+                        "priority": "urgent",
                         "customer_notes": "Loose fitting",
                     },
                 },
@@ -643,32 +700,35 @@ class PosEndpointTests(TenantTestCase):
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
                     "tailoring_details": {
-                        "fabric": "Hisofy White",
-                        "design_type": "VIP 3D MM3",
-                        "priority": "vip",
-                        "customer_notes": "Premium stitching",
+                        "design_type": "Computer Design",
+                        "computer_design": "Sultani",
+                        "priority": "normal",
                     },
                 },
                 {
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
                     "tailoring_details": {
-                        "fabric": "Hisofy Brown",
-                        "computer_design": "Computer Design Sultani",
-                        "priority": "normal",
+                        "design_type": "VIP 3D",
+                        "vip_3d_design": "MM3",
+                        "priority": "vip",
+                        "workshop_notes": "Premium stitching",
                     },
                 },
             ],
             payments=[{"method": self.cash_a, "amount": D("31.500")}],
+            delivery_date=timezone.localdate(),
         )
         self.assertEqual(sale.items.count(), 3)
         items = list(sale.items.order_by("id"))
-        self.assertEqual(items[0].tailoring_details["fabric"], "Hisofy Red")
-        self.assertEqual(items[1].tailoring_details["priority"], "vip")
-        self.assertEqual(
-            items[2].tailoring_details["computer_design"],
-            "Computer Design Sultani",
-        )
+        self.assertEqual(items[0].tailoring_details["design_type"], "Daraz")
+        self.assertEqual(items[0].tailoring_details["daraz_details"], "3 Line")
+        self.assertEqual(items[0].tailoring_details["priority"], "urgent")
+        self.assertEqual(items[1].tailoring_details["design_type"], "Computer Design")
+        self.assertEqual(items[1].tailoring_details["computer_design"], "Sultani")
+        self.assertEqual(items[1].tailoring_details["priority"], "normal")
+        self.assertEqual(items[2].tailoring_details["design_type"], "VIP 3D")
+        self.assertEqual(items[2].tailoring_details["vip_3d_design"], "MM3")
 
         with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:
             response = self.client.get(reverse(
@@ -679,9 +739,33 @@ class PosEndpointTests(TenantTestCase):
         context = render_pdf.call_args.args[1]
         self.assertEqual(context["sale"], sale)
         self.assertEqual(context["items"], [items[1]])
-        self.assertEqual(context["tailoring"]["fabric"], "Hisofy White")
-        self.assertEqual(context["priority_label"], "VIP")
+        self.assertEqual(context["tailoring"]["computer_design"], "Sultani")
+        self.assertEqual(context["priority_label"], "Normal")
         self.assertEqual(context["job_card_number"], f"JC-{sale.invoice_number}-02")
+
+        with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:
+            response = self.client.get(
+                reverse("sales:workshop_job_card_pdf", args=[sale.public_id])
+            )
+        self.assertEqual(response.status_code, 200)
+        template, context = render_pdf.call_args.args
+        self.assertEqual(template, "invoices/workshop_job_card.html")
+        self.assertEqual(len(context["job_cards"]), 3)
+        self.assertEqual(
+            [card["job_card_number"] for card in context["job_cards"]],
+            [
+                f"JC-{sale.invoice_number}-01",
+                f"JC-{sale.invoice_number}-02",
+                f"JC-{sale.invoice_number}-03",
+            ],
+        )
+        self.assertEqual(context["job_cards"][0]["items"], [items[0]])
+        self.assertEqual(context["job_cards"][1]["items"], [items[1]])
+        self.assertEqual(context["job_cards"][2]["items"], [items[2]])
+
+        detail = self.client.get(reverse("sales:detail", args=[sale.public_id]))
+        self.assertContains(detail, "Download All Job Cards")
+        self.assertContains(detail, 'target="_blank">Job Card</a>', count=3)
 
     def test_retail_sale_items_have_no_tailoring_production_jobs(self):
         sale = self.make_sale(

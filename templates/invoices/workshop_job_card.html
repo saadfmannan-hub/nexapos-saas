@@ -14,7 +14,8 @@
     margin: 0;
     background: #fff;
   }
-  .sheet { max-width: 790px; margin: 0 auto; }
+  .sheet { max-width: 790px; margin: 0 auto; page-break-after: always; }
+  .sheet:last-child { page-break-after: auto; }
   table { width: 100%; border-collapse: collapse; }
   .r { text-align: right; }
   .c { text-align: center; }
@@ -83,7 +84,7 @@
   }
   .section-body { padding: 5px; }
   .customer td {
-    width: 25%;
+    width: 50%;
     border: 1px solid #eaecf0;
     padding: 4px 6px;
     vertical-align: top;
@@ -215,6 +216,8 @@
 </style>
 </head>
 <body>
+{% for card in job_cards %}
+{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date %}
 <div class="sheet">
   <table class="header">
     <tr>
@@ -280,22 +283,6 @@
             <div class="label">Phone Number</div>
             <div class="value">{{ sale.customer.mobile|default:"No phone number" }}</div>
           </td>
-          <td class="product-list">
-            <div class="label">Product</div>
-            {% for item in items %}
-              <div class="value">{{ item.product_name }}</div>
-            {% empty %}
-              <div class="muted">No product</div>
-            {% endfor %}
-          </td>
-          <td class="product-list">
-            <div class="label">Quantity</div>
-            {% for item in items %}
-              <div class="value">{{ item.quantity|floatformat:"-3" }} {{ item.product.unit.abbreviation|default:"Pcs" }}</div>
-            {% empty %}
-              <div class="muted">-</div>
-            {% endfor %}
-          </td>
         </tr>
       </table>
     </div>
@@ -307,20 +294,49 @@
       <table class="garment">
         <tr>
           <td>
-            <div class="label">Fabric</div>
-            <div class="value">{{ tailoring.fabric|default:"-" }}</div>
+            <div class="label">Product / Fabric</div>
+            <div class="value">{{ job_item.product_name|default:"-" }}</div>
+            {% if job_item.variant %}<div class="muted">{{ job_item.variant.name }}</div>{% endif %}
+          </td>
+          <td>
+            <div class="label">Quantity</div>
+            <div class="value">{{ job_item.quantity|floatformat:"-3" }} {{ job_item.product.unit.abbreviation|default:"pc" }}</div>
           </td>
           <td>
             <div class="label">Design Type</div>
             <div class="value">{{ tailoring.design_type|default:"-" }}</div>
           </td>
           <td>
+            <div class="label">Priority</div>
+            <div class="value">{{ priority_label|default:"Normal" }}</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="label">Daraz Details</div>
+            <div class="value">{{ tailoring.daraz_details|default:"-" }}</div>
+          </td>
+          <td>
+            <div class="label">VIP 3D Design</div>
+            <div class="value">{{ tailoring.vip_3d_design|default:"-" }}</div>
+          </td>
+          <td>
             <div class="label">Computer Design</div>
             <div class="value">{{ tailoring.computer_design|default:"-" }}</div>
           </td>
           <td>
-            <div class="label">Measurements</div>
-            <div class="value">{{ tailoring.measurements|default:"Customer Default" }}</div>
+            <div class="label">SKU</div>
+            <div class="value">{{ job_item.sku|default:"-" }}</div>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="2">
+            <div class="label">Customer Notes</div>
+            <div class="value">{{ tailoring.customer_notes|default:"-" }}</div>
+          </td>
+          <td colspan="2">
+            <div class="label">Workshop Notes</div>
+            <div class="value">{{ tailoring.workshop_notes|default:"-" }}</div>
           </td>
         </tr>
       </table>
@@ -370,42 +386,6 @@
   </div>
 
   <div class="section">
-    <div class="section-title">Product Information</div>
-    <table class="items">
-      <thead>
-        <tr>
-          <th style="width:42%">Product Name</th>
-          <th style="width:16%">SKU</th>
-          <th class="r" style="width:10%">Qty</th>
-          <th style="width:12%">Unit</th>
-          <th style="width:20%">Remarks / Notes</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in items %}
-        <tr>
-          <td>
-            <div class="item-name">{{ item.product_name }}</div>
-            {% if item.variant %}<div class="muted">{{ item.variant.name }}</div>{% endif %}
-          </td>
-          <td>{{ item.sku|default:"-" }}</td>
-          <td class="r">{{ item.quantity|floatformat:"-3" }}</td>
-          <td>{{ item.product.unit.abbreviation|default:"Pcs" }}</td>
-          <td>
-            {% if tailoring.fabric %}Fabric: {{ tailoring.fabric }}<br>{% endif %}
-            {% if tailoring.design_type %}Design: {{ tailoring.design_type }}<br>{% endif %}
-            {% if item.product.description %}{{ item.product.description }}{% endif %}
-            {% if not tailoring.fabric and not tailoring.design_type and not item.product.description %}<span class="muted">-</span>{% endif %}
-          </td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="5" class="muted">No items</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <div class="section">
     <div class="section-title">Production Tracking</div>
     <table class="tracking">
       <thead>
@@ -447,5 +427,7 @@
 
   <div class="footer">Powered by Nexa Business Solutions</div>
 </div>
+{% endwith %}
+{% endfor %}
 </body>
 </html>

@@ -46,13 +46,12 @@ def _branch_warehouse(branch):
 
 
 TAILORING_CHECKOUT_FIELDS = (
-    "fabric",
     "design_type",
+    "daraz_details",
+    "vip_3d_design",
     "computer_design",
-    "measurements",
     "priority",
     "customer_notes",
-    "expected_delivery",
     "workshop_notes",
 )
 
@@ -351,14 +350,19 @@ def pos_checkout(request):
 
     delivery_date = None
     raw_delivery = str(payload.get("delivery_date") or "").strip()
-    if raw_delivery:
-        import datetime as _dt
+    if not raw_delivery:
+        return JsonResponse({
+            "ok": False,
+            "error": "Please select delivery date before completing sale.",
+        }, status=400)
 
-        try:
-            delivery_date = _dt.date.fromisoformat(raw_delivery)
-        except ValueError:
-            return JsonResponse({"ok": False, "error": "Invalid delivery date."},
-                                status=400)
+    import datetime as _dt
+
+    try:
+        delivery_date = _dt.date.fromisoformat(raw_delivery)
+    except ValueError:
+        return JsonResponse({"ok": False, "error": "Invalid delivery date."},
+                            status=400)
 
     try:
         sale = services.complete_sale(
@@ -573,7 +577,7 @@ def _sale_item_sequence(sale_item):
     return ids.index(sale_item.id) + 1 if sale_item.id in ids else 1
 
 
-def _job_card_context(sale, request, items, sale_item=None):
+def _job_card_data(sale, request, items, sale_item=None):
     items = list(items)
     if sale_item is not None:
         items = [sale_item]
@@ -598,7 +602,6 @@ def _job_card_context(sale, request, items, sale_item=None):
     else:
         copy_label = "Original"
     sequence = _sale_item_sequence(sale_item) if sale_item is not None else 1
-    expected_delivery = tailoring.get("expected_delivery") if tailoring else ""
     return {
         "sale": sale,
         "items": items,
@@ -613,8 +616,13 @@ def _job_card_context(sale, request, items, sale_item=None):
         "copy_type": copy_label,
         "priority_label": priority_label,
         "priority_class": priority_class,
-        "job_delivery_date": expected_delivery or sale.delivery_date,
+        "job_delivery_date": sale.delivery_date,
     }
+
+
+def _job_card_context(sale, request, items, sale_item=None):
+    card = _job_card_data(sale, request, items, sale_item=sale_item)
+    return {**card, "job_cards": [card]}
 
 
 def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
@@ -706,14 +714,22 @@ def sale_workshop_job_card_pdf(request, public_id):
         request.business,
         public_id=public_id,
     )
-    items = sale.items.select_related("product__unit", "variant")
+    items = list(sale.items.select_related("product__unit", "variant").order_by("id"))
+    tailoring_items = [item for item in items if item.has_tailoring_details]
+    cards = [
+        _job_card_data(sale, request, [item], sale_item=item)
+        for item in tailoring_items
+    ] or [
+        _job_card_data(sale, request, [item], sale_item=item)
+        for item in items
+    ] or [_job_card_data(sale, request, [])]
     pdf = render_pdf(
         "invoices/workshop_job_card.html",
-        _job_card_context(sale, request, items),
+        {"job_cards": cards},
     )
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
-        f'attachment; filename="workshop-job-card-{sale.invoice_number}.pdf"'
+        f'attachment; filename="workshop-job-cards-{sale.invoice_number}.pdf"'
     )
     return response
 

@@ -270,7 +270,14 @@ class SaleItem(TenantModel):
 
     @property
     def has_tailoring_details(self):
-        return any(str(value or "").strip() for value in self.tailoring_details.values())
+        for key, value in (self.tailoring_details or {}).items():
+            value = str(value or "").strip()
+            if not value:
+                continue
+            if key == "priority" and value == "normal":
+                continue
+            return True
+        return False
 
 
 class SalePayment(TenantModel):

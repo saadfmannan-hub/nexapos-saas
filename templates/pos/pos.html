@@ -161,37 +161,33 @@
               <div class="border rounded p-2 mt-2 bg-light" x-show="line.expanded" x-cloak>
                 <div class="row g-2">
                   <div class="col-6">
-                    <label class="form-label small mb-1">Fabric</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.fabric" placeholder="Hisofy Red">
+                    <label class="form-label small mb-1">Design Type</label>
+                    <select class="form-select form-select-sm" x-model="line.tailoring_details.design_type">
+                      <option value="">Select design type</option>
+                      <option value="Daraz">Daraz</option>
+                      <option value="VIP 3D">VIP 3D</option>
+                      <option value="Computer Design">Computer Design</option>
+                    </select>
                   </div>
                   <div class="col-6">
-                    <label class="form-label small mb-1">Design Type</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.design_type" placeholder="Daraz 3 Line">
+                    <label class="form-label small mb-1">Daraz Details</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.daraz_details" placeholder="3 Line">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small mb-1">VIP 3D Design</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.vip_3d_design" placeholder="MM3">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Computer Design</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.computer_design" placeholder="Sultani / MM3">
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.computer_design" placeholder="Sultani">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Priority</label>
                     <select class="form-select form-select-sm" x-model="line.tailoring_details.priority">
-                      <option value="">Normal</option>
                       <option value="normal">Normal</option>
                       <option value="urgent">Urgent</option>
                       <option value="vip">VIP</option>
                     </select>
-                  </div>
-                  <div class="col-6">
-                    <label class="form-label small mb-1">Measurements</label>
-                    <select class="form-select form-select-sm" x-model="line.tailoring_details.measurements">
-                      <option value="">Customer Default</option>
-                      <option value="Customer Default">Customer Default</option>
-                      <option value="Custom for this garment">Custom for this garment</option>
-                    </select>
-                  </div>
-                  <div class="col-6">
-                    <label class="form-label small mb-1">Expected Delivery</label>
-                    <input type="date" class="form-control form-control-sm" x-model="line.tailoring_details.expected_delivery">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Customer Notes</label>
@@ -271,9 +267,9 @@
               Store credit available: <strong x-text="fmt(customer.store_credit)"></strong>
             </div>
             <div class="mt-2">
-              <label class="form-label small mb-1"><i class="bi bi-truck me-1"></i>Delivery date (optional)</label>
+              <label class="form-label small mb-1"><i class="bi bi-truck me-1"></i>Delivery date *</label>
               <input type="date" class="form-control form-control-sm" x-model="deliveryDate"
-                     title="Leave empty for immediate counter sales">
+                     required>
             </div>
           </div>
           <div class="col-md-7">
@@ -411,12 +407,15 @@ function pos() {
     },
     blankTailoringDetails() {
       return {
-        fabric: '', design_type: '', computer_design: '', measurements: '',
-        priority: '', customer_notes: '', expected_delivery: '', workshop_notes: ''
+        design_type: '', daraz_details: '', vip_3d_design: '', computer_design: '',
+        priority: 'normal', customer_notes: '', workshop_notes: ''
       };
     },
     hasTailoringDetails(line) {
-      return Object.values(line.tailoring_details || {}).some(value => String(value || '').trim());
+      return Object.entries(line.tailoring_details || {}).some(([key, value]) => {
+        const clean = String(value || '').trim();
+        return clean && !(key === 'priority' && clean === 'normal');
+      });
     },
     duplicateLine(index) {
       const source = this.cart[index];
@@ -530,6 +529,11 @@ function pos() {
 
     async checkout() {
       this.payError = ''; this.busy = true;
+      if (!this.deliveryDate) {
+        this.payError = 'Please select delivery date before completing sale.';
+        this.busy = false;
+        return;
+      }
       try {
         const r = await fetch("{% url 'sales:pos_checkout' %}", {
           method: 'POST',

@@ -10,7 +10,8 @@
     <a href="{% url 'sales:invoice' sale.public_id %}" target="_blank" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> A4 invoice</a>
     <a href="{% url 'sales:invoice_pdf' sale.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
     {% if has_tailoring_jobs %}
-      <span class="btn btn-outline-primary btn-sm disabled"><i class="bi bi-clipboard-check"></i> Job Cards on items</span>
+      <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm">
+        <i class="bi bi-clipboard-check"></i> Download All Job Cards</a>
     {% else %}
       <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-clipboard-check"></i> Workshop Job Card</a>
     {% endif %}
