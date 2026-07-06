@@ -361,7 +361,7 @@ function pos() {
       return {baseBefore, base, tax, total: base + tax};
     },
     lineTotal(l) {
-      return this.lineParts(l).total;
+      return Math.max(0, (+l.unit_price * +l.quantity) - (+l.discount_amount || 0));
     },
     get totals() {
       let base = 0, tax = 0, lineDisc = 0;
