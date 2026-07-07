@@ -304,9 +304,81 @@ a { text-decoration: none; }
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.65), transparent);
   animation: shimmer 1.3s infinite; }
 
+/* ---------------- Reports ---------------- */
+.report-table { table-layout: auto; }
+.report-table th {
+  line-height: 1.15;
+  padding: .55rem .6rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.report-table td {
+  padding: .5rem .6rem;
+  vertical-align: middle;
+}
+.report-table-sales_summary {
+  min-width: 980px;
+  table-layout: fixed;
+}
+.report-table-sales_summary .report-col-date { width: 110px; }
+.report-table-sales_summary .report-col-invoice { width: 116px; }
+.report-table-sales_summary .report-col-money { width: 112px; }
+.report-table-sales_summary .report-col-money-sm { width: 92px; }
+.report-table-sales_summary .report-col-receivable { width: 126px; }
+.report-table-sales_summary th:nth-child(2),
+.report-table-sales_summary td:nth-child(2) {
+  white-space: nowrap;
+}
+.report-table-sales_summary th:nth-child(n+3),
+.report-table-sales_summary td:nth-child(n+3),
+.report-table-sales_summary tfoot td:nth-child(n+3) {
+  text-align: right;
+}
+.report-table-sales_summary th:nth-child(7) {
+  white-space: normal;
+}
+
+@page reportLandscape {
+  size: A4 landscape;
+  margin: 10mm;
+}
+
 /* Print */
 @media print {
   .np-sidebar, .np-topbar, .no-print { display: none !important; }
   .np-main { margin: 0; }
-  body.app-body { background: #fff; }
+  body.app-body { background: #fff; font-size: 10px; }
+  .np-content { padding: 0; }
+  .report-print-page { page: reportLandscape; }
+  .report-card {
+    border: 0;
+    box-shadow: none;
+  }
+  .report-table-wrap {
+    overflow: visible !important;
+  }
+  .report-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    table-layout: fixed;
+    font-size: 10px;
+  }
+  .report-table th,
+  .report-table td {
+    padding: 3px 4px;
+    overflow-wrap: anywhere;
+  }
+  .report-table tr {
+    page-break-inside: avoid;
+  }
+  .report-table-sales_summary .report-col-date { width: 12%; }
+  .report-table-sales_summary .report-col-invoice { width: 11%; }
+  .report-table-sales_summary .report-col-money { width: 11%; }
+  .report-table-sales_summary .report-col-money-sm { width: 8.5%; }
+  .report-table-sales_summary .report-col-receivable { width: 12%; }
+  .report-table-sales_summary th:nth-child(2),
+  .report-table-sales_summary td:nth-child(2) {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
 }

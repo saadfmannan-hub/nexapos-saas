@@ -3,20 +3,39 @@
 <head>
 <meta charset="utf-8">
 <style>
-  @page { size: A4 landscape; margin: 12mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 8.5pt; color: #1e293b; }
+  @page { size: A4 landscape; margin: 10mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 8pt; color: #1e293b; }
   h1 { font-size: 14pt; margin: 0 0 2px; }
   .muted { color: #64748b; font-size: 8pt; margin-bottom: 10px; }
-  table { width: 100%; border-collapse: collapse; }
-  th { background: #0f172a; color: #fff; text-align: left; padding: 4px 6px; font-size: 8pt; }
-  td { padding: 3px 6px; border-bottom: 0.5pt solid #cbd5e1; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  th { background: #0f172a; color: #fff; text-align: left; padding: 4px; font-size: 7.2pt; line-height: 1.15; }
+  td { padding: 3px 4px; border-bottom: 0.5pt solid #cbd5e1; line-height: 1.2; }
   tfoot td { font-weight: bold; border-top: 1pt solid #0f172a; }
+  tr { page-break-inside: avoid; }
+  .report-pdf-daily-sales th:nth-child(n+3),
+  .report-pdf-daily-sales td:nth-child(n+3) { text-align: right; }
+  .report-pdf-daily-sales th:nth-child(2),
+  .report-pdf-daily-sales td:nth-child(2) { white-space: nowrap; }
 </style>
 </head>
 <body>
 <h1>{{ business.name }} — {{ title }}</h1>
 <div class="muted">{% if filters_label %}Period: {{ filters_label }} · {% endif %}Generated {% now "Y-m-d H:i" %}</div>
-<table>
+<table class="{% if title == 'Daily Sales Report' %}report-pdf-daily-sales{% endif %}">
+  {% if title == "Daily Sales Report" %}
+  <colgroup>
+    <col style="width:12%">
+    <col style="width:11%">
+    <col style="width:11%">
+    <col style="width:11%">
+    <col style="width:8.5%">
+    <col style="width:8.5%">
+    <col style="width:12%">
+    <col style="width:8.5%">
+    <col style="width:8.5%">
+    <col style="width:9%">
+  </colgroup>
+  {% endif %}
   <thead><tr>{% for col in data.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
   <tbody>
     {% for row in data.rows %}

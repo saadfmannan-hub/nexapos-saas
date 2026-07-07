@@ -38,6 +38,44 @@ class ExportTests(TenantTestCase):
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(response.content.startswith(b"%PDF"))
 
+    def test_daily_sales_report_screen_uses_fixed_column_layout(self):
+        response = self.client.get(reverse("reports:view", args=["sales_summary"]))
+        self.assertContains(response, "report-table-sales_summary")
+        self.assertContains(response, "report-col-date")
+        self.assertContains(response, "report-col-invoice")
+        self.assertContains(response, "report-col-receivable")
+        self.assertContains(response, self.sale.invoice_number)
+
+    def test_daily_sales_report_pdf_uses_landscape_column_layout(self):
+        from django.template.loader import render_to_string
+
+        html = render_to_string("reports/report_pdf.html", {
+            "title": "Daily Sales Report",
+            "business": self.business_a,
+            "filters_label": "2026-07-01 -> 2026-07-07",
+            "data": {
+                "columns": [
+                    "Date", "Invoice No", "Sales Amount", "Bank Transfer",
+                    "Card", "Cash", "Credit / Receivable", "Discount",
+                    "VAT", "Gross",
+                ],
+                "rows": [[
+                    "2026-07-07", "DT-2026-0000000001", D("30.840"),
+                    D("10.840"), D("8.000"), D("12.000"), D("0.000"),
+                    D("0.000"), D("1.468"), D("17.367"),
+                ]],
+                "totals": [
+                    "TOTAL", "", D("30.840"), D("10.840"), D("8.000"),
+                    D("12.000"), D("0.000"), D("0.000"), D("1.468"),
+                    D("17.367"),
+                ],
+            },
+        })
+        self.assertIn("@page { size: A4 landscape; margin: 10mm; }", html)
+        self.assertIn("report-pdf-daily-sales", html)
+        self.assertIn('<col style="width:12%">', html)
+        self.assertIn("DT-2026-0000000001", html)
+
     def test_export_respects_date_filter(self):
         response = self.client.get(
             reverse("reports:view", args=["sales_detailed"])

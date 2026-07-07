@@ -1,6 +1,7 @@
 {% extends "layouts/base.html" %}
 {% block title %}{{ title }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
+<div class="report-print-page {% if key == 'sales_summary' %}report-print-daily-sales{% endif %}">
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">{{ title }}</h1>
   <div class="d-flex gap-2 no-print">
@@ -38,8 +39,22 @@
   </form>
 </div></div>
 
-<div class="card"><div class="table-responsive">
-  <table class="table table-sm table-hover mb-0">
+<div class="card report-card"><div class="table-responsive report-table-wrap">
+  <table class="table table-sm table-hover mb-0 report-table report-table-{{ key }}">
+    {% if key == "sales_summary" %}
+    <colgroup>
+      <col class="report-col-date">
+      <col class="report-col-invoice">
+      <col class="report-col-money">
+      <col class="report-col-money">
+      <col class="report-col-money-sm">
+      <col class="report-col-money-sm">
+      <col class="report-col-receivable">
+      <col class="report-col-money-sm">
+      <col class="report-col-money-sm">
+      <col class="report-col-money-sm">
+    </colgroup>
+    {% endif %}
     <thead><tr>{% for col in data.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in data.rows %}
@@ -56,4 +71,5 @@
   </table>
 </div>
 <div class="card-body py-2 small text-secondary">{{ data.rows|length }} row{{ data.rows|length|pluralize }}</div></div>
+</div>
 {% endblock %}
