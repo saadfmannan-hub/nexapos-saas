@@ -9,9 +9,9 @@
 </div>
 {% endif %}
 
-<div x-data="pos()" x-init="init()" @keydown.window="hotkeys($event)">
+<div class="pos-page" x-data="pos()" x-init="init()" @keydown.window="hotkeys($event)">
   <!-- Header strip -->
-  <div class="d-flex align-items-center gap-3 mb-2 flex-wrap">
+  <div class="pos-header-strip d-flex align-items-center gap-3 mb-2 flex-wrap">
     <span class="badge text-bg-dark"><i class="bi bi-shop me-1"></i>{{ branch.name }}</span>
     {% if shift %}
       <span class="badge text-bg-success"><i class="bi bi-cash-stack me-1"></i>{{ shift.register.name }} — shift open</span>
@@ -27,7 +27,7 @@
 
   <div class="pos-shell">
     <!-- LEFT: products -->
-    <div class="d-flex flex-column gap-2">
+    <div class="pos-products-pane d-flex flex-column gap-2">
       <div class="d-flex gap-2">
         <div class="input-group">
           <span class="input-group-text"><i class="bi bi-upc-scan"></i></span>
