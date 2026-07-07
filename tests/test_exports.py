@@ -72,8 +72,10 @@ class ExportTests(TenantTestCase):
             },
         })
         self.assertIn("@page { size: A4 landscape; margin: 10mm; }", html)
-        self.assertIn("report-pdf-daily-sales", html)
-        self.assertIn('<col style="width:12%">', html)
+        self.assertIn('style="width:13%; text-align:left;"', html)
+        self.assertIn('class="nowrap">Invoice No</th>', html)
+        self.assertIn('style="width:12%; text-align:right;"', html)
+        self.assertIn('style="width:10%; text-align:right;"', html)
         self.assertIn("DT-2026-0000000001", html)
 
     def test_export_respects_date_filter(self):

@@ -12,38 +12,69 @@
   td { padding: 3px 4px; border-bottom: 0.5pt solid #cbd5e1; line-height: 1.2; }
   tfoot td { font-weight: bold; border-top: 1pt solid #0f172a; }
   tr { page-break-inside: avoid; }
-  .report-pdf-daily-sales th:nth-child(n+3),
-  .report-pdf-daily-sales td:nth-child(n+3) { text-align: right; }
-  .report-pdf-daily-sales th:nth-child(2),
-  .report-pdf-daily-sales td:nth-child(2) { white-space: nowrap; }
+  .nowrap { white-space: nowrap; }
 </style>
 </head>
 <body>
 <h1>{{ business.name }} — {{ title }}</h1>
 <div class="muted">{% if filters_label %}Period: {{ filters_label }} · {% endif %}Generated {% now "Y-m-d H:i" %}</div>
-<table class="{% if title == 'Daily Sales Report' %}report-pdf-daily-sales{% endif %}">
-  {% if title == "Daily Sales Report" %}
-  <colgroup>
-    <col style="width:12%">
-    <col style="width:11%">
-    <col style="width:11%">
-    <col style="width:11%">
-    <col style="width:8.5%">
-    <col style="width:8.5%">
-    <col style="width:12%">
-    <col style="width:8.5%">
-    <col style="width:8.5%">
-    <col style="width:9%">
-  </colgroup>
-  {% endif %}
-  <thead><tr>{% for col in data.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+<table>
+  <thead><tr>{% for col in data.columns %}
+    {% if title == "Daily Sales Report" %}
+      {% if forloop.counter == 1 %}
+        <th style="width:13%; text-align:left;">{{ col }}</th>
+      {% elif forloop.counter == 2 %}
+        <th style="width:13%; text-align:left;" class="nowrap">{{ col }}</th>
+      {% elif forloop.counter == 7 %}
+        <th style="width:12%; text-align:right;">{{ col }}</th>
+      {% elif forloop.counter == 3 or forloop.counter == 4 or forloop.counter == 10 %}
+        <th style="width:10%; text-align:right;">{{ col }}</th>
+      {% else %}
+        <th style="width:8%; text-align:right;">{{ col }}</th>
+      {% endif %}
+    {% else %}
+      <th>{{ col }}</th>
+    {% endif %}
+  {% endfor %}</tr></thead>
   <tbody>
     {% for row in data.rows %}
-    <tr>{% for v in row %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr>
+    <tr>{% for v in row %}
+      {% if title == "Daily Sales Report" %}
+        {% if forloop.counter == 1 %}
+          <td style="width:13%; text-align:left;">{{ v|default_if_none:"" }}</td>
+        {% elif forloop.counter == 2 %}
+          <td style="width:13%; text-align:left;" class="nowrap">{{ v|default_if_none:"" }}</td>
+        {% elif forloop.counter == 7 %}
+          <td style="width:12%; text-align:right;">{{ v|default_if_none:"" }}</td>
+        {% elif forloop.counter == 3 or forloop.counter == 4 or forloop.counter == 10 %}
+          <td style="width:10%; text-align:right;">{{ v|default_if_none:"" }}</td>
+        {% else %}
+          <td style="width:8%; text-align:right;">{{ v|default_if_none:"" }}</td>
+        {% endif %}
+      {% else %}
+        <td>{{ v|default_if_none:"" }}</td>
+      {% endif %}
+    {% endfor %}</tr>
     {% endfor %}
   </tbody>
   {% if data.totals %}
-  <tfoot><tr>{% for v in data.totals %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr></tfoot>
+  <tfoot><tr>{% for v in data.totals %}
+    {% if title == "Daily Sales Report" %}
+      {% if forloop.counter == 1 %}
+        <td style="width:13%; text-align:left;">{{ v|default_if_none:"" }}</td>
+      {% elif forloop.counter == 2 %}
+        <td style="width:13%; text-align:left;" class="nowrap">{{ v|default_if_none:"" }}</td>
+      {% elif forloop.counter == 7 %}
+        <td style="width:12%; text-align:right;">{{ v|default_if_none:"" }}</td>
+      {% elif forloop.counter == 3 or forloop.counter == 4 or forloop.counter == 10 %}
+        <td style="width:10%; text-align:right;">{{ v|default_if_none:"" }}</td>
+      {% else %}
+        <td style="width:8%; text-align:right;">{{ v|default_if_none:"" }}</td>
+      {% endif %}
+    {% else %}
+      <td>{{ v|default_if_none:"" }}</td>
+    {% endif %}
+  {% endfor %}</tr></tfoot>
   {% endif %}
 </table>
 </body>
