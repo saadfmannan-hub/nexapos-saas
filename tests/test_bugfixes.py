@@ -5,6 +5,7 @@ from django.urls import reverse
 
 from apps.catalog.models import Product
 from apps.sales.models import Sale
+from apps.sales.services import SaleError
 
 from .base import TenantTestCase
 
@@ -25,6 +26,13 @@ class PaymentPrecisionTests(TenantTestCase):
         self.tricky = Product.objects.create(
             business=self.business_a, name="Earbuds", sku="EARB-1",
             purchase_price=D("12.000"), sale_price=D("29.900"),
+            tax_rate=self.tax_a, track_inventory=False,
+            product_type="non_stock",
+        )
+        # 29.367 + rounded 5% VAT (1.468) = 30.835 raw, displayed as 30.84.
+        self.modal_total_product = Product.objects.create(
+            business=self.business_a, name="Modal Exact Total", sku="MODAL-3084",
+            purchase_price=D("12.000"), sale_price=D("29.367"),
             tax_rate=self.tax_a, track_inventory=False,
             product_type="non_stock",
         )
@@ -80,6 +88,79 @@ class PaymentPrecisionTests(TenantTestCase):
             payments=[{"method": self.cash_a, "amount": D("31.395")}],
         )
         self.assertEqual(sale.total, D("31.395"))
+
+    def test_split_bank_card_cash_display_total_succeeds(self):
+        from apps.sales.models import PaymentMethod
+
+        bank = PaymentMethod.objects.for_business(self.business_a).get(kind="bank")
+        sale = self.make_sale(
+            items=[{"product": self.modal_total_product, "quantity": D("1"),
+                    "unit_price": D("29.367")}],
+            payments=[
+                {"method": bank, "amount": D("10.84")},
+                {"method": self.card_a, "amount": D("8.00")},
+                {"method": self.cash_a, "amount": D("12.00")},
+            ],
+        )
+        self.assertEqual(sale.total, D("30.840"))
+        self.assertEqual(sale.amount_paid, D("30.840"))
+        self.assertEqual(sale.balance, D("0.000"))
+
+    def test_split_with_customer_credit_display_total_succeeds(self):
+        from apps.customers.models import Customer
+        from apps.sales.models import PaymentMethod
+
+        bank = PaymentMethod.objects.for_business(self.business_a).get(kind="bank")
+        customer = Customer.objects.create(
+            business=self.business_a, code="PAY-MODAL",
+            full_name="Payment Modal Customer", credit_limit=D("100.000"),
+        )
+        sale = self.make_sale(
+            customer=customer,
+            items=[{"product": self.modal_total_product, "quantity": D("1"),
+                    "unit_price": D("29.367")}],
+            payments=[
+                {"method": bank, "amount": D("10.84")},
+                {"method": self.card_a, "amount": D("8.00")},
+                {"method": self.cash_a, "amount": D("6.00")},
+                {"method": self.credit_a, "amount": D("6.00")},
+            ],
+        )
+        customer.refresh_from_db()
+        self.assertEqual(sale.total, D("30.840"))
+        self.assertEqual(sale.amount_paid, D("24.840"))
+        self.assertEqual(sale.balance, D("6.000"))
+        self.assertEqual(customer.balance, D("6.000"))
+
+    def test_exact_cash_display_total_3084_succeeds(self):
+        sale = self.make_sale(
+            items=[{"product": self.modal_total_product, "quantity": D("1"),
+                    "unit_price": D("29.367")}],
+            payments=[{"method": self.cash_a, "amount": D("30.84")}],
+        )
+        self.assertEqual(sale.total, D("30.840"))
+        self.assertEqual(sale.change_due, D("0.000"))
+
+    def test_display_total_shortfall_still_rejected(self):
+        with self.assertRaisesRegex(
+            SaleError,
+            "Payments do not cover the total. Use Customer Credit for the unpaid balance.",
+        ):
+            self.make_sale(
+                items=[{"product": self.modal_total_product, "quantity": D("1"),
+                        "unit_price": D("29.367")}],
+                payments=[{"method": self.cash_a, "amount": D("30.00")}],
+            )
+
+    def test_cash_overpayment_keeps_existing_change_logic(self):
+        sale = self.make_sale(
+            items=[{"product": self.modal_total_product, "quantity": D("1"),
+                    "unit_price": D("29.367")}],
+            payments=[{"method": self.cash_a, "amount": D("31.00")}],
+        )
+        self.assertEqual(sale.total, D("30.840"))
+        self.assertEqual(sale.change_due, D("0.160"))
+        self.assertEqual(sale.amount_paid, D("30.840"))
 
 
 class PurchaseOrderDocumentTests(TenantTestCase):
