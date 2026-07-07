@@ -53,6 +53,94 @@ class ExportTests(TenantTestCase):
         totals = screen.context["data"]["totals"]
         self.assertIn(str(totals[2]), csv_resp.content.decode())
 
+    def test_daily_sales_report_invoice_wise_payment_breakdown(self):
+        from apps.customers.models import Customer
+        from apps.reports.queries import sales_summary
+        from apps.sales.models import PaymentMethod
+
+        bank = PaymentMethod.objects.for_business(self.business_a).get(kind="bank")
+        customer = Customer.objects.create(
+            business=self.business_a, code="DAILY-CR",
+            full_name="Daily Credit Customer", credit_limit=D("500.000"),
+        )
+        card_sale = self.make_sale(
+            payments=[{"method": self.card_a, "amount": D("21.000")}],
+        )
+        bank_sale = self.make_sale(
+            payments=[{"method": bank, "amount": D("21.000")}],
+        )
+        split_sale = self.make_sale(
+            customer=customer,
+            payments=[
+                {"method": self.cash_a, "amount": D("5.000")},
+                {"method": self.card_a, "amount": D("7.000")},
+                {"method": bank, "amount": D("3.000")},
+                {"method": self.credit_a, "amount": D("6.000")},
+            ],
+        )
+        partial_sale = self.make_sale(
+            customer=customer,
+            payments=[
+                {"method": self.cash_a, "amount": D("8.000")},
+                {"method": self.credit_a, "amount": D("13.000")},
+            ],
+        )
+        unpaid_sale = self.make_sale(
+            customer=customer,
+            payments=[{"method": self.credit_a, "amount": D("21.000")}],
+        )
+
+        data = sales_summary(self.business_a, {
+            "date_from": None, "date_to": None, "branch_id": None,
+            "warehouse_id": None,
+        })
+        self.assertEqual(data["columns"], [
+            "Date", "Invoice No", "Sales Amount", "Bank Transfer", "Card",
+            "Cash", "Credit / Receivable", "Discount", "VAT", "Gross",
+        ])
+        rows = {row[1]: row for row in data["rows"]}
+
+        cash_row = rows[self.sale.invoice_number]
+        self.assertEqual(cash_row[2:7], [D("21.000"), D("0.000"), D("0.000"),
+                                         D("21.000"), D("0.000")])
+
+        card_row = rows[card_sale.invoice_number]
+        self.assertEqual(card_row[2:7], [D("21.000"), D("0.000"), D("21.000"),
+                                         D("0.000"), D("0.000")])
+
+        bank_row = rows[bank_sale.invoice_number]
+        self.assertEqual(bank_row[2:7], [D("21.000"), D("21.000"), D("0.000"),
+                                         D("0.000"), D("0.000")])
+
+        split_row = rows[split_sale.invoice_number]
+        self.assertEqual(split_row[2:7], [D("21.000"), D("3.000"), D("7.000"),
+                                          D("5.000"), D("6.000")])
+
+        partial_row = rows[partial_sale.invoice_number]
+        self.assertEqual(partial_row[2:7], [D("21.000"), D("0.000"), D("0.000"),
+                                            D("8.000"), D("13.000")])
+
+        unpaid_row = rows[unpaid_sale.invoice_number]
+        self.assertEqual(unpaid_row[2:7], [D("21.000"), D("0.000"), D("0.000"),
+                                           D("0.000"), D("21.000")])
+
+        self.assertEqual(data["totals"][2:7], [D("126.000"), D("24.000"),
+                                               D("28.000"), D("34.000"),
+                                               D("40.000")])
+        self.assertEqual(data["totals"][7:10], [D("0.000"), D("6.000"),
+                                                D("72.000")])
+
+        response = self.client.get(
+            reverse("reports:view", args=["sales_summary"]) + "?export=csv"
+        )
+        csv_body = response.content.decode()
+        self.assertIn(
+            "Date,Invoice No,Sales Amount,Bank Transfer,Card,Cash,"
+            "Credit / Receivable,Discount,VAT,Gross",
+            csv_body,
+        )
+        self.assertIn(split_sale.invoice_number, csv_body)
+
     def test_export_requires_permission(self):
         from apps.accounts.models import Membership, Role, User
 

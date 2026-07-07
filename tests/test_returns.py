@@ -213,10 +213,17 @@ class ReturnTests(TenantTestCase):
         self.assertEqual(product_row[3], D("70.875"))
         self.assertEqual(product_row[4], D("67.500"))
 
-        summary = sales_summary(self.business_a, filters)["rows"][0]
-        self.assertEqual(summary[2], D("112.875"))
-        self.assertEqual(summary[4], D("5.375"))
-        self.assertEqual(summary[5], D("91.500"))
+        summary_data = sales_summary(self.business_a, filters)
+        summary = [
+            row for row in summary_data["rows"]
+            if row[1] == sale.invoice_number
+        ][0]
+        self.assertEqual(summary[2], D("70.875"))
+        self.assertEqual(summary[8], D("3.375"))
+        self.assertEqual(summary[9], D("67.500"))
+        self.assertEqual(summary_data["totals"][2], D("112.875"))
+        self.assertEqual(summary_data["totals"][8], D("5.375"))
+        self.assertEqual(summary_data["totals"][9], D("91.500"))
 
         customer = customer_sales(self.business_a, filters)["rows"][0]
         self.assertEqual(customer[3], D("70.875"))

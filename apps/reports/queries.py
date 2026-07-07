@@ -65,29 +65,51 @@ def _sales_base(business, f, exclude_voided=True):
 
 
 def sales_summary(business, f):
-    by_day = {}
-    qs = _sales_base(business, f).prefetch_related("returns", "items").order_by("sale_date")
+    from apps.sales.models import PaymentMethod
+
+    qs = (
+        _sales_base(business, f)
+        .prefetch_related("returns", "items", "payments__method")
+        .order_by("sale_date", "invoice_number")
+    )
+    rows = []
     for sale in qs:
-        day = sale.sale_date.date()
-        row = by_day.setdefault(day, {
-            "invoices": 0,
-            "total": ZERO,
-            "discount": ZERO,
-            "tax": ZERO,
-            "profit": ZERO,
-        })
-        row["invoices"] += 1
-        row["total"] += sale.net_total
-        row["discount"] += sale.discount_amount
-        row["tax"] += _net_sale_tax(sale)
-        row["profit"] += _net_sale_profit(sale)
-    rows = [[day, r["invoices"], _money(r["total"]), _money(r["discount"]),
-             _money(r["tax"]), _money(r["profit"])]
-            for day, r in sorted(by_day.items())]
-    totals = ["TOTAL", sum(r[1] for r in rows),
-              sum((r[2] or ZERO) for r in rows), sum((r[3] or ZERO) for r in rows),
-              sum((r[4] or ZERO) for r in rows), sum((r[5] or ZERO) for r in rows)]
-    return {"columns": ["Date", "Invoices", "Sales", "Discount", "Tax", "Gross profit"],
+        payments = {"bank": ZERO, "card": ZERO, "cash": ZERO}
+        for payment in sale.payments.all():
+            if payment.method.kind == PaymentMethod.Kind.BANK:
+                payments["bank"] += payment.amount
+            elif payment.method.kind == PaymentMethod.Kind.CARD:
+                payments["card"] += payment.amount
+            elif payment.method.kind == PaymentMethod.Kind.CASH:
+                payments["cash"] += payment.amount
+        received = payments["bank"] + payments["card"] + payments["cash"]
+        receivable = _money(sale.net_total - received)
+        rows.append([
+            sale.sale_date.date(),
+            sale.invoice_number,
+            _money(sale.net_total),
+            _money(payments["bank"]),
+            _money(payments["card"]),
+            _money(payments["cash"]),
+            receivable,
+            _money(sale.discount_amount),
+            _money(_net_sale_tax(sale)),
+            _money(_net_sale_profit(sale)),
+        ])
+    totals = [
+        "TOTAL", "",
+        sum((r[2] or ZERO) for r in rows),
+        sum((r[3] or ZERO) for r in rows),
+        sum((r[4] or ZERO) for r in rows),
+        sum((r[5] or ZERO) for r in rows),
+        sum((r[6] or ZERO) for r in rows),
+        sum((r[7] or ZERO) for r in rows),
+        sum((r[8] or ZERO) for r in rows),
+        sum((r[9] or ZERO) for r in rows),
+    ]
+    return {"columns": ["Date", "Invoice No", "Sales Amount", "Bank Transfer",
+                        "Card", "Cash", "Credit / Receivable", "Discount",
+                        "VAT", "Gross"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -294,8 +316,8 @@ def low_stock(business, f):
     )
     if f.get("warehouse_id"):
         qs = qs.filter(warehouse_id=f["warehouse_id"])
-    rows = [[l.product.name, l.warehouse.name, l.quantity,
-             l.product.reorder_level] for l in qs[:2000]]
+    rows = [[level.product.name, level.warehouse.name, level.quantity,
+             level.product.reorder_level] for level in qs[:2000]]
     return {"columns": ["Product", "Warehouse", "Current stock", "Reorder level"],
             "rows": rows, "totals": None}
 
@@ -621,7 +643,7 @@ def customer_sales(business, f):
 
 # Registry: key -> (title, function, default_permission)
 REPORTS = {
-    "sales_summary": ("Daily sales summary", sales_summary, "reports.view"),
+    "sales_summary": ("Daily Sales Report", sales_summary, "reports.view"),
     "sales_detailed": ("Detailed sales / invoices", sales_detailed, "reports.view"),
     "product_sales": ("Product sales", product_sales, "reports.view"),
     "category_sales": ("Category sales", category_sales, "reports.view"),
