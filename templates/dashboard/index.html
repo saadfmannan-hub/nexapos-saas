@@ -1,31 +1,17 @@
 {% extends "layouts/base.html" %}
 {% load static humanize money_tags %}
-{% block title %}Dashboard — {{ PRODUCT_NAME }}{% endblock %}
+{% block title %}Dashboard - {{ PRODUCT_NAME }}{% endblock %}
 {% block extra_css %}
 <style>
-  .owner-dashboard .chart-card {
-    border-radius: 1rem;
-    height: 100%;
-    transition: none;
-  }
-  .owner-dashboard .chart-card:hover {
-    transform: none;
-  }
+  .owner-dashboard .chart-card { border-radius: 1rem; height: 100%; transition: none; }
+  .owner-dashboard .chart-card:hover { transform: none; }
   .owner-dashboard .chart-card .card-header {
-    border-bottom: 1px solid #eef2f7;
-    padding: .8rem 1rem;
+    border-bottom: 1px solid #eef2f7; padding: .8rem 1rem;
   }
-  .owner-dashboard .chart-card .card-body {
-    padding: 1rem 1rem 1.1rem;
-  }
-  .owner-dashboard .chart-frame {
-    position: relative;
-    width: 100%;
-  }
+  .owner-dashboard .chart-card .card-body { padding: 1rem 1rem 1.1rem; }
+  .owner-dashboard .chart-frame { position: relative; width: 100%; }
   .owner-dashboard .chart-frame canvas {
-    display: block;
-    width: 100% !important;
-    height: 100% !important;
+    display: block; width: 100% !important; height: 100% !important;
   }
   .owner-dashboard .chart-frame-trend { height: clamp(260px, 30vh, 320px); }
   .owner-dashboard .chart-frame-method { height: 260px; }
@@ -33,6 +19,9 @@
   .owner-dashboard .chart-frame-customers,
   .owner-dashboard .chart-frame-branches { height: 240px; }
   .owner-dashboard .chart-frame-compact { height: 220px; }
+  .owner-dashboard .commercial-table th,
+  .owner-dashboard .commercial-table td { white-space: nowrap; }
+  .owner-dashboard .commercial-table .name-cell { white-space: normal; min-width: 160px; }
   @media (max-width: 575.98px) {
     .owner-dashboard .chart-card .card-body { padding: .85rem; }
     .owner-dashboard .chart-frame-trend { height: 280px; }
@@ -56,143 +45,117 @@
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <div>
     <h1 class="page-title">Dashboard</h1>
-    <div class="small text-secondary">{{ date_from }} → {{ date_to }} · compared with the previous period</div>
+    <div class="small text-secondary">{{ date_from }} to {{ date_to }} - compared with the previous period</div>
   </div>
   <form class="d-flex gap-2 align-items-center flex-wrap" method="get">
     <input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm w-auto">
-    <span class="text-secondary">→</span>
+    <span class="text-secondary">to</span>
     <input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm w-auto">
     <select name="branch" class="form-select form-select-sm w-auto" style="max-width:160px">
       <option value="">All branches</option>
       {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
     </select>
     <button class="btn btn-sm btn-primary">Apply</button>
+    <a href="?from={{ range_presets.today.from }}&to={{ range_presets.today.to }}{% if request.GET.branch %}&branch={{ request.GET.branch }}{% endif %}" class="btn btn-sm btn-outline-secondary">Today</a>
+    <a href="?from={{ range_presets.week.from }}&to={{ range_presets.week.to }}{% if request.GET.branch %}&branch={{ request.GET.branch }}{% endif %}" class="btn btn-sm btn-outline-secondary">This Week</a>
+    <a href="?from={{ range_presets.month.from }}&to={{ range_presets.month.to }}{% if request.GET.branch %}&branch={{ request.GET.branch }}{% endif %}" class="btn btn-sm btn-outline-secondary">This Month</a>
   </form>
 </div>
 
-{# ---------- KPI cards ---------- #}
 <div class="row g-3 mb-3">
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'sales_summary' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+  <div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0d6efd,#60a5fa)">
       <div class="d-flex justify-content-between align-items-start">
-        <div>
-          <div class="kpi-label">Today's sales</div>
-          <div class="kpi-value">{% money kpis.today_sales %}</div>
-        </div>
-        <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-lightning-charge"></i></div>
+        <div><div class="kpi-label">Today Sales</div><div class="kpi-value">{% money kpis.today_sales %}</div></div>
+        <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-receipt"></i></div>
       </div>
-      {% include "dashboard/_trend.html" with value=trends.today_sales label="vs yesterday" %}
-      <div class="spark"><canvas data-spark="sales" data-color="#0d6efd"></canvas></div>
-    </div></a>
+      <div class="small text-secondary mt-1">Booked invoice value</div>
+    </div>
   </div>
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'sales_detailed' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
+  <div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0ea5a4,#5eead4)">
       <div class="d-flex justify-content-between align-items-start">
-        <div>
-          <div class="kpi-label">Period sales</div>
-          <div class="kpi-value">{% money kpis.period_sales %}</div>
-        </div>
-        <div class="kpi-icon" style="background:#e0f2f1;color:#0ea5a4"><i class="bi bi-graph-up-arrow"></i></div>
+        <div><div class="kpi-label">Today Income Received</div><div class="kpi-value">{% money kpis.today_income %}</div></div>
+        <div class="kpi-icon" style="background:#e0f2f1;color:#0ea5a4"><i class="bi bi-cash-coin"></i></div>
       </div>
-      {% include "dashboard/_trend.html" with value=trends.period_sales label="vs previous period" %}
-      <div class="small text-secondary mt-1">{{ kpis.invoices|intcomma }} invoice{{ kpis.invoices|pluralize }} · avg {% money kpis.avg_invoice %}</div>
-    </div></a>
+      <div class="small text-secondary mt-1">Cash + card + bank only</div>
+    </div>
   </div>
-  {% if show_profit %}
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'profit' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
-    <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#16a34a,#86efac)">
-      <div class="d-flex justify-content-between align-items-start">
-        <div>
-          <div class="kpi-label">Gross profit</div>
-          <div class="kpi-value text-success">{% money kpis.gross_profit %}</div>
-        </div>
-        <div class="kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-piggy-bank"></i></div>
-      </div>
-      {% include "dashboard/_trend.html" with value=trends.gross_profit label="vs previous period" %}
-      <div class="spark"><canvas data-spark="profit" data-color="#16a34a"></canvas></div>
-    </div></a>
-  </div>
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'expenses' %}?from={{ date_from }}&to={{ date_to }}" class="text-reset">
-    <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#d97706,#fcd34d)">
-      <div class="d-flex justify-content-between align-items-start">
-        <div>
-          <div class="kpi-label">Est. net profit</div>
-          <div class="kpi-value {% if kpis.net_profit < 0 %}text-danger{% endif %}">{% money kpis.net_profit %}</div>
-        </div>
-        <div class="kpi-icon" style="background:#fef3c7;color:#d97706"><i class="bi bi-wallet2"></i></div>
-      </div>
-      {% include "dashboard/_trend.html" with value=trends.net_profit label="vs previous period" %}
-      <div class="spark"><canvas data-spark="expenses" data-color="#d97706"></canvas></div>
-    </div></a>
-  </div>
-  {% endif %}
-</div>
-
-<div class="row g-3 mb-3">
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'receivables' %}" class="text-reset">
+  <div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#f59e0b,#fde68a)">
       <div class="d-flex justify-content-between align-items-start">
-        <div><div class="kpi-label">Receivables</div>
-          <div class="kpi-value {% if kpis.receivables > 0 %}text-warning{% endif %}">{% money kpis.receivables %}</div></div>
+        <div><div class="kpi-label">Today Credit / Receivable</div><div class="kpi-value {% if kpis.today_receivable > 0 %}text-warning{% endif %}">{% money kpis.today_receivable %}</div></div>
         <div class="kpi-icon" style="background:#fef3c7;color:#d97706"><i class="bi bi-person-up"></i></div>
       </div>
-      <div class="small text-secondary mt-1">Owed to you by customers</div>
-    </div></a>
+      <div class="small text-secondary mt-1">Credit and unpaid invoices</div>
+    </div>
   </div>
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'supplier_balances' %}" class="text-reset">
+  <div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#dc2626,#fca5a5)">
       <div class="d-flex justify-content-between align-items-start">
-        <div><div class="kpi-label">Payables</div>
-          <div class="kpi-value">{% money kpis.payables %}</div></div>
-        <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-truck"></i></div>
+        <div><div class="kpi-label">Today Returns / Refunds</div><div class="kpi-value text-danger">{% money kpis.today_returns %}</div></div>
+        <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-arrow-counterclockwise"></i></div>
       </div>
-      <div class="small text-secondary mt-1">Owed to suppliers</div>
-    </div></a>
+      <div class="small text-secondary mt-1">Shown separately</div>
+    </div>
   </div>
-  {% if kpis.stock_value is not None %}
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'current_stock' %}" class="text-reset">
+  <div class="col-6 col-xl-2">
+    <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#16a34a,#86efac)">
+      <div class="d-flex justify-content-between align-items-start">
+        <div><div class="kpi-label">Net Sales</div><div class="kpi-value">{% money kpis.today_net_sales %}</div></div>
+        <div class="kpi-icon" style="background:#dcfce7;color:#16a34a"><i class="bi bi-graph-up"></i></div>
+      </div>
+      <div class="small text-secondary mt-1">Today sales minus returns</div>
+    </div>
+  </div>
+  <div class="col-6 col-xl-2">
+    <a href="{% url 'reports:view' 'receivables' %}" class="text-reset">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#6366f1,#c7d2fe)">
       <div class="d-flex justify-content-between align-items-start">
-        <div><div class="kpi-label">Inventory value</div>
-          <div class="kpi-value">{% money kpis.stock_value %}</div></div>
-        <div class="kpi-icon" style="background:#e0e7ff;color:#6366f1"><i class="bi bi-boxes"></i></div>
+        <div><div class="kpi-label">Pending Balance</div><div class="kpi-value {% if kpis.receivables > 0 %}text-warning{% endif %}">{% money kpis.receivables %}</div></div>
+        <div class="kpi-icon" style="background:#e0e7ff;color:#6366f1"><i class="bi bi-hourglass-split"></i></div>
       </div>
-      <div class="small text-secondary mt-1">At average cost</div>
-    </div></a>
-  </div>
-  {% endif %}
-  <div class="col-6 col-xl-3">
-    <a href="{% url 'reports:view' 'low_stock' %}" class="text-reset">
-    <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#ef4444,#fecaca)">
-      <div class="d-flex justify-content-between align-items-start">
-        <div><div class="kpi-label">Low stock alerts</div>
-          <div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock }}</div></div>
-        <div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div>
-      </div>
-      <div class="small text-secondary mt-1">Returns this period: {% money kpis.returns %}</div>
+      <div class="small text-secondary mt-1">Total outstanding receivables</div>
     </div></a>
   </div>
 </div>
 
-{# ---------- charts ---------- #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0f766e,#5eead4)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Cash</div><div class="kpi-value">{% money kpis.cash %}</div></div><div class="kpi-icon" style="background:#ccfbf1;color:#0f766e"><i class="bi bi-cash-stack"></i></div></div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#2563eb,#93c5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Card</div><div class="kpi-value">{% money kpis.card %}</div></div><div class="kpi-icon" style="background:#dbeafe;color:#2563eb"><i class="bi bi-credit-card"></i></div></div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#7c3aed,#c4b5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Bank Transfer</div><div class="kpi-value">{% money kpis.bank %}</div></div><div class="kpi-icon" style="background:#ede9fe;color:#7c3aed"><i class="bi bi-bank"></i></div></div></div></div>
+  <div class="col-6 col-xl-2"><a href="{% url 'reports:view' 'low_stock' %}" class="text-reset"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#ef4444,#fecaca)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Low Stock Items</div><div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock|intcomma }}</div></div><div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div></div></div></a></div>
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Orders Booked</div><div class="kpi-value">{{ delivery_counts.booked|intcomma }}</div></div><div class="kpi-icon" style="background:#e2e8f0;color:#334155"><i class="bi bi-clipboard-check"></i></div></div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0891b2,#67e8f9)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Ready for Delivery</div><div class="kpi-value">{{ delivery_counts.ready|intcomma }}</div></div><div class="kpi-icon" style="background:#cffafe;color:#0891b2"><i class="bi bi-bag-check"></i></div></div></div></div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Orders In Process</span><span class="badge badge-status bs-in_production">{{ delivery_counts.in_process|intcomma }}</span></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Orders Finished</span><span class="badge badge-status bs-ready">{{ delivery_counts.finished|intcomma }}</span></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Pending Delivery</span><strong>{{ delivery_counts.pending_delivery|intcomma }}</strong></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Sales / Income</span><strong>{% money kpis.period_sales %} / {% money kpis.period_income %}</strong></div></div></div>
+</div>
+
+{% if show_profit %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Gross Profit</span><strong class="text-success">{% money kpis.gross_profit %}</strong></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Est. Net Profit</span><strong class="{% if kpis.net_profit < 0 %}text-danger{% endif %}">{% money kpis.net_profit %}</strong></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Credit</span><strong class="text-warning">{% money kpis.period_credit %}</strong></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Inventory Value</span><strong>{% if kpis.stock_value is not None %}{% money kpis.stock_value %}{% else %}-{% endif %}</strong></div></div></div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-3">
   <div class="col-lg-8">
-    <div class="card chart-card"><div class="card-header">Revenue &amp; profit trend</div>
+    <div class="card chart-card"><div class="card-header">Monthly sales &amp; income trend</div>
       <div class="card-body"><div class="chart-frame chart-frame-trend"><canvas id="trendChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
-    <div class="card chart-card"><div class="card-header">Payment methods</div>
+    <div class="card chart-card"><div class="card-header">Payment method breakdown</div>
       <div class="card-body"><div class="chart-frame chart-frame-method"><canvas id="methodChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
-    <div class="card chart-card"><div class="card-header">Best-selling products</div>
+    <div class="card chart-card"><div class="card-header">Top products</div>
       <div class="card-body"><div class="chart-frame chart-frame-products"><canvas id="productChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
@@ -213,77 +176,80 @@
   </div>
 </div>
 
-{# ---------- activity widgets ---------- #}
 <div class="row g-3">
-  <div class="col-lg-4">
-    <div class="card widget-card h-100">
+  <div class="col-xl-6">
+    <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Recent sales</span><a class="small" href="{% url 'sales:list' %}">View all</a></div>
-      <div class="list-group list-group-flush">
-        {% for s in widgets.recent_sales %}
-        <a href="{% url 'sales:detail' s.public_id %}" class="list-group-item list-group-item-action d-flex justify-content-between">
-          <span><strong>{{ s.invoice_number }}</strong>
-            <span class="small text-secondary d-block">{{ s.customer.full_name }} · {{ s.sale_date|date:"M d H:i" }}</span></span>
-          <span class="fw-semibold">{% money s.total %}</span>
-        </a>
-        {% empty %}<div class="list-group-item text-secondary small">No sales yet</div>{% endfor %}
+        <span>Top Products</span><a class="small" href="{% url 'reports:view' 'product_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm commercial-table mb-0">
+          <thead><tr><th>Product</th><th>SKU</th><th class="text-end">Qty Sold</th><th class="text-end">Sales Amount</th>{% if show_profit %}<th class="text-end">Gross Profit</th>{% endif %}</tr></thead>
+          <tbody>
+            {% for p in top_products_table %}
+            <tr><td class="name-cell">{{ p.product }}</td><td>{{ p.sku }}</td><td class="text-end">{{ p.qty }}</td><td class="text-end">{% money p.sales %}</td>{% if show_profit %}<td class="text-end">{% money p.profit %}</td>{% endif %}</tr>
+            {% empty %}<tr><td colspan="{% if show_profit %}5{% else %}4{% endif %}" class="text-secondary small">No product sales in this period.</td></tr>{% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card widget-card h-100">
+  <div class="col-xl-6">
+    <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Pending receivables</span><a class="small" href="{% url 'reports:view' 'receivables' %}">Report</a></div>
-      <div class="list-group list-group-flush">
-        {% for c in widgets.pending_receivables %}
-        <a href="{% url 'customers:detail' c.public_id %}" class="list-group-item list-group-item-action d-flex justify-content-between">
-          <span>{{ c.full_name }}<span class="small text-secondary d-block">{{ c.mobile|default:c.code }}</span></span>
-          <span class="fw-semibold text-warning">{% money c.balance %}</span>
-        </a>
-        {% empty %}<div class="list-group-item text-secondary small">Nothing outstanding 🎉</div>{% endfor %}
+        <span>Top Customers</span><a class="small" href="{% url 'reports:view' 'customer_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>
       </div>
-      <div class="card-header border-top d-flex justify-content-between align-items-center">
-        <span>Pending payables</span><a class="small" href="{% url 'suppliers:list' %}">Suppliers</a></div>
-      <div class="list-group list-group-flush">
-        {% for s in widgets.pending_payables %}
-        <a href="{% url 'suppliers:detail' s.public_id %}" class="list-group-item list-group-item-action d-flex justify-content-between">
-          <span>{{ s.name }}</span><span class="fw-semibold text-danger">{% money s.balance %}</span>
-        </a>
-        {% empty %}<div class="list-group-item text-secondary small">No supplier balances</div>{% endfor %}
+      <div class="table-responsive">
+        <table class="table table-sm commercial-table mb-0">
+          <thead><tr><th>Customer</th><th>Phone</th><th class="text-end">Sales Amount</th><th class="text-end">Paid Amount</th><th class="text-end">Credit / Receivable</th></tr></thead>
+          <tbody>
+            {% for c in top_customers_table %}
+            <tr><td class="name-cell">{{ c.customer }}</td><td>{{ c.phone }}</td><td class="text-end">{% money c.sales %}</td><td class="text-end">{% money c.paid %}</td><td class="text-end {% if c.receivable > 0 %}text-warning fw-semibold{% endif %}">{% money c.receivable %}</td></tr>
+            {% empty %}<tr><td colspan="5" class="text-secondary small">No customer sales in this period.</td></tr>{% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card widget-card h-100">
+  <div class="col-xl-7">
+    <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Low stock</span><a class="small" href="{% url 'reports:view' 'low_stock' %}">Reorder report</a></div>
-      <div class="list-group list-group-flush">
-        {% for l in widgets.low_stock_items %}
-        <a href="{% url 'catalog:product_detail' l.product.public_id %}" class="list-group-item list-group-item-action d-flex justify-content-between">
-          <span>{{ l.product.name|truncatechars:28 }}
-            <span class="small text-secondary d-block">{{ l.warehouse.name }}</span></span>
-          <span class="fw-semibold text-danger">{{ l.quantity }} / {{ l.product.reorder_level }}</span>
-        </a>
-        {% empty %}<div class="list-group-item text-secondary small">All stock levels healthy</div>{% endfor %}
+        <span>Recent Sales</span><a class="small" href="{% url 'sales:list' %}">View all</a>
       </div>
-      <div class="card-header border-top d-flex justify-content-between align-items-center">
-        <span>POs awaiting receipt</span><a class="small" href="{% url 'purchases:list' %}">Purchases</a></div>
-      <div class="list-group list-group-flush">
-        {% for p in widgets.awaiting_pos %}
-        <a href="{% url 'purchases:detail' p.public_id %}" class="list-group-item list-group-item-action d-flex justify-content-between">
-          <span>{{ p.purchase_number }}<span class="small text-secondary d-block">{{ p.supplier.name }}</span></span>
-          <span class="badge badge-status bs-{{ p.status }}">{{ p.get_status_display }}</span>
-        </a>
-        {% empty %}<div class="list-group-item text-secondary small">Nothing pending</div>{% endfor %}
+      <div class="table-responsive">
+        <table class="table table-sm commercial-table mb-0">
+          <thead><tr><th>Invoice No</th><th>Customer</th><th>Phone</th><th class="text-end">Total</th><th class="text-end">Paid</th><th class="text-end">Balance</th><th>Status</th></tr></thead>
+          <tbody>
+            {% for s in widgets.recent_sales %}
+            <tr>
+              <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
+              <td class="name-cell">{{ s.customer.full_name }}</td>
+              <td>{{ s.customer.mobile|default:"-" }}</td>
+              <td class="text-end">{% money s.total %}</td>
+              <td class="text-end">{% money s.amount_paid %}</td>
+              <td class="text-end {% if s.balance > 0 %}text-warning fw-semibold{% endif %}">{% money s.balance %}</td>
+              <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
+            </tr>
+            {% empty %}<tr><td colspan="7" class="text-secondary small">No sales yet.</td></tr>{% endfor %}
+          </tbody>
+        </table>
       </div>
-      <div class="card-header border-top">Recent expenses</div>
-      <div class="list-group list-group-flush">
-        {% for e in widgets.recent_expenses %}
-        <div class="list-group-item d-flex justify-content-between">
-          <span>{{ e.category.name }}<span class="small text-secondary d-block">{{ e.expense_date }}</span></span>
-          <span class="fw-semibold">{% money e.amount %}</span>
-        </div>
-        {% empty %}<div class="list-group-item text-secondary small">No expenses recorded</div>{% endfor %}
+    </div>
+  </div>
+  <div class="col-xl-5">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Low Stock</span><a class="small" href="{% url 'reports:view' 'low_stock' %}">Reorder report</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm commercial-table mb-0">
+          <thead><tr><th>Product</th><th>SKU</th><th class="text-end">Current Stock</th><th class="text-end">Minimum Stock</th><th>Warehouse</th></tr></thead>
+          <tbody>
+            {% for l in widgets.low_stock_items %}
+            <tr><td class="name-cell"><a href="{% url 'catalog:product_detail' l.product.public_id %}">{{ l.product.name }}</a></td><td>{{ l.product.sku|default:"-" }}</td><td class="text-end text-danger fw-semibold">{{ l.quantity }}</td><td class="text-end">{{ l.product.reorder_level }}</td><td>{{ l.warehouse.name }}</td></tr>
+            {% empty %}<tr><td colspan="5" class="text-secondary small">All stock levels are healthy.</td></tr>{% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -304,8 +270,7 @@
 <script>
 (function() {
   document.querySelector('.np-content')?.classList.add('dash-bg');
-  const palette = ['#0d6efd', '#0ea5a4', '#16a34a', '#d97706', '#dc2626',
-                   '#6366f1', '#0891b2', '#65a30d'];
+  const palette = ['#0f766e', '#2563eb', '#7c3aed', '#f59e0b'];
   const get = id => JSON.parse(document.getElementById(id).textContent);
   const PREC = {{ current_business.currency_precision }};
   const CURR = "{{ current_business.currency_display|escapejs }}";
@@ -316,16 +281,8 @@
   Chart.defaults.responsive = true;
   Chart.defaults.maintainAspectRatio = false;
 
-  const cleanLegend = {
-    labels: {
-      boxWidth: 10,
-      boxHeight: 10,
-      padding: 14,
-      usePointStyle: true,
-      pointStyle: 'rectRounded',
-      font: {size: 12, weight: '600'}
-    }
-  };
+  const cleanLegend = {labels: {boxWidth: 10, boxHeight: 10, padding: 14,
+    usePointStyle: true, pointStyle: 'rectRounded', font: {size: 12, weight: '600'}}};
   const chartLayout = extra => ({
     padding: Object.assign({top: 8, right: 14, bottom: 6, left: 8}, extra || {})
   });
@@ -337,12 +294,8 @@
     let line = '';
     words.forEach(word => {
       const next = line ? `${line} ${word}` : word;
-      if (next.length > 18 && line) {
-        lines.push(line);
-        line = word;
-      } else {
-        line = next;
-      }
+      if (next.length > 18 && line) { lines.push(line); line = word; }
+      else { line = next; }
     });
     if (line) lines.push(line);
     return lines.slice(0, 2);
@@ -351,48 +304,44 @@
     return splitLabel(this.getLabelForValue ? this.getLabelForValue(value) : value);
   };
 
-  // Sparklines inside KPI cards (canvas lives in a fixed-height .spark box)
   const sparks = get('spark-data');
   document.querySelectorAll('.spark canvas').forEach(el => {
     const data = sparks[el.dataset.spark] || [];
     if (!data.length) { el.parentElement.style.display = 'none'; return; }
-    new Chart(el, {
-      type: 'line',
-      data: {labels: data.map((_, i) => i),
-             datasets: [{data, borderColor: el.dataset.color, borderWidth: 2,
-                         pointRadius: 0, fill: true, tension: .35,
-                         backgroundColor: el.dataset.color + '18'}]},
+    new Chart(el, {type: 'line',
+      data: {labels: data.map((_, i) => i), datasets: [{data, borderColor: el.dataset.color,
+        borderWidth: 2, pointRadius: 0, fill: true, tension: .35,
+        backgroundColor: el.dataset.color + '18'}]},
       options: {plugins: {legend: {display: false}, tooltip: {enabled: false}},
-                scales: {x: {display: false}, y: {display: false}},
-                responsive: true, maintainAspectRatio: false}
-    });
+        scales: {x: {display: false}, y: {display: false}},
+        responsive: true, maintainAspectRatio: false}});
   });
 
-  // Revenue & profit trend with gradient fill
   const trend = get('trend-data');
   const tctx = document.getElementById('trendChart').getContext('2d');
   const grad = tctx.createLinearGradient(0, 0, 0, 260);
-  grad.addColorStop(0, 'rgba(13,110,253,.22)'); grad.addColorStop(1, 'rgba(13,110,253,0)');
-  const datasets = [{label: 'Revenue', data: trend.sales, borderColor: '#0d6efd',
-    backgroundColor: grad, fill: true, tension: .35, pointRadius: 2}];
-  if (trend.profit.length)
+  grad.addColorStop(0, 'rgba(13,110,253,.22)');
+  grad.addColorStop(1, 'rgba(13,110,253,0)');
+  const datasets = [
+    {label: 'Sales booked', data: trend.sales, borderColor: '#0d6efd',
+      backgroundColor: grad, fill: true, tension: .35, pointRadius: 2},
+    {label: 'Income received', data: trend.income, borderColor: '#0f766e',
+      backgroundColor: 'transparent', tension: .35, pointRadius: 2, borderDash: [5, 4]}
+  ];
+  if (trend.profit.length) {
     datasets.push({label: 'Gross profit', data: trend.profit, borderColor: '#16a34a',
-      backgroundColor: 'transparent', tension: .35, pointRadius: 2, borderDash: [5, 4]});
+      backgroundColor: 'transparent', tension: .35, pointRadius: 2, borderDash: [2, 4]});
+  }
   new Chart(tctx, {type: 'line', data: {labels: trend.labels, datasets},
-    options: {interaction: {mode: 'index', intersect: false},
-              animation: false,
-              layout: chartLayout({right: 18, left: 10}),
-              plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend),
-                        tooltip: {callbacks: {
-                          label: ctx => `${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`}}},
-              scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'},
-                           ticks: {maxTicksLimit: 6, padding: 8}},
-                       x: {grid: {display: false},
-                           ticks: {maxTicksLimit: 12, maxRotation: 0, padding: 8}}}}});
+    options: {interaction: {mode: 'index', intersect: false}, animation: false,
+      layout: chartLayout({right: 18, left: 10}),
+      plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend),
+        tooltip: {callbacks: {label: ctx => `${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y)}`}}},
+      scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}, ticks: {maxTicksLimit: 6, padding: 8}},
+        x: {grid: {display: false}, ticks: {maxTicksLimit: 12, maxRotation: 0, padding: 8}}}}});
 
   const methods = get('method-data');
-  new Chart(document.getElementById('methodChart'), {
-    type: 'doughnut',
+  new Chart(document.getElementById('methodChart'), {type: 'doughnut',
     data: {labels: methods.labels, datasets: [{data: methods.data,
       backgroundColor: palette, borderWidth: 2, borderColor: '#fff',
       hoverOffset: 0, hoverBorderWidth: 2}]},
@@ -403,18 +352,16 @@
   const hbar = (id, labels, data, color, label) => new Chart(
     document.getElementById(id), {type: 'bar',
       data: {labels, datasets: [{label, data, backgroundColor: color,
-                                 borderRadius: 6, hoverBackgroundColor: color}]},
+        borderRadius: 6, hoverBackgroundColor: color}]},
       options: {animation: false, indexAxis: 'y',
-                layout: chartLayout({right: 18, left: 4}),
-                plugins: {legend: {display: false}},
-                scales: {x: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                         y: {grid: {display: false},
-                             ticks: {callback: tickLabel, autoSkip: false,
-                                     padding: 8, font: {size: 11}}}}}});
+        layout: chartLayout({right: 18, left: 4}), plugins: {legend: {display: false}},
+        scales: {x: {beginAtZero: true, grid: {color: '#eef2f7'}},
+          y: {grid: {display: false}, ticks: {callback: tickLabel, autoSkip: false,
+            padding: 8, font: {size: 11}}}}}});
   const products = get('product-data');
-  hbar('productChart', products.labels, products.data, '#0d6efd', 'Revenue');
+  hbar('productChart', products.labels, products.data, '#0d6efd', 'Sales Amount');
   const customers = get('customer-data');
-  hbar('customerChart', customers.labels, customers.data, '#6366f1', 'Purchases');
+  hbar('customerChart', customers.labels, customers.data, '#6366f1', 'Sales Amount');
 
   const branchesData = get('branch-data');
   new Chart(document.getElementById('branchChart'), {type: 'bar',
@@ -422,33 +369,29 @@
       data: branchesData.data, backgroundColor: '#0ea5a4',
       hoverBackgroundColor: '#0ea5a4', borderRadius: 6}]},
     options: {animation: false, layout: chartLayout({right: 14, left: 8}),
-              plugins: {legend: {display: false}},
-              scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                       x: {grid: {display: false},
-                           ticks: {callback: tickLabel, autoSkip: false,
-                                   maxRotation: 0, padding: 8, font: {size: 11}}}}}});
+      plugins: {legend: {display: false}},
+      scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
+        x: {grid: {display: false}, ticks: {callback: tickLabel, autoSkip: false,
+          maxRotation: 0, padding: 8, font: {size: 11}}}}}});
 
   const hourly = get('hourly-data');
   new Chart(document.getElementById('hourlyChart'), {type: 'bar',
     data: {labels: hourly.labels, datasets: [{label: 'Sales', data: hourly.data,
       backgroundColor: hourly.data.map(v => v > 0 ? '#0d6efd' : '#e2e8f0'),
       borderRadius: 4}]},
-    options: {animation: false,
-              layout: chartLayout({right: 12, left: 8}),
-              plugins: {legend: {display: false}},
-              scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                       x: {grid: {display: false}}}}});
+    options: {animation: false, layout: chartLayout({right: 12, left: 8}),
+      plugins: {legend: {display: false}},
+      scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}}, x: {grid: {display: false}}}}});
 
   const movement = get('movement-data');
   new Chart(document.getElementById('movementChart'), {type: 'bar',
     data: {labels: movement.labels, datasets: [
       {label: 'Stock in', data: movement.stock_in, backgroundColor: '#16a34a', borderRadius: 4},
       {label: 'Stock out', data: movement.stock_out, backgroundColor: '#dc2626', borderRadius: 4}]},
-    options: {animation: false,
-              layout: chartLayout({right: 12, left: 8}),
-              plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend)},
-              scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
-                       x: {grid: {display: false}, stacked: false}}}});
+    options: {animation: false, layout: chartLayout({right: 12, left: 8}),
+      plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend)},
+      scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
+        x: {grid: {display: false}, stacked: false}}}});
 })();
 </script>
 {% endblock %}

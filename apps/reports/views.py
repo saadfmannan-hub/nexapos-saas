@@ -1,4 +1,5 @@
-from datetime import date as date_cls, timedelta
+from datetime import date as date_cls
+from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib import messages
@@ -42,16 +43,18 @@ def _default_range(request):
 # ---------------------------------------------------------------------------
 @require_permission("dashboard.view")
 def dashboard(request):
+    from apps.core.money import money
     from apps.customers.models import Customer
     from apps.expenses.models import Expense
     from apps.inventory import services as inventory
     from apps.inventory.models import StockLevel
-    from apps.sales.models import Sale, SaleItem, SalePayment, SaleReturn
+    from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment, SaleReturn
     from apps.suppliers.models import Supplier
 
     business = request.business
     today = timezone.localdate()
     month_start = today.replace(day=1)
+    week_start = today - timedelta(days=today.weekday())
     date_from = request.GET.get("from") or str(month_start)
     date_to = request.GET.get("to") or str(today)
     branch_id = request.GET.get("branch", "")
@@ -63,6 +66,53 @@ def dashboard(request):
     if branch_id.isdigit():
         period = period.filter(branch_id=branch_id)
 
+    real_payment_kinds = (
+        PaymentMethod.Kind.CASH,
+        PaymentMethod.Kind.CARD,
+        PaymentMethod.Kind.BANK,
+    )
+
+    def payments_for_range(start, end):
+        qs = SalePayment.objects.for_business(business).filter(
+            payment_date__gte=start,
+            payment_date__lte=end,
+        )
+        qs = qs.exclude(sale__status__in=["draft", "voided"])
+        if branch_id.isdigit():
+            qs = qs.filter(sale__branch_id=branch_id)
+        return qs
+
+    def payment_totals(payment_qs):
+        totals = {"cash": ZERO, "card": ZERO, "bank": ZERO, "credit": ZERO}
+        for row in (
+            payment_qs.values("method__kind")
+            .annotate(total=Sum("amount"))
+        ):
+            kind = row["method__kind"]
+            amount = row["total"] or ZERO
+            if kind == PaymentMethod.Kind.CASH:
+                totals["cash"] += amount
+            elif kind == PaymentMethod.Kind.CARD:
+                totals["card"] += amount
+            elif kind == PaymentMethod.Kind.BANK:
+                totals["bank"] += amount
+            elif kind == PaymentMethod.Kind.CUSTOMER_CREDIT:
+                totals["credit"] += amount
+        totals["income"] = totals["cash"] + totals["card"] + totals["bank"]
+        return {key: money(value) for key, value in totals.items()}
+
+    today_sales_qs = sales.filter(sale_date__date=today)
+    today_returns_qs = SaleReturn.objects.for_business(business).filter(
+        created_at__date=today)
+    if branch_id.isdigit():
+        today_sales_qs = today_sales_qs.filter(branch_id=branch_id)
+        today_returns_qs = today_returns_qs.filter(branch_id=branch_id)
+    today_sales = today_sales_qs.aggregate(t=Sum("total"))["t"] or ZERO
+    today_returns = today_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
+    today_receivable = sum((sale.balance for sale in today_sales_qs), ZERO)
+    today_payments = payment_totals(payments_for_range(today, today))
+    period_payments = payment_totals(payments_for_range(date_from, date_to))
+
     show_profit = request.membership.has_perm("profit.view")
     agg = period.aggregate(
         sum_total=Sum("total"), count=Count("id"), avg=Avg("total"),
@@ -71,7 +121,6 @@ def dashboard(request):
     )
     agg["total"] = agg.pop("sum_total")
     agg["subtotal"] = agg.pop("sum_subtotal")
-    today_sales = sales.filter(sale_date__date=today).aggregate(t=Sum("total"))["t"] or ZERO
     credit_outstanding = (
         Customer.objects.for_business(business).aggregate(t=Sum("balance"))["t"] or ZERO
     )
@@ -84,19 +133,35 @@ def dashboard(request):
     if branch_id.isdigit():
         expenses_qs = expenses_qs.filter(branch_id=branch_id)
     expenses_total = expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
-    returns_total = (
-        SaleReturn.objects.for_business(business)
-        .filter(created_at__date__gte=date_from, created_at__date__lte=date_to)
-        .aggregate(t=Sum("refund_amount"))["t"] or ZERO
+    period_returns_qs = SaleReturn.objects.for_business(business).filter(
+        created_at__date__gte=date_from, created_at__date__lte=date_to)
+    if branch_id.isdigit():
+        period_returns_qs = period_returns_qs.filter(branch_id=branch_id)
+    returns_total = period_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
+    low_stock_qs = StockLevel.objects.for_business(business).filter(
+        product__reorder_level__gt=0,
+        quantity__lte=F("product__reorder_level"),
     )
-    low_stock_count = (
-        StockLevel.objects.for_business(business)
-        .filter(product__reorder_level__gt=0,
-                quantity__lte=F("product__reorder_level")).count()
-    )
+    if branch_id.isdigit():
+        low_stock_qs = low_stock_qs.filter(warehouse__branch_id=branch_id)
+    low_stock_count = low_stock_qs.count()
     stock_value = inventory.stock_value(business) if show_profit else None
     gross = agg["profit"] or ZERO
     margin = (gross / agg["subtotal"] * 100) if (agg["subtotal"] or 0) > 0 else ZERO
+
+    delivery_counts = {
+        "booked": period.count(),
+        "in_process": period.filter(delivery_status=Sale.DeliveryStatus.IN_PRODUCTION).count(),
+        "finished": period.filter(delivery_status=Sale.DeliveryStatus.READY).count(),
+        "ready": period.filter(delivery_status=Sale.DeliveryStatus.READY).count(),
+        "pending_delivery": period.filter(
+            delivery_status__in=[
+                Sale.DeliveryStatus.PENDING,
+                Sale.DeliveryStatus.IN_PRODUCTION,
+                Sale.DeliveryStatus.READY,
+            ]
+        ).count(),
+    }
 
     # ---- chart datasets (real data) ---------------------------------------
     trend = (
@@ -104,12 +169,21 @@ def dashboard(request):
         .annotate(total=Sum("total"), profit=Sum("gross_profit"))
         .order_by("day")
     )
+    income_trend = (
+        payments_for_range(date_from, date_to)
+        .filter(method__kind__in=real_payment_kinds)
+        .values("payment_date")
+        .annotate(total=Sum("amount"))
+        .order_by("payment_date")
+    )
     # Zero-fill the full selected range so the trend is a daily series
     # (days without sales plot as 0), not one dot per day that had sales.
     d_from = date_cls.fromisoformat(str(date_from))
     d_to = date_cls.fromisoformat(str(date_to))
     by_day = {str(r["day"]): r for r in trend}
-    iso_labels, pretty_labels, sales_series, profit_series = [], [], [], []
+    income_by_day = {str(r["payment_date"]): r["total"] or ZERO for r in income_trend}
+    iso_labels, pretty_labels = [], []
+    sales_series, income_series, profit_series = [], [], []
     day = d_from
     # Safety cap: ranges beyond ~2 years fall back to sales-days only.
     fill_daily = (d_to - d_from).days <= 750
@@ -120,36 +194,52 @@ def dashboard(request):
             iso_labels.append(key)
             pretty_labels.append(day.strftime("%b %d"))
             sales_series.append(float(row["total"] or 0) if row else 0.0)
+            income_series.append(float(income_by_day.get(key, ZERO)))
             profit_series.append(float(row["profit"] or 0) if row else 0.0)
             day += timedelta(days=1)
     else:
         for r in trend:
-            iso_labels.append(str(r["day"]))
+            key = str(r["day"])
+            iso_labels.append(key)
             pretty_labels.append(r["day"].strftime("%b %d"))
             sales_series.append(float(r["total"] or 0))
+            income_series.append(float(income_by_day.get(key, ZERO)))
             profit_series.append(float(r["profit"] or 0))
     chart_trend = {
         "labels": pretty_labels,
         "sales": sales_series,
+        "income": income_series,
         "profit": profit_series if show_profit else [],
     }
-    by_method = (
-        SalePayment.objects.for_business(business)
-        .filter(sale__in=period).values("method__name")
-        .annotate(t=Sum("amount")).order_by("-t")
-    )
+    method_rows = [
+        ("Cash", period_payments["cash"]),
+        ("Card", period_payments["card"]),
+        ("Bank Transfer", period_payments["bank"]),
+        ("Customer Credit", period_payments["credit"]),
+    ]
     chart_methods = {
-        "labels": [r["method__name"] for r in by_method],
-        "data": [float(r["t"] or 0) for r in by_method],
+        "labels": [name for name, _amount in method_rows],
+        "data": [float(amount or 0) for _name, amount in method_rows],
     }
-    top_products = (
+    top_products = []
+    for item in (
         SaleItem.objects.for_business(business)
-        .filter(sale__in=period).values("product__name")
-        .annotate(t=Sum("line_total")).order_by("-t")[:8]
-    )
+        .filter(sale__in=period)
+        .values("product_name", "sku")
+        .annotate(qty=Sum("quantity"), sales=Sum("line_total"),
+                  profit=Sum("gross_profit"))
+        .order_by("-sales")[:8]
+    ):
+        top_products.append({
+            "product": item["product_name"],
+            "sku": item["sku"] or "-",
+            "qty": item["qty"] or ZERO,
+            "sales": item["sales"] or ZERO,
+            "profit": item["profit"] or ZERO,
+        })
     chart_products = {
-        "labels": [r["product__name"][:24] for r in top_products],
-        "data": [float(r["t"] or 0) for r in top_products],
+        "labels": [r["product"][:24] for r in top_products],
+        "data": [float(r["sales"] or 0) for r in top_products],
     }
     by_branch = (
         period.values("branch__name").annotate(t=Sum("total")).order_by("-t")
@@ -222,14 +312,25 @@ def dashboard(request):
         "stock_in": [float(r["qin"] or 0) for r in movements],
         "stock_out": [abs(float(r["qout"] or 0)) for r in movements],
     }
-    top_cust = (
+    top_customers = []
+    for customer in (
         period.exclude(customer__is_walk_in=True)
-        .values("customer__full_name").annotate(t=Sum("total"))
-        .order_by("-t")[:6]
-    )
+        .values("customer__full_name", "customer__mobile")
+        .annotate(sales=Sum("total"), paid=Sum("amount_paid"))
+        .order_by("-sales")[:8]
+    ):
+        sales_total = customer["sales"] or ZERO
+        paid_total = customer["paid"] or ZERO
+        top_customers.append({
+            "customer": customer["customer__full_name"],
+            "phone": customer["customer__mobile"] or "-",
+            "sales": sales_total,
+            "paid": paid_total,
+            "receivable": money(sales_total - paid_total),
+        })
     chart_customers = {
-        "labels": [r["customer__full_name"][:22] for r in top_cust],
-        "data": [float(r["t"] or 0) for r in top_cust],
+        "labels": [r["customer"][:22] for r in top_customers],
+        "data": [float(r["sales"] or 0) for r in top_customers],
     }
 
     # ---- activity widgets ---------------------------------------------------
@@ -238,7 +339,7 @@ def dashboard(request):
     from apps.suppliers.models import Supplier as SupplierModel
 
     widgets = {
-        "recent_sales": sales.select_related("customer").order_by("-sale_date")[:7],
+        "recent_sales": sales.select_related("customer").order_by("-sale_date")[:8],
         "recent_expenses": Expense.objects.for_business(business)
             .exclude(status__in=["rejected", "cancelled"])
             .select_related("category").order_by("-expense_date", "-created_at")[:5],
@@ -246,10 +347,7 @@ def dashboard(request):
             .filter(balance__gt=0).order_by("-balance")[:5],
         "pending_payables": SupplierModel.objects.for_business(business)
             .filter(balance__gt=0).order_by("-balance")[:5],
-        "low_stock_items": StockLevel.objects.for_business(business)
-            .filter(product__reorder_level__gt=0,
-                    quantity__lte=F("product__reorder_level"))
-            .select_related("product", "warehouse")[:7],
+        "low_stock_items": low_stock_qs.select_related("product", "warehouse")[:8],
         "awaiting_pos": Purchase.objects.for_business(business)
             .filter(status__in=["order", "partially_received"])
             .select_related("supplier").order_by("-purchase_date")[:5],
@@ -260,10 +358,24 @@ def dashboard(request):
     return render(request, "dashboard/index.html", {
         "active_nav": "dashboard",
         "date_from": date_from, "date_to": date_to,
+        "range_presets": {
+            "today": {"from": str(today), "to": str(today)},
+            "week": {"from": str(week_start), "to": str(today)},
+            "month": {"from": str(month_start), "to": str(today)},
+        },
         "branches": Branch.objects.for_business(business).filter(is_active=True),
         "kpis": {
             "today_sales": today_sales,
+            "today_income": today_payments["income"],
+            "today_receivable": money(today_receivable),
+            "today_returns": today_returns,
+            "today_net_sales": money(today_sales - today_returns),
+            "cash": today_payments["cash"],
+            "card": today_payments["card"],
+            "bank": today_payments["bank"],
             "period_sales": agg["total"] or ZERO,
+            "period_income": period_payments["income"],
+            "period_credit": period_payments["credit"],
             "invoices": agg["count"] or 0,
             "avg_invoice": agg["avg"] or ZERO,
             "collected": agg["paid"] or ZERO,
@@ -281,6 +393,9 @@ def dashboard(request):
         "chart_products": chart_products, "chart_branches": chart_branches,
         "chart_hourly": chart_hourly, "chart_movement": chart_movement,
         "chart_customers": chart_customers,
+        "delivery_counts": delivery_counts,
+        "top_products_table": top_products,
+        "top_customers_table": top_customers,
         "trends": trends,
         "sparks": {"sales": spark_sales, "profit": spark_profit,
                    "expenses": spark_expenses},

@@ -303,3 +303,60 @@ class ExportTests(TenantTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["kpis"]["invoices"], 1)
         self.assertEqual(response.context["kpis"]["period_sales"], D("21.000"))
+
+    def test_dashboard_owner_kpis_separate_sales_income_credit_and_returns(self):
+        from apps.customers.models import Customer
+        from apps.sales import services as sales
+        from apps.sales.models import PaymentMethod, SaleReturn
+
+        bank = PaymentMethod.objects.for_business(self.business_a).get(kind="bank")
+        customer = Customer.objects.create(
+            business=self.business_a, code="DASH-CR",
+            full_name="Dashboard Credit Customer", mobile="+96890000002",
+            credit_limit=D("500.000"),
+        )
+        credit_sale = self.make_sale(
+            customer=customer,
+            payments=[{"method": self.credit_a, "amount": D("21.000")}],
+        )
+        split_sale = self.make_sale(
+            customer=customer,
+            payments=[
+                {"method": self.cash_a, "amount": D("5.000")},
+                {"method": self.card_a, "amount": D("7.000")},
+                {"method": bank, "amount": D("3.000")},
+                {"method": self.credit_a, "amount": D("6.000")},
+            ],
+        )
+        self.product_a.reorder_level = D("200.000")
+        self.product_a.save(update_fields=["reorder_level"])
+        sales.process_return(
+            sale=self.sale,
+            items=[{"sale_item": self.sale.items.get(), "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+
+        response = self.client.get(reverse("dashboard"))
+        self.assertEqual(response.status_code, 200)
+        kpis = response.context["kpis"]
+        self.assertEqual(kpis["today_sales"], D("63.000"))
+        self.assertEqual(kpis["today_income"], D("36.000"))
+        self.assertEqual(kpis["today_receivable"], D("27.000"))
+        self.assertEqual(kpis["today_returns"], D("10.500"))
+        self.assertEqual(kpis["today_net_sales"], D("52.500"))
+        self.assertEqual(kpis["cash"], D("26.000"))
+        self.assertEqual(kpis["card"], D("7.000"))
+        self.assertEqual(kpis["bank"], D("3.000"))
+        self.assertGreaterEqual(kpis["low_stock"], 1)
+
+        payment_chart = response.context["chart_methods"]
+        self.assertEqual(payment_chart["labels"], [
+            "Cash", "Card", "Bank Transfer", "Customer Credit",
+        ])
+        self.assertIn(credit_sale.invoice_number, {
+            sale.invoice_number for sale in response.context["widgets"]["recent_sales"]
+        })
+        self.assertIn(split_sale.invoice_number, {
+            sale.invoice_number for sale in response.context["widgets"]["recent_sales"]
+        })
