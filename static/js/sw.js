@@ -6,7 +6,7 @@
  * refreshed from the network in the background, so CSS/JS updates roll
  * out automatically (no permanently stale styling after a deploy).
  */
-const CACHE = "nexapos-static-v2";
+const CACHE = "nexapos-static-v3-commercial-ui";
 const STATIC_ASSETS = [
   "/offline/",
   "/static/css/bootstrap.min.css",

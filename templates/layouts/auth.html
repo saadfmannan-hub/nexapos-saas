@@ -8,20 +8,15 @@
   <link rel="stylesheet" href="{% static 'css/bootstrap.min.css' %}">
   <link rel="stylesheet" href="{% static 'css/bootstrap-icons.min.css' %}">
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
-  <style>
-    body { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); min-height: 100vh;
-           display: flex; align-items: center; }
-    .auth-card { max-width: 460px; width: 100%; border-radius: 1rem; }
-  </style>
 </head>
-<body>
+<body class="auth-body">
   <div class="container py-4 d-flex justify-content-center">
-    <div class="auth-card">
+    <div class="auth-shell">
       <div class="text-center text-white mb-4">
-        <h3 class="fw-bold mb-1"><span class="logo-dot d-inline-block me-2" style="width:14px;height:14px;border-radius:50%;background:linear-gradient(135deg,#0d6efd,#0ea5a4)"></span>{{ PRODUCT_NAME }}</h3>
+        <h3 class="fw-bold mb-1 d-inline-flex align-items-center gap-2"><span class="auth-brand-mark d-inline-block"></span>{{ PRODUCT_NAME }}</h3>
         <div class="opacity-75 small">{% block tagline %}Point of Sale &amp; Business Management{% endblock %}</div>
       </div>
-      <div class="card shadow-lg border-0">
+      <div class="auth-card card shadow-lg border-0">
         <div class="card-body p-4">
           {% if messages %}
             {% for message in messages %}
