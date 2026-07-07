@@ -35,10 +35,47 @@ def _net_item_values(item):
         "qty": net_qty,
         "returned": item.returned_quantity,
         "revenue": _money(item.line_total * ratio),
+        "discount": _money(item.discount_amount * ratio),
         "tax": _money(item.tax_amount * ratio),
         "cost": _money(item.unit_cost * net_qty),
         "profit": _money(item.gross_profit * ratio),
     }
+
+
+def _payment_breakdown(sale):
+    from apps.sales.models import PaymentMethod
+
+    amounts = {"bank": ZERO, "card": ZERO, "cash": ZERO, "credit": ZERO}
+    for payment in sale.payments.all():
+        if payment.method.kind == PaymentMethod.Kind.BANK:
+            amounts["bank"] += payment.amount
+        elif payment.method.kind == PaymentMethod.Kind.CARD:
+            amounts["card"] += payment.amount
+        elif payment.method.kind == PaymentMethod.Kind.CASH:
+            amounts["cash"] += payment.amount
+        elif payment.method.kind == PaymentMethod.Kind.CUSTOMER_CREDIT:
+            amounts["credit"] += payment.amount
+    return {key: _money(value) for key, value in amounts.items()}
+
+
+def _real_received(sale):
+    from apps.sales.models import SaleReturn
+
+    payments = _payment_breakdown(sale)
+    received = payments["bank"] + payments["card"] + payments["cash"]
+    cash_refunds = sum(
+        (
+            r.refund_amount
+            for r in sale.returns.all()
+            if r.refund_method in (
+                SaleReturn.RefundMethod.BANK,
+                SaleReturn.RefundMethod.CARD,
+                SaleReturn.RefundMethod.CASH,
+            )
+        ),
+        ZERO,
+    )
+    return _money(received - cash_refunds)
 
 
 def _net_sale_tax(sale):
@@ -137,27 +174,39 @@ def product_sales(business, f):
     if f.get("category_id"):
         qs = qs.filter(product__category_id=f["category_id"])
     by_product = {}
-    for item in qs.select_related("product"):
+    for item in qs.select_related("product__category"):
         values = _net_item_values(item)
-        row = by_product.setdefault(item.product.name, {
+        key = (
+            item.product_name,
+            item.sku,
+            item.product.category.name if item.product.category else "",
+        )
+        row = by_product.setdefault(key, {
             "qty": ZERO,
-            "returned": ZERO,
             "revenue": ZERO,
+            "discount": ZERO,
+            "tax": ZERO,
+            "cost": ZERO,
             "profit": ZERO,
         })
         row["qty"] += values["qty"]
-        row["returned"] += values["returned"]
         row["revenue"] += values["revenue"]
+        row["discount"] += values["discount"]
+        row["tax"] += values["tax"]
+        row["cost"] += values["cost"]
         row["profit"] += values["profit"]
-    rows = [[name, r["qty"], r["returned"], _money(r["revenue"]),
+    rows = [[name, sku or "-", category or "-", r["qty"], _money(r["revenue"]),
+             _money(r["discount"]), _money(r["tax"]), _money(r["cost"]),
              _money(r["profit"])]
-            for name, r in sorted(
+            for (name, sku, category), r in sorted(
                 by_product.items(), key=lambda item: item[1]["revenue"],
                 reverse=True)]
-    totals = ["TOTAL", sum((r[1] or ZERO) for r in rows),
-              sum((r[2] or ZERO) for r in rows),
-              sum((r[3] or ZERO) for r in rows), sum((r[4] or ZERO) for r in rows)]
-    return {"columns": ["Product", "Qty sold", "Qty returned", "Revenue", "Gross profit"],
+    totals = ["TOTAL", "", "", sum((r[3] or ZERO) for r in rows),
+              sum((r[4] or ZERO) for r in rows), sum((r[5] or ZERO) for r in rows),
+              sum((r[6] or ZERO) for r in rows), sum((r[7] or ZERO) for r in rows),
+              sum((r[8] or ZERO) for r in rows)]
+    return {"columns": ["Product Name", "SKU", "Category", "Qty Sold",
+                        "Sales Amount", "Discount", "VAT", "Cost", "Gross Profit"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -212,18 +261,38 @@ def cashier_sales(business, f):
 
 
 def payment_methods_report(business, f):
-    from apps.sales.models import SalePayment
-
     qs = (
-        SalePayment.objects.for_business(business)
-        .filter(sale__in=_sales_base(business, f))
-        .values("method__name")
-        .annotate(count=Count("id"), total=Sum("amount"))
-        .order_by("-total")
+        _sales_base(business, f)
+        .select_related("customer")
+        .prefetch_related("payments__method")
+        .order_by("sale_date", "invoice_number")
     )
-    rows = [[r["method__name"], r["count"], r["total"]] for r in qs]
-    totals = ["TOTAL", sum(r[1] for r in rows), sum((r[2] or ZERO) for r in rows)]
-    return {"columns": ["Payment method", "Transactions", "Amount"],
+    rows = []
+    for sale in qs:
+        payments = _payment_breakdown(sale)
+        total_received = payments["cash"] + payments["card"] + payments["bank"]
+        rows.append([
+            sale.sale_date.date(),
+            sale.invoice_number,
+            sale.customer.full_name,
+            sale.customer.mobile or "-",
+            payments["cash"],
+            payments["card"],
+            payments["bank"],
+            payments["credit"],
+            _money(total_received),
+        ])
+    totals = [
+        "TOTAL", "", "", "",
+        sum((r[4] or ZERO) for r in rows),
+        sum((r[5] or ZERO) for r in rows),
+        sum((r[6] or ZERO) for r in rows),
+        sum((r[7] or ZERO) for r in rows),
+        sum((r[8] or ZERO) for r in rows),
+    ]
+    return {"columns": ["Date", "Invoice No", "Customer", "Phone Number",
+                        "Cash", "Card", "Bank Transfer", "Customer Credit",
+                        "Total Received"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -237,22 +306,41 @@ def voided_sales(business, f):
 
 
 def returns_report(business, f):
-    from apps.sales.models import SaleReturn
+    from apps.sales.models import SaleReturnItem
 
-    qs = SaleReturn.objects.for_business(business).select_related(
-        "sale", "customer", "processed_by")
+    qs = SaleReturnItem.objects.for_business(business).select_related(
+        "sale_return__sale", "sale_return__customer", "sale_return__processed_by",
+        "sale_item")
     if f.get("date_from"):
-        qs = qs.filter(created_at__date__gte=f["date_from"])
+        qs = qs.filter(sale_return__created_at__date__gte=f["date_from"])
     if f.get("date_to"):
-        qs = qs.filter(created_at__date__lte=f["date_to"])
+        qs = qs.filter(sale_return__created_at__date__lte=f["date_to"])
     if f.get("branch_id"):
-        qs = qs.filter(branch_id=f["branch_id"])
-    rows = [[r.return_number, r.sale.invoice_number, r.customer.full_name,
-             r.get_refund_method_display(), r.refund_amount,
-             r.created_at.strftime("%Y-%m-%d")] for r in qs]
-    totals = ["TOTAL", "", "", "", sum((r[4] or ZERO) for r in rows), ""]
-    return {"columns": ["Return #", "Invoice", "Customer", "Refund method",
-                        "Refund", "Date"],
+        qs = qs.filter(sale_return__branch_id=f["branch_id"])
+    rows = []
+    for item in qs.order_by("-sale_return__created_at", "sale_item__product_name"):
+        sale_return = item.sale_return
+        rows.append([
+            sale_return.created_at.strftime("%Y-%m-%d"),
+            sale_return.return_number,
+            sale_return.sale.invoice_number,
+            sale_return.customer.full_name,
+            sale_return.customer.mobile or "-",
+            item.sale_item.product_name,
+            item.sale_item.sku or "-",
+            item.quantity,
+            item.sale_item.unit_price,
+            item.line_refund,
+            sale_return.get_refund_method_display(),
+            sale_return.reason or "-",
+            sale_return.processed_by.full_name if sale_return.processed_by else "-",
+        ])
+    totals = ["TOTAL", "", "", "", "", "", "", "", "",
+              sum((r[9] or ZERO) for r in rows), "", "", ""]
+    return {"columns": ["Return Date", "Return No", "Invoice No", "Customer",
+                        "Phone Number", "Product", "SKU", "Returned Qty",
+                        "Unit Price", "Returned Amount", "Refund Method",
+                        "Reason", "Processed By"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -273,7 +361,7 @@ def tax_report(business, f):
             for rate, r in sorted(by_rate.items())]
     totals = ["TOTAL", sum((r[1] or ZERO) for r in rows),
               sum((r[2] or ZERO) for r in rows)]
-    return {"columns": ["Tax rate", "Taxable amount", "Tax collected"],
+    return {"columns": ["VAT Rate", "Taxable Amount", "VAT Amount"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -376,12 +464,37 @@ def supplier_balances(business, f):
 
 
 def customer_receivables(business, f):
-    from apps.customers.models import Customer
-
-    qs = Customer.objects.for_business(business).filter(balance__gt=0).order_by("-balance")
-    rows = [[c.full_name, c.code, c.mobile, c.credit_limit, c.balance] for c in qs]
-    totals = ["TOTAL", "", "", "", sum((r[4] or ZERO) for r in rows)]
-    return {"columns": ["Customer", "Code", "Mobile", "Credit limit", "Balance owed"],
+    qs = (
+        _sales_base(business, f)
+        .select_related("customer")
+        .prefetch_related("payments__method", "returns")
+        .order_by("sale_date", "invoice_number")
+    )
+    rows = []
+    for sale in qs:
+        paid = _real_received(sale)
+        receivable = _money(sale.net_total - paid)
+        if receivable <= 0:
+            continue
+        rows.append([
+            sale.customer.full_name,
+            sale.customer.mobile or "-",
+            sale.invoice_number,
+            sale.sale_date.date(),
+            _money(sale.net_total),
+            paid,
+            receivable,
+            sale.delivery_date or "-",
+            sale.payment_state,
+        ])
+    totals = ["TOTAL", "", "", "",
+              sum((r[4] or ZERO) for r in rows),
+              sum((r[5] or ZERO) for r in rows),
+              sum((r[6] or ZERO) for r in rows), "", ""]
+    return {"columns": ["Customer Name", "Phone Number", "Invoice No",
+                        "Invoice Date", "Sales Amount", "Paid Amount",
+                        "Credit / Receivable", "Due Date / Delivery Date",
+                        "Status"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -613,31 +726,39 @@ def customer_sales(business, f):
     for sale in (
         _sales_base(business, f)
         .select_related("customer")
-        .prefetch_related("returns", "items")
+        .prefetch_related("returns", "items", "payments__method")
     ):
-        key = (sale.customer.full_name, sale.customer.code)
+        key = (sale.customer.full_name, sale.customer.mobile)
         row = by_customer.setdefault(key, {
             "invoices": 0,
             "total": ZERO,
             "paid": ZERO,
-            "balance": ZERO,
+            "receivable": ZERO,
+            "discount": ZERO,
+            "tax": ZERO,
             "profit": ZERO,
         })
+        paid = _real_received(sale)
         row["invoices"] += 1
         row["total"] += sale.net_total
-        row["paid"] += sale.net_amount_paid
-        row["balance"] += sale.balance
+        row["paid"] += paid
+        row["receivable"] += _money(sale.net_total - paid)
+        row["discount"] += sale.discount_amount
+        row["tax"] += _net_sale_tax(sale)
         row["profit"] += _net_sale_profit(sale)
-    rows = [[name, code, r["invoices"], _money(r["total"]), _money(r["paid"]),
-             _money(r["balance"]), _money(r["profit"])]
-            for (name, code), r in sorted(
+    rows = [[name, mobile or "-", r["invoices"], _money(r["total"]),
+             _money(r["paid"]), _money(r["receivable"]), _money(r["discount"]),
+             _money(r["tax"]), _money(r["profit"])]
+            for (name, mobile), r in sorted(
                 by_customer.items(), key=lambda item: item[1]["total"],
                 reverse=True)[:1000]]
     totals = ["TOTAL", "", sum(r[2] for r in rows),
               sum((r[3] or ZERO) for r in rows), sum((r[4] or ZERO) for r in rows),
-              sum((r[5] or ZERO) for r in rows), sum((r[6] or ZERO) for r in rows)]
-    return {"columns": ["Customer", "Code", "Invoices", "Total", "Paid",
-                        "Balance", "Gross profit"],
+              sum((r[5] or ZERO) for r in rows), sum((r[6] or ZERO) for r in rows),
+              sum((r[7] or ZERO) for r in rows), sum((r[8] or ZERO) for r in rows)]
+    return {"columns": ["Customer Name", "Phone Number", "Invoices",
+                        "Sales Amount", "Paid Amount", "Credit / Receivable",
+                        "Discount", "VAT", "Gross Profit"],
             "rows": rows, "totals": totals if rows else None}
 
 

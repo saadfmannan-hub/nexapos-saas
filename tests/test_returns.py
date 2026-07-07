@@ -208,10 +208,11 @@ class ReturnTests(TenantTestCase):
             row for row in product_sales(self.business_a, filters)["rows"]
             if row[0] == "Returned Report Product"
         ][0]
-        self.assertEqual(product_row[1], D("3.000"))
-        self.assertEqual(product_row[2], D("1.000"))
-        self.assertEqual(product_row[3], D("70.875"))
-        self.assertEqual(product_row[4], D("67.500"))
+        self.assertEqual(product_row[1], "RET-REPORT")
+        self.assertEqual(product_row[3], D("3.000"))
+        self.assertEqual(product_row[4], D("70.875"))
+        self.assertEqual(product_row[6], D("3.375"))
+        self.assertEqual(product_row[8], D("67.500"))
 
         summary_data = sales_summary(self.business_a, filters)
         summary = [
@@ -229,6 +230,22 @@ class ReturnTests(TenantTestCase):
         self.assertEqual(customer[3], D("70.875"))
         self.assertEqual(customer[4], D("60.875"))
         self.assertEqual(customer[5], D("10.000"))
+
+        from apps.reports.queries import returns_report
+
+        returns = returns_report(self.business_a, filters)
+        self.assertEqual(returns["columns"], [
+            "Return Date", "Return No", "Invoice No", "Customer",
+            "Phone Number", "Product", "SKU", "Returned Qty", "Unit Price",
+            "Returned Amount", "Refund Method", "Reason", "Processed By",
+        ])
+        return_row = [
+            row for row in returns["rows"] if row[2] == sale.invoice_number
+        ][0]
+        self.assertEqual(return_row[5], "Returned Report Product")
+        self.assertEqual(return_row[6], "RET-REPORT")
+        self.assertEqual(return_row[7], D("1.000"))
+        self.assertEqual(return_row[9], D("23.625"))
 
     def test_non_restock_return_keeps_stock_out(self):
         item = self.sale.items.get()

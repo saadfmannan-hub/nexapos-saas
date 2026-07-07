@@ -181,6 +181,92 @@ class ExportTests(TenantTestCase):
         )
         self.assertIn(split_sale.invoice_number, csv_body)
 
+    def test_commercial_report_columns_separate_credit_from_income(self):
+        from apps.customers.models import Customer
+        from apps.reports.queries import (
+            customer_receivables,
+            customer_sales,
+            payment_methods_report,
+            product_sales,
+            tax_report,
+        )
+        from apps.sales.models import PaymentMethod
+
+        bank = PaymentMethod.objects.for_business(self.business_a).get(kind="bank")
+        customer = Customer.objects.create(
+            business=self.business_a, code="GCC-001",
+            full_name="GCC Tailoring Customer", mobile="+96890000001",
+            credit_limit=D("500.000"),
+        )
+        split_sale = self.make_sale(
+            customer=customer,
+            payments=[
+                {"method": self.cash_a, "amount": D("5.000")},
+                {"method": self.card_a, "amount": D("7.000")},
+                {"method": bank, "amount": D("3.000")},
+                {"method": self.credit_a, "amount": D("6.000")},
+            ],
+        )
+        filters = {
+            "date_from": None, "date_to": None, "branch_id": None,
+            "warehouse_id": None,
+        }
+
+        customer_data = customer_sales(self.business_a, filters)
+        self.assertEqual(customer_data["columns"], [
+            "Customer Name", "Phone Number", "Invoices", "Sales Amount",
+            "Paid Amount", "Credit / Receivable", "Discount", "VAT",
+            "Gross Profit",
+        ])
+        customer_row = [
+            row for row in customer_data["rows"]
+            if row[0] == "GCC Tailoring Customer"
+        ][0]
+        self.assertEqual(customer_row[1], "+96890000001")
+        self.assertEqual(customer_row[4], D("15.000"))
+        self.assertEqual(customer_row[5], D("6.000"))
+
+        payment_data = payment_methods_report(self.business_a, filters)
+        self.assertEqual(payment_data["columns"], [
+            "Date", "Invoice No", "Customer", "Phone Number", "Cash", "Card",
+            "Bank Transfer", "Customer Credit", "Total Received",
+        ])
+        payment_row = [
+            row for row in payment_data["rows"]
+            if row[1] == split_sale.invoice_number
+        ][0]
+        self.assertEqual(payment_row[4:9], [
+            D("5.000"), D("7.000"), D("3.000"), D("6.000"), D("15.000"),
+        ])
+
+        receivables = customer_receivables(self.business_a, filters)
+        self.assertEqual(receivables["columns"], [
+            "Customer Name", "Phone Number", "Invoice No", "Invoice Date",
+            "Sales Amount", "Paid Amount", "Credit / Receivable",
+            "Due Date / Delivery Date", "Status",
+        ])
+        receivable_row = [
+            row for row in receivables["rows"]
+            if row[2] == split_sale.invoice_number
+        ][0]
+        self.assertEqual(receivable_row[5], D("15.000"))
+        self.assertEqual(receivable_row[6], D("6.000"))
+
+        product_data = product_sales(self.business_a, filters)
+        self.assertEqual(product_data["columns"], [
+            "Product Name", "SKU", "Category", "Qty Sold", "Sales Amount",
+            "Discount", "VAT", "Cost", "Gross Profit",
+        ])
+        product_row = [
+            row for row in product_data["rows"] if row[0] == self.product_a.name
+        ][0]
+        self.assertEqual(product_row[1], "WID-A")
+
+        vat_data = tax_report(self.business_a, filters)
+        self.assertEqual(vat_data["columns"], [
+            "VAT Rate", "Taxable Amount", "VAT Amount",
+        ])
+
     def test_export_requires_permission(self):
         from apps.accounts.models import Membership, Role, User
 

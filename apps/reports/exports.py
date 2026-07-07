@@ -9,11 +9,17 @@ from .pdf import render_pdf
 
 
 def _cell(value):
+    if value is None or value == "":
+        return "-"
     if isinstance(value, Decimal):
         return float(value)
     if isinstance(value, (date, datetime)):
         return str(value)
     return value
+
+
+def _csv_cell(value):
+    return "-" if value is None or value == "" else value
 
 
 def export_csv(title, data):
@@ -22,7 +28,7 @@ def export_csv(title, data):
     writer = csv.writer(response)
     writer.writerow(data["columns"])
     for row in data["rows"]:
-        writer.writerow(["" if v is None else v for v in row])
+        writer.writerow([_csv_cell(v) for v in row])
     if data.get("totals"):
         writer.writerow(data["totals"])
     return response

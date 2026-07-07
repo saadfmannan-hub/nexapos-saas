@@ -316,6 +316,12 @@ a { text-decoration: none; }
   padding: .5rem .6rem;
   vertical-align: middle;
 }
+.report-table .report-num {
+  font-variant-numeric: tabular-nums;
+}
+.report-table-wide {
+  min-width: 1040px;
+}
 .report-table-sales_summary {
   min-width: 980px;
   table-layout: fixed;
@@ -361,7 +367,7 @@ a { text-decoration: none; }
     width: 100% !important;
     min-width: 0 !important;
     table-layout: fixed;
-    font-size: 10px;
+    font-size: 9.5px;
   }
   .report-table th,
   .report-table td {
@@ -370,6 +376,9 @@ a { text-decoration: none; }
   }
   .report-table tr {
     page-break-inside: avoid;
+  }
+  .report-table-wide {
+    font-size: 8.5px;
   }
   .report-table-sales_summary .report-col-date { width: 12%; }
   .report-table-sales_summary .report-col-invoice { width: 11%; }

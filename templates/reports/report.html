@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load report_tags %}
 {% block title %}{{ title }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="report-print-page {% if key == 'sales_summary' %}report-print-daily-sales{% endif %}">
@@ -40,7 +41,7 @@
 </div></div>
 
 <div class="card report-card"><div class="table-responsive report-table-wrap">
-  <table class="table table-sm table-hover mb-0 report-table report-table-{{ key }}">
+  <table class="table table-sm table-hover mb-0 report-table report-table-{{ key }} {% if data.columns|length > 8 %}report-table-wide{% endif %}">
     {% if key == "sales_summary" %}
     <colgroup>
       <col class="report-col-date">
@@ -55,10 +56,10 @@
       <col class="report-col-money-sm">
     </colgroup>
     {% endif %}
-    <thead><tr>{% for col in data.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead>
+    <thead><tr>{% for col in data.columns %}<th class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ col }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in data.rows %}
-      <tr>{% for v in row %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr>
+      <tr>{% for v in row %}<td class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ v|report_cell }}</td>{% endfor %}</tr>
       {% empty %}
       <tr><td colspan="{{ data.columns|length }}">
         <div class="empty-state"><i class="bi bi-bar-chart d-block mb-2"></i>No data for the selected filters.</div>
@@ -66,7 +67,7 @@
       {% endfor %}
     </tbody>
     {% if data.totals %}
-    <tfoot><tr class="table-light fw-bold">{% for v in data.totals %}<td>{{ v|default_if_none:"" }}</td>{% endfor %}</tr></tfoot>
+    <tfoot><tr class="table-light fw-bold">{% for v in data.totals %}<td class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ v|report_cell }}</td>{% endfor %}</tr></tfoot>
     {% endif %}
   </table>
 </div>
