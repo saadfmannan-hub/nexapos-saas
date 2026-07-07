@@ -1,0 +1,22 @@
+<script>
+  (() => {
+    document.querySelectorAll("[data-import-form]").forEach((form) => {
+      form.addEventListener("submit", (event) => {
+        if (form.dataset.submitting === "1") {
+          event.preventDefault();
+          return;
+        }
+        form.dataset.submitting = "1";
+        const button = form.querySelector("[data-import-submit]");
+        if (button) {
+          button.disabled = true;
+          button.innerHTML = '<span class="spinner-border spinner-border-sm me-2" aria-hidden="true"></span>Uploading...';
+        }
+        const progress = form.querySelector("[data-import-progress]");
+        if (progress) {
+          progress.classList.remove("d-none");
+        }
+      });
+    });
+  })();
+</script>

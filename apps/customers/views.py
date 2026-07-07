@@ -289,6 +289,7 @@ def customer_import(request):
         return error_report_response("customer_import_errors.csv", errors)
 
     results = None
+    import_error = None
     if request.method == "POST":
         try:
             subscriptions.require_operational(request.business)
@@ -298,10 +299,12 @@ def customer_import(request):
         upload = request.FILES.get("file")
         mode = request.POST.get("mode", "skip")
         if not upload:
+            import_error = "Choose a file to import."
             messages.error(request, "Choose a file to import.")
         else:
             rows, parse_error = parse_tabular_file(upload)
             if parse_error:
+                import_error = parse_error
                 messages.error(request, parse_error)
             else:
                 summary, errors = services.import_customers(
@@ -318,7 +321,8 @@ def customer_import(request):
                                        f"{summary['skipped']} skipped, "
                                        f"{summary['failed']} failed."))
     return render(request, "customers/import.html", {
-        "results": results, "active_nav": "customers",
+        "results": results, "import_error": import_error,
+        "active_nav": "customers",
         "columns": [c.title() for c in services.import_columns(request.business)],
     })
 

@@ -1,5 +1,5 @@
 {% extends "layouts/base.html" %}
-{% block title %}Import products — {{ PRODUCT_NAME }}{% endblock %}
+{% block title %}Import products - {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <h1 class="page-title mb-3">Import products</h1>
 <div class="row g-3">
@@ -8,24 +8,47 @@
       <ol class="small text-secondary">
         <li>Download the <a href="{% url 'catalog:import_template' %}">CSV template</a>.</li>
         <li>Fill one product per row (columns: {{ columns|join:", " }}).</li>
-        <li>Upload as .csv or .xlsx — invalid rows are reported, never silently imported.</li>
+        <li>Upload as .csv or .xlsx. Invalid rows are reported, never silently imported.</li>
       </ol>
-      <form method="post" enctype="multipart/form-data">{% csrf_token %}
+      <form method="post" enctype="multipart/form-data" data-import-form>{% csrf_token %}
         {% include "components/form_field.html" with field=form.file %}
         {% include "components/form_field.html" with field=form.match_by %}
-        <button class="btn btn-primary">Validate &amp; import</button>
+        <button class="btn btn-primary" data-import-submit>Validate &amp; import</button>
         <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Back</a>
+        {% include "components/import_progress.html" %}
       </form>
     </div></div>
   </div>
   <div class="col-lg-7">
-      {% if results %}
-      <div class="card"><div class="card-header">Import result</div><div class="card-body">
-      <div class="d-flex gap-2 mb-3 flex-wrap">
-        <span class="badge text-bg-success fs-6">{{ results.summary.created }} created</span>
-        <span class="badge text-bg-primary fs-6">{{ results.summary.updated }} updated</span>
-        <span class="badge text-bg-secondary fs-6">{{ results.summary.skipped }} skipped</span>
-        <span class="badge text-bg-danger fs-6">{{ results.summary.failed }} failed</span>
+    {% if import_error or form.errors %}
+    <div class="alert alert-danger" role="alert">
+      <strong>Import failed. Please check your file and try again.</strong>
+      {% if import_error %}<div class="mt-1">{{ import_error }}</div>{% endif %}
+      {% if form.errors %}
+      <ul class="mb-0 mt-2">
+        {% for field, errors in form.errors.items %}
+          {% for error in errors %}<li>{{ field|title }}: {{ error }}</li>{% endfor %}
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if results %}
+    <div class="card"><div class="card-header">Import result</div><div class="card-body">
+      {% if results.errors %}
+      <div class="alert alert-danger" role="alert">
+        <strong>Import failed. Please check your file and try again.</strong>
+        <div class="mt-1">Some rows could not be imported. Review the validation errors below.</div>
+      </div>
+      {% else %}
+      <div class="alert alert-success" role="alert">Import completed successfully.</div>
+      {% endif %}
+      <div class="row g-2 mb-3">
+        <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Rows processed</div><strong>{{ results.total }}</strong></div></div>
+        <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Rows created</div><strong>{{ results.summary.created }}</strong></div></div>
+        <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Rows updated</div><strong>{{ results.summary.updated }}</strong></div></div>
+        <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Rows skipped</div><strong>{{ results.summary.skipped }}</strong></div></div>
+        <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Errors count</div><strong>{{ results.summary.failed }}</strong></div></div>
       </div>
       {% if results.errors %}
       <a href="{% url 'catalog:product_import' %}?errors=1" class="btn btn-sm btn-outline-danger mb-2">
@@ -33,11 +56,12 @@
       <div class="border rounded p-2 bg-danger-subtle small" style="max-height:300px;overflow:auto">
         {% for row_no, msg in results.errors %}<div>Row {{ row_no }}: {{ msg }}</div>{% endfor %}
       </div>
-      {% else %}
-      <div class="alert alert-success py-2 mb-0">All rows processed without errors.</div>
       {% endif %}
     </div></div>
     {% endif %}
   </div>
 </div>
+{% endblock %}
+{% block extra_js %}
+{% include "components/import_progress_script.html" %}
 {% endblock %}

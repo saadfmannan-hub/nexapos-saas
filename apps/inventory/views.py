@@ -119,6 +119,7 @@ def inventory_import(request):
         return error_report_response("inventory_import_errors.csv", errors)
 
     results = None
+    import_error = None
     if request.method == "POST":
         try:
             subscriptions.require_operational(request.business)
@@ -128,12 +129,15 @@ def inventory_import(request):
         upload = request.FILES.get("file")
         mode = request.POST.get("mode", "add")
         if not upload:
+            import_error = "Choose a file to import."
             messages.error(request, "Choose a file to import.")
         elif mode not in services.IMPORT_MODES:
+            import_error = "Choose a valid import mode."
             messages.error(request, "Choose a valid import mode.")
         else:
             rows, parse_error = parse_tabular_file(upload)
             if parse_error:
+                import_error = parse_error
                 messages.error(request, parse_error)
             else:
                 summary, errors = services.import_inventory(
@@ -152,7 +156,8 @@ def inventory_import(request):
                           new_values={"file": upload.name, "mode": mode,
                                       **summary})
     return render(request, "inventory/import.html", {
-        "results": results, "active_nav": "inventory",
+        "results": results, "import_error": import_error,
+        "active_nav": "inventory",
         "columns": [c.title() for c in services.IMPORT_COLUMNS],
     })
 

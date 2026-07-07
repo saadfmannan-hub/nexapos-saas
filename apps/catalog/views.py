@@ -453,6 +453,7 @@ def product_import(request):
 
     form = ProductImportForm(request.POST or None, request.FILES or None)
     results = None
+    import_error = None
     if request.method == "POST" and form.is_valid():
         try:
             subscriptions.require_operational(request.business)
@@ -461,6 +462,7 @@ def product_import(request):
             return redirect("catalog:product_list")
         rows, parse_error = parse_tabular_file(form.cleaned_data["file"])
         if parse_error:
+            import_error = parse_error
             messages.error(request, parse_error)
         else:
             summary, errors = catalog_services.import_products(
@@ -474,6 +476,7 @@ def product_import(request):
                                    f"{summary['skipped']} skipped."))
     return render(request, "catalog/product_import.html",
                   {"form": form, "results": results,
+                   "import_error": import_error,
                    "columns": catalog_services.IMPORT_COLUMNS,
                    "active_nav": "products"})
 

@@ -69,6 +69,13 @@ class CustomerImportTests(TenantTestCase):
         r = self.client.post(reverse("customers:import"),
                              {"file": _csv_upload(csv_text), "mode": "skip"})
         self.assertEqual(r.status_code, 200)
+        body = r.content.decode()
+        self.assertIn("data-import-form", body)
+        self.assertIn("Uploading...", body)
+        self.assertIn("Please wait while we process your file.", body)
+        self.assertIn("Import completed successfully.", body)
+        self.assertIn("Rows processed", body)
+        self.assertIn("Rows created", body)
         summary = r.context["results"]["summary"]
         self.assertEqual(summary["imported"], 2)
         self.assertTrue(Customer.objects.for_business(self.business_a).filter(
@@ -101,6 +108,10 @@ class CustomerImportTests(TenantTestCase):
         )
         r = self.client.post(reverse("customers:import"),
                              {"file": _csv_upload(csv_text), "mode": "skip"})
+        body = r.content.decode()
+        self.assertIn("Import failed. Please check your file and try again.", body)
+        self.assertIn("Errors count", body)
+        self.assertIn("Row 2:", body)
         summary = r.context["results"]["summary"]
         self.assertEqual(summary["imported"], 1)
         self.assertEqual(summary["failed"], 2)
@@ -302,6 +313,13 @@ class ProductImportTests(TenantTestCase):
             "3.000,9.000,3.000,5,Yes,Yes,7,2,Head Office,Main Warehouse\n"
         )
         r = self._post(csv_text)
+        body = r.content.decode()
+        self.assertIn("data-import-form", body)
+        self.assertIn("Uploading...", body)
+        self.assertIn("Please wait while we process your file.", body)
+        self.assertIn("Import completed successfully.", body)
+        self.assertIn("Rows processed", body)
+        self.assertIn("Rows created", body)
         self.assertEqual(r.context["results"]["summary"]["created"], 1)
         product = Product.objects.for_business(self.business_a).get(sku="IMP-VAT")
         self.assertEqual(product.tax_rate.rate, D("5.000"))
@@ -319,6 +337,10 @@ class ProductImportTests(TenantTestCase):
             "Duplicate Barcode,UNIQUE-SKU,1000000000017\n"
         )
         r = self._post(csv_text, match_by="name")
+        body = r.content.decode()
+        self.assertIn("Import failed. Please check your file and try again.", body)
+        self.assertIn("Errors count", body)
+        self.assertIn("Duplicate SKU", body)
         summary = r.context["results"]["summary"]
         self.assertEqual(summary["failed"], 2)
         messages = [msg for _row, msg in r.context["results"]["errors"]]
@@ -385,6 +407,13 @@ class InventoryImportTests(TenantTestCase):
     def test_add_mode_increases_stock(self):
         csv_text = ("sku,warehouse,quantity\nWID-A,Main Warehouse,25\n")
         r = self._post(csv_text, "add")
+        body = r.content.decode()
+        self.assertIn("data-import-form", body)
+        self.assertIn("Uploading...", body)
+        self.assertIn("Please wait while we process your file.", body)
+        self.assertIn("Import completed successfully.", body)
+        self.assertIn("Rows processed", body)
+        self.assertIn("Rows applied", body)
         self.assertEqual(r.context["results"]["summary"]["imported"], 1)
         self.assertEqual(
             inventory.get_stock(self.business_a, self.warehouse_a, self.product_a),
@@ -417,6 +446,10 @@ class InventoryImportTests(TenantTestCase):
     def test_invalid_quantity_reported(self):
         csv_text = ("sku,warehouse,quantity\nWID-A,Main Warehouse,abc\n")
         r = self._post(csv_text, "add")
+        body = r.content.decode()
+        self.assertIn("Import failed. Please check your file and try again.", body)
+        self.assertIn("Errors count", body)
+        self.assertIn("Invalid quantity", body)
         self.assertEqual(r.context["results"]["summary"]["failed"], 1)
 
     def test_duplicate_rows_rejected(self):
