@@ -61,9 +61,9 @@
       {% endif %}
       {% endif %}
 
-      {% if "expenses.view" in business_perms or "shifts.open" in business_perms or "reports.view" in business_perms %}
+      {% if "expenses.view" in business_perms or "shifts.open" in business_perms or "registers.manage" in business_perms or "reports.view" in business_perms %}
       <div class="nav-section">Money &amp; Reports</div>
-      {% if "shifts.open" in business_perms %}
+      {% if "shifts.open" in business_perms or "registers.manage" in business_perms %}
       <a class="nav-link {% if active_nav == 'registers' %}active{% endif %}" href="{% url 'registers:shift_list' %}"><i class="bi bi-cash-stack"></i> Registers &amp; Shifts</a>
       {% endif %}
       {% if "expenses.view" in business_perms %}

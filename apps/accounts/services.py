@@ -9,11 +9,11 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.core.middleware import SESSION_BUSINESS_KEY
 
-
 SAFE_NEXT_ROUTES = {
     "dashboard": "dashboard.view",
     "sales:pos": "sales.create",
-    "registers:shift_list": "shifts.open",
+    # This route supports either shift operations or register administration.
+    "registers:shift_list": None,
     "sales:list": "sales.view",
     "customers:list": "customers.view",
     "catalog:product_list": "products.view",
@@ -94,10 +94,10 @@ def _branch_has_warehouse(business, branch):
 
 
 def _shift_route_available(membership, branches):
-    if not membership.has_perm("shifts.open") or not branches.exists():
-        return False
     if membership.has_perm("registers.manage"):
         return True
+    if not membership.has_perm("shifts.open") or not branches.exists():
+        return False
     from apps.registers.models import CashRegister
 
     return CashRegister.objects.for_business(membership.business).filter(
