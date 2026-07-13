@@ -1,11 +1,13 @@
-"""Register/shift services: defaults, open/close, expected cash."""
+"""Register lifecycle and shift services."""
+from dataclasses import dataclass
 from decimal import Decimal
 
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import ProtectedError, Q, Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
+from apps.subscriptions import services as subscriptions
 
 from .models import CashRegister, Shift
 
@@ -38,8 +40,194 @@ class ShiftError(Exception):
     pass
 
 
+class RegisterLifecycleError(Exception):
+    pass
+
+
+REGISTER_HISTORY_DELETE_ERROR = (
+    "This register has transaction or shift history and cannot be permanently "
+    "deleted. Archive it instead."
+)
+
+
+@dataclass(frozen=True)
+class RegisterDeletionAssessment:
+    blockers: tuple[str, ...]
+    audit_logs_preserved: bool
+
+    @property
+    def can_delete(self):
+        return not self.blockers
+
+
+def assess_register_deletion(register):
+    """Find every operational or financial dependency before hard deletion.
+
+    Audit rows are intentionally not blockers: they store a detached object id
+    and remain immutable after a safe register deletion.
+    """
+    from apps.audit.models import AuditLog
+    from apps.customers.models import CustomerPayment
+    from apps.expenses.models import Expense
+    from apps.sales.models import Sale, SalePayment, SaleReturn
+
+    business = register.business
+    blockers = []
+    checks = (
+        (
+            "shift, session, or reconciliation history",
+            Shift.objects.for_business(business).filter(register=register),
+        ),
+        (
+            "sale or invoice history",
+            Sale.objects.for_business(business).filter(register=register),
+        ),
+        (
+            "sale payment history",
+            SalePayment.objects.for_business(business).filter(
+                Q(sale__register=register) | Q(shift__register=register)
+            ),
+        ),
+        (
+            "return or refund history",
+            SaleReturn.objects.for_business(business).filter(
+                Q(sale__register=register) | Q(shift__register=register)
+            ),
+        ),
+        (
+            "customer payment history",
+            CustomerPayment.objects.for_business(business).filter(
+                shift__register=register
+            ),
+        ),
+        (
+            "expense or cash movement history",
+            Expense.objects.for_business(business).filter(shift__register=register),
+        ),
+    )
+    for label, queryset in checks:
+        if queryset.exists():
+            blockers.append(label)
+
+    has_audit_logs = AuditLog.objects.filter(
+        business=business,
+        object_type="CashRegister",
+        object_id=str(register.public_id),
+    ).exists()
+    return RegisterDeletionAssessment(tuple(blockers), has_audit_logs)
+
+
+@transaction.atomic
+def archive_register(*, register, user, request=None):
+    register = (
+        CashRegister.objects.select_for_update()
+        .select_related("branch", "business")
+        .get(pk=register.pk)
+    )
+    if not register.is_active:
+        raise RegisterLifecycleError("This register is already archived.")
+    if register.shifts.filter(status=Shift.Status.OPEN).exists():
+        raise RegisterLifecycleError(
+            "Close the register's open shift before archiving it."
+        )
+    register.is_active = False
+    register.save(update_fields=["is_active", "updated_at"])
+    audit.log(
+        "register.archived",
+        business=register.business,
+        user=user,
+        request=request,
+        module="registers",
+        obj=register,
+        description=f"Register {register.code} archived.",
+        old_values={"is_active": True},
+        new_values={"is_active": False},
+    )
+    return register
+
+
+@transaction.atomic
+def reactivate_register(*, register, user, request=None):
+    register = (
+        CashRegister.objects.select_for_update()
+        .select_related("branch", "business")
+        .get(pk=register.pk)
+    )
+    if register.is_active:
+        raise RegisterLifecycleError("This register is already active.")
+    if not register.branch.is_active:
+        raise RegisterLifecycleError(
+            "Move this register to an active branch before reactivating it."
+        )
+    if CashRegister.objects.for_business(register.business).filter(
+        code__iexact=register.code,
+        is_active=True,
+    ).exclude(pk=register.pk).exists():
+        raise RegisterLifecycleError(
+            "An active register already uses this code. Edit the code first."
+        )
+    subscriptions.check_limit(register.business, "pos_terminals")
+    register.is_active = True
+    register.save(update_fields=["is_active", "updated_at"])
+    audit.log(
+        "register.reactivated",
+        business=register.business,
+        user=user,
+        request=request,
+        module="registers",
+        obj=register,
+        description=f"Register {register.code} reactivated.",
+        old_values={"is_active": False},
+        new_values={"is_active": True},
+    )
+    return register
+
+
+@transaction.atomic
+def delete_register_if_safe(*, register, user, request=None):
+    register = (
+        CashRegister.objects.select_for_update()
+        .select_related("branch", "business")
+        .get(pk=register.pk)
+    )
+    assessment = assess_register_deletion(register)
+    if not assessment.can_delete:
+        raise RegisterLifecycleError(REGISTER_HISTORY_DELETE_ERROR)
+
+    code = register.code
+    name = register.name
+    business = register.business
+    try:
+        with transaction.atomic():
+            register.delete()
+    except ProtectedError as exc:
+        raise RegisterLifecycleError(REGISTER_HISTORY_DELETE_ERROR) from exc
+
+    audit.log(
+        "register.deleted",
+        business=business,
+        user=user,
+        request=request,
+        module="registers",
+        obj=register,
+        description=f"Unused register {code} ({name}) permanently deleted.",
+        old_values={"name": name, "code": code},
+    )
+    return assessment
+
+
 @transaction.atomic
 def open_shift(*, business, register, cashier, opening_cash, notes="", request=None):
+    try:
+        register = (
+            CashRegister.objects.select_for_update()
+            .select_related("branch")
+            .get(pk=register.pk, business=business)
+        )
+    except CashRegister.DoesNotExist as exc:
+        raise ShiftError("This register is not available.") from exc
+    if not register.is_active or not register.branch.is_active:
+        raise ShiftError("This register is archived or its branch is inactive.")
     if Shift.objects.for_business(business).filter(
         register=register, status=Shift.Status.OPEN
     ).exists():
@@ -151,8 +339,15 @@ def close_shift(*, shift, actual_cash, notes="", denominations=None, user=None, 
 
 @transaction.atomic
 def reopen_shift(*, shift, user, request=None):
+    shift = (
+        Shift.objects.select_for_update()
+        .select_related("register__branch")
+        .get(pk=shift.pk)
+    )
     if shift.status not in (Shift.Status.CLOSED, Shift.Status.APPROVED):
         raise ShiftError("Only closed shifts can be reopened.")
+    if not shift.register.is_active or not shift.register.branch.is_active:
+        raise ShiftError("Archived registers cannot be reopened for operations.")
     if Shift.objects.for_business(shift.business).filter(
         register=shift.register, status=Shift.Status.OPEN
     ).exists():

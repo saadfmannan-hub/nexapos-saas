@@ -1,0 +1,30 @@
+{% extends "layouts/base.html" %}
+{% block title %}{% if register %}Edit register{% else %}Add register{% endif %} &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7 col-xl-6">
+    <div class="d-flex align-items-center gap-2 mb-3">
+      <a href="{% url 'registers:shift_list' %}" class="btn btn-sm btn-outline-secondary" title="Back to registers" aria-label="Back to registers"><i class="bi bi-arrow-left"></i></a>
+      <h1 class="page-title mb-0">{% if register %}Edit register{% else %}Add register{% endif %}</h1>
+    </div>
+    <div class="card">
+      <div class="card-body">
+        <form method="post" novalidate>{% csrf_token %}
+          {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+          {% for field in form %}
+          <div class="mb-3">
+            <label class="form-label{% if field.field.required %} required-star{% endif %}" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+          <div class="d-flex justify-content-end gap-2">
+            <a href="{% url 'registers:shift_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button class="btn btn-primary"><i class="bi bi-check-lg me-1"></i> Save register</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

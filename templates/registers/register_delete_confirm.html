@@ -1,0 +1,26 @@
+{% extends "layouts/base.html" %}
+{% block title %}Delete register &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-6">
+    <h1 class="page-title mb-3">Permanently delete register</h1>
+    <div class="card border-danger">
+      <div class="card-body">
+        {% if assessment.can_delete %}
+        <p>Permanently delete unused register <strong>{{ register.name }}</strong> ({{ register.code }})?</p>
+        <p class="text-danger mb-4">This action cannot be undone.</p>
+        <form method="post">{% csrf_token %}
+          <div class="d-flex justify-content-end gap-2">
+            <a href="{% url 'registers:shift_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button class="btn btn-danger"><i class="bi bi-trash me-1"></i> Permanently delete</button>
+          </div>
+        </form>
+        {% else %}
+        <div class="alert alert-warning mb-3">This register has transaction or shift history and cannot be permanently deleted. Archive it instead.</div>
+        <a href="{% url 'registers:shift_list' %}" class="btn btn-outline-secondary">Back to registers</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
