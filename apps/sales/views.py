@@ -18,7 +18,15 @@ from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
 
 from . import calculations, services
-from .models import HeldSale, PaymentMethod, Sale, SaleItem, SaleReturn
+from .forms import ActualFabricForm
+from .models import (
+    HeldSale,
+    MAX_FABRIC_TOTAL,
+    PaymentMethod,
+    Sale,
+    SaleItem,
+    SaleReturn,
+)
 from .services import SaleError
 
 
@@ -589,6 +597,10 @@ def sale_detail(request, public_id):
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     show_profit = request.membership.has_perm("profit.view")
+    can_edit_actual_fabric = (
+        request.membership.has_perm("workshop.fabric_actual")
+        and request.membership.can_access_branch(sale.branch)
+    )
     collect_methods = PaymentMethod.objects.for_business(request.business).filter(
         is_active=True
     ).exclude(kind__in=["customer_credit", "store_credit"])
@@ -597,11 +609,47 @@ def sale_detail(request, public_id):
         "active_nav": "sales", "show_profit": show_profit,
         "collect_methods": collect_methods,
         "has_tailoring_jobs": has_tailoring_jobs,
+        "can_edit_actual_fabric": can_edit_actual_fabric,
+        "max_fabric_total": MAX_FABRIC_TOTAL,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
         "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
         "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),
         "vat_rate": vat_rate,
     })
+
+
+@require_POST
+@require_permission("workshop.fabric_actual")
+def sale_item_update_fabric(request, public_id, item_id):
+    sale = get_tenant_object(
+        Sale.objects.select_related("branch"),
+        request.business,
+        public_id=public_id,
+    )
+    sale_item = get_tenant_object(
+        SaleItem.objects.select_related("sale__branch", "product"),
+        request.business,
+        pk=item_id,
+        sale=sale,
+    )
+    form = ActualFabricForm(request.POST)
+    if not form.is_valid():
+        error = next(iter(form.errors.values()))[0]
+        messages.error(request, f"Actual fabric was not updated: {error}")
+        return redirect("sales:detail", public_id=sale.public_id)
+    try:
+        services.update_actual_fabric(
+            sale_item=sale_item,
+            actual_fabric_used=form.cleaned_data["actual_fabric_used"],
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
+    except SaleError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "Actual fabric used updated.")
+    return redirect("sales:detail", public_id=sale.public_id)
 
 
 def _invoice_display_items(items):

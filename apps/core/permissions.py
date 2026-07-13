@@ -25,6 +25,7 @@ PERMISSIONS = {
     "sales.discount": _("Apply discount"),
     "sales.price_override": _("Override price"),
     "sales.credit": _("Create credit sale"),
+    "workshop.fabric_actual": _("Record actual workshop fabric usage"),
     # Catalog
     "products.view": _("View products"),
     "products.manage": _("Manage products"),
@@ -107,6 +108,13 @@ DEFAULT_ROLES = {
         "permissions": [
             "sales.view", "sales.create", "products.view",
             "customers.view", "customers.manage", "notifications.view",
+        ],
+    },
+    "Workshop Manager": {
+        "permissions": [
+            "sales.view", "products.view", "customers.view",
+            "reports.view", "reports.export", "workshop.fabric_actual",
+            "notifications.view",
         ],
     },
     "Accountant": {

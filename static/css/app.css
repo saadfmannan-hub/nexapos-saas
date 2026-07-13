@@ -807,17 +807,50 @@ a { text-decoration: none; }
 }
 
 /* POS commercial stabilization: bounded desktop workspace with one cart scroller. */
+.np-main-pos {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.np-content-pos {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
 .pos-page {
-  height: calc(100dvh - 7.75rem);
-  max-height: calc(100dvh - 7.75rem);
+  flex: 1;
+  height: auto;
+  max-height: none;
 }
 .pos-shell {
-  grid-template-columns: minmax(0, 1fr) clamp(400px, 31vw, 440px);
+  grid-template-columns: minmax(0, 13fr) minmax(20rem, 7fr);
+  grid-template-areas: "cart products";
+  width: 100%;
 }
 .pos-shell > *,
 .pos-cart { min-width: 0; }
+.pos-products-pane { grid-area: products; }
+.pos-cart { grid-area: cart; }
+.pos-product-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .5rem;
+  min-width: 0;
+}
+.pos-product-tools > * {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+.pos-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .pos-cart-items { scrollbar-gutter: stable; }
 .pos-cart-items .cart-row .fw-semibold { overflow-wrap: anywhere; }
+.pos-line-pricing {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.pos-validation-message { overflow-wrap: anywhere; }
 .garment-classification .btn {
   min-width: 72px;
   min-height: 34px;
@@ -827,10 +860,6 @@ a { text-decoration: none; }
 .pos-payment-modal .modal-body { overflow-y: auto; }
 
 @media (min-width: 992px) and (max-height: 820px) {
-  .pos-page {
-    height: calc(100dvh - 6.8rem);
-    max-height: calc(100dvh - 6.8rem);
-  }
   .pos-header-strip { padding: .35rem .5rem; margin-bottom: .4rem !important; }
   .pos-grid { gap: .45rem; }
   .pos-product-card { padding: .45rem; }
@@ -844,11 +873,20 @@ a { text-decoration: none; }
 }
 
 @media (max-width: 991.98px) {
-  .pos-page {
-    height: calc(100dvh - 7rem);
-    max-height: calc(100dvh - 7rem);
+  .pos-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "products"
+      "cart";
   }
-  .pos-shell { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 575.98px) {
+  .pos-tailoring-fields > .col-6 { width: 100%; }
+}
+
+@media (max-width: 359.98px) {
+  .pos-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @page reportLandscape {

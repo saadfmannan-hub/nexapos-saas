@@ -61,7 +61,8 @@ class ProductForm(TenantStyledModelForm):
             "name", "product_type", "category", "brand", "unit", "internal_code",
             "sku", "barcode", "purchase_price", "sale_price", "wholesale_price",
             "minimum_sale_price", "tax_rate", "price_includes_tax", "reorder_level",
-            "track_inventory", "allow_discount", "is_tailoring_item", "image", "description",
+            "track_inventory", "allow_discount", "is_tailoring_item",
+            "estimated_adult_fabric", "estimated_child_fabric", "image", "description",
             "preferred_supplier", "is_active",
         ]
         widgets = {
@@ -86,6 +87,14 @@ class ProductForm(TenantStyledModelForm):
             self.fields[name].required = False
         # Alpine bindings for the dynamic variants UI / auto-SKU toggle.
         self.fields["product_type"].widget.attrs["x-model"] = "productType"
+        self.fields["is_tailoring_item"].widget.attrs["x-model"] = "isTailoring"
+        fabric_labels = {
+            "estimated_adult_fabric": "Estimated Adult Fabric (Meters)",
+            "estimated_child_fabric": "Estimated Child Fabric (Meters)",
+        }
+        for name, label in fabric_labels.items():
+            self.fields[name].widget.attrs.update({"step": "0.001", "min": "0", "max": "1000"})
+            self.fields[name].label = label
         self.fields["auto_generate_sku"].widget.attrs["x-model"] = "autoSku"
         self.fields["sku"].widget.attrs["x-bind:disabled"] = "autoSku"
         self.fields["sku"].widget.attrs["x-bind:placeholder"] = (
@@ -94,6 +103,18 @@ class ProductForm(TenantStyledModelForm):
         if self.instance.pk:  # opening stock only at creation
             del self.fields["opening_stock"]
             del self.fields["opening_warehouse"]
+
+    def clean(self):
+        cleaned = super().clean()
+        fabric_fields = ("estimated_adult_fabric", "estimated_child_fabric")
+        if cleaned.get("is_tailoring_item"):
+            for name in fabric_fields:
+                if cleaned.get(name) is None:
+                    self.add_error(name, "Enter the estimated fabric in meters.")
+        else:
+            for name in fabric_fields:
+                cleaned[name] = None
+        return cleaned
 
     def _unique_check(self, field, value):
         if not value:

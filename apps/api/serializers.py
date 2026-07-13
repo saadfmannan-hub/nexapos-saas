@@ -27,7 +27,8 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = ["public_id", "name", "sku", "barcode", "product_type",
                   "category", "sale_price", "wholesale_price", "track_inventory",
-                  "is_tailoring_item", "is_active", "variants"]
+                  "is_tailoring_item", "estimated_adult_fabric",
+                  "estimated_child_fabric", "is_active", "variants"]
 
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -39,11 +40,16 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class SaleItemSerializer(serializers.ModelSerializer):
+    fabric_variance = serializers.DecimalField(
+        max_digits=14, decimal_places=3, read_only=True
+    )
+
     class Meta:
         model = SaleItem
         fields = ["product_name", "sku", "quantity", "unit_price",
                   "discount_amount", "tax_amount", "line_total",
-                  "garment_classification"]
+                  "garment_classification", "estimated_fabric",
+                  "actual_fabric_used", "fabric_variance"]
 
 
 class SaleSerializer(serializers.ModelSerializer):

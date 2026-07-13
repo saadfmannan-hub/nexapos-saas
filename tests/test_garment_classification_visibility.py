@@ -152,11 +152,10 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
         self.assertIn("Garment Classification", data["columns"])
         self.assertEqual([row[6] for row in data["rows"]], ["Adult", "Child"])
         self.assertEqual([row[7] for row in data["rows"]], [D("2"), D("3")])
-        self.assertEqual(dict(data["summary"]), {
-            "Total Adult Pieces": D("2"),
-            "Total Child Pieces": D("3"),
-            "Total Legacy/Unclassified Pieces": D("0"),
-        })
+        summary = dict(data["summary"])
+        self.assertEqual(summary["Total Adult Pieces"], D("2"))
+        self.assertEqual(summary["Total Child Pieces"], D("3"))
+        self.assertEqual(summary["Total Legacy/Unclassified Pieces"], D("0"))
 
     def test_sales_report_counts_legacy_tailoring_without_counting_retail(self):
         self.historical_tailoring_sale()
@@ -198,6 +197,8 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
             sale_price=D("12"),
             tax_rate=self.tax_a,
             is_tailoring_item=True,
+            estimated_adult_fabric=D("3.500"),
+            estimated_child_fabric=D("2.250"),
         )
         inventory.set_opening_stock(
             business=self.business_a,

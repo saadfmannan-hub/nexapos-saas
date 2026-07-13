@@ -46,6 +46,10 @@
         <tr><th>Average cost</th><td>{{ product.average_cost }}</td></tr>
         {% endif %}
         <tr><th>Tax</th><td>{{ product.tax_rate|default:"None" }}</td></tr>
+        {% if product.is_tailoring_item %}
+        <tr><th>Estimated Adult Fabric</th><td>{% if product.estimated_adult_fabric is not None %}{{ product.estimated_adult_fabric|floatformat:"-3" }} m{% else %}Not configured{% endif %}</td></tr>
+        <tr><th>Estimated Child Fabric</th><td>{% if product.estimated_child_fabric is not None %}{{ product.estimated_child_fabric|floatformat:"-3" }} m{% else %}Not configured{% endif %}</td></tr>
+        {% endif %}
         <tr><th>Reorder level</th><td>{{ product.reorder_level }}</td></tr>
       </table>
       {% if product.barcode or product.sku %}

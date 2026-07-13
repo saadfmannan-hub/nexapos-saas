@@ -1,8 +1,14 @@
 """Product catalog: categories, brands, units, taxes, products, variants."""
+from decimal import Decimal
+
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.models import TenantModel
+
+
+MAX_FABRIC_PER_GARMENT = Decimal("1000.000")
 
 
 class Category(TenantModel):
@@ -121,6 +127,30 @@ class Product(TenantModel):
             "product is sold through POS."
         ),
     )
+    estimated_adult_fabric = models.DecimalField(
+        "Estimated Adult Fabric",
+        max_digits=7,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(Decimal("0")),
+            MaxValueValidator(MAX_FABRIC_PER_GARMENT),
+        ],
+        help_text="Estimated meters required for one adult garment.",
+    )
+    estimated_child_fabric = models.DecimalField(
+        "Estimated Child Fabric",
+        max_digits=7,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(Decimal("0")),
+            MaxValueValidator(MAX_FABRIC_PER_GARMENT),
+        ],
+        help_text="Estimated meters required for one child garment.",
+    )
 
     image = models.ImageField(upload_to="products/", blank=True, null=True)
     description = models.TextField(blank=True)
@@ -149,6 +179,26 @@ class Product(TenantModel):
                 fields=["business", "barcode"],
                 condition=~models.Q(barcode=""),
                 name="uniq_product_barcode_per_business",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(estimated_adult_fabric__isnull=True)
+                    | models.Q(
+                        estimated_adult_fabric__gte=0,
+                        estimated_adult_fabric__lte=MAX_FABRIC_PER_GARMENT,
+                    )
+                ),
+                name="product_adult_fabric_valid",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(estimated_child_fabric__isnull=True)
+                    | models.Q(
+                        estimated_child_fabric__gte=0,
+                        estimated_child_fabric__lte=MAX_FABRIC_PER_GARMENT,
+                    )
+                ),
+                name="product_child_fabric_valid",
             ),
         ]
 

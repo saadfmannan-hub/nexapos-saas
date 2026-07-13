@@ -61,6 +61,8 @@ class TenantTestCase(TestCase):
             business=cls.business_a, name="Widget A", sku="WID-A",
             barcode="1000000000017", purchase_price=Decimal("4.000"),
             sale_price=Decimal("10.000"), tax_rate=cls.tax_a,
+            estimated_adult_fabric=Decimal("3.500"),
+            estimated_child_fabric=Decimal("2.250"),
         )
         inventory.set_opening_stock(
             business=cls.business_a, warehouse=cls.warehouse_a,
@@ -70,6 +72,8 @@ class TenantTestCase(TestCase):
         cls.product_b = Product.objects.create(
             business=cls.business_b, name="Widget B", sku="WID-B",
             purchase_price=Decimal("2.000"), sale_price=Decimal("5.000"),
+            estimated_adult_fabric=Decimal("3.500"),
+            estimated_child_fabric=Decimal("2.250"),
         )
         inventory.set_opening_stock(
             business=cls.business_b, warehouse=cls.warehouse_b,

@@ -17,6 +17,11 @@ urlpatterns = [
     path("", views.sale_list, name="list"),
     path("returns/", views.return_list, name="return_list"),
     path("<uuid:public_id>/", views.sale_detail, name="detail"),
+    path(
+        "<uuid:public_id>/items/<int:item_id>/fabric/",
+        views.sale_item_update_fabric,
+        name="sale_item_update_fabric",
+    ),
     path("<uuid:public_id>/invoice/", views.sale_invoice, name="invoice"),
     path("<uuid:public_id>/invoice.pdf", views.sale_invoice_pdf, name="invoice_pdf"),
     path("<uuid:public_id>/workshop-job-card.pdf", views.sale_workshop_job_card_pdf, name="workshop_job_card_pdf"),
