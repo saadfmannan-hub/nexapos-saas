@@ -73,18 +73,21 @@ def _checkout_tailoring_details(raw):
 @require_permission("sales.create")
 def pos_view(request):
     from apps.catalog.models import Category
+    from apps.accounts.services import post_login_redirect
 
     branches = list(_user_branches(request))
     if not branches:
         messages.error(request, "You are not assigned to any active branch.")
-        return redirect("dashboard")
+        return post_login_redirect(request, excluded_routes={"sales:pos"})
 
-    shift = register_services.get_open_shift(request.business, request.user)
+    shift = register_services.get_open_shift(
+        request.business, request.user, membership=request.membership
+    )
     branch = shift.branch if shift else branches[0]
     warehouse = _branch_warehouse(branch)
     if warehouse is None:
         messages.error(request, "No active warehouse is configured for this branch.")
-        return redirect("dashboard")
+        return post_login_redirect(request, excluded_routes={"sales:pos"})
 
     categories = Category.objects.for_business(request.business).filter(is_active=True)
     payment_methods = PaymentMethod.objects.for_business(request.business).filter(
@@ -308,7 +311,9 @@ def pos_checkout(request):
     except Customer.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid customer."}, status=400)
 
-    shift = register_services.get_open_shift(request.business, request.user)
+    shift = register_services.get_open_shift(
+        request.business, request.user, membership=request.membership
+    )
 
     items = []
     for raw in payload.get("items", []):

@@ -26,30 +26,14 @@ from .forms import (
     StyledSetPasswordForm,
 )
 from .models import LoginHistory, Membership, Role, User
+from .services import post_login_redirect, resolve_user_home_route
 
 security_log = logging.getLogger("nexapos.security")
 
 
-def _post_login_url(user):
-    """Where to send a user right after login.
-
-    Business members land on their dashboard; platform staff (Django
-    superusers or flagged platform admins) without a workspace go to the
-    platform area instead of being trapped on /no-business/.
-    """
-    has_business = user.memberships.filter(
-        is_active=True, business__is_active=True
-    ).exists()
-    if has_business:
-        return "dashboard"
-    if user.is_platform_staff:
-        return "platformadmin:dashboard"
-    return "tenants:no_business"
-
-
 def login_view(request):
     if request.user.is_authenticated:
-        return redirect("dashboard")
+        return post_login_redirect(request, next_url=request.GET.get("next"))
     form = LoginForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].lower()
@@ -79,7 +63,7 @@ def login_view(request):
             record(True, user)
             audit.log("auth.login", user=user, request=request, module="accounts",
                       description=f"{user.email} signed in.")
-            return redirect(request.GET.get("next") or _post_login_url(user))
+            return post_login_redirect(request, next_url=request.GET.get("next"))
 
         # Failure path
         if user:
@@ -95,6 +79,17 @@ def login_view(request):
         security_log.info("Failed login attempt for %s from %s", email, client_ip(request))
         messages.error(request, "Invalid email or password.")
     return render(request, "auth/login.html", {"form": form})
+
+
+def no_access_view(request):
+    if not request.user.is_authenticated:
+        return redirect("accounts:login")
+    route_name = resolve_user_home_route(
+        request.user, membership=getattr(request, "membership", None)
+    )
+    if route_name != "accounts:no_access":
+        return redirect(route_name)
+    return render(request, "accounts/no_access.html")
 
 
 @require_POST

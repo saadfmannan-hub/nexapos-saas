@@ -18,12 +18,19 @@ def create_default_register(business, branch):
     return register
 
 
-def get_open_shift(business, user, register=None):
+def get_open_shift(business, user, register=None, membership=None):
     qs = Shift.objects.for_business(business).filter(status=Shift.Status.OPEN)
     if register is not None:
         qs = qs.filter(register=register)
     else:
         qs = qs.filter(cashier=user)
+    if membership is not None:
+        if membership.business_id != business.id or membership.user_id != user.id:
+            return None
+        qs = qs.filter(branch__is_active=True, register__is_active=True)
+        allowed = membership.allowed_branch_ids
+        if allowed is not None:
+            qs = qs.filter(branch_id__in=allowed)
     return qs.select_related("register", "branch").first()
 
 
