@@ -13,6 +13,8 @@
   tfoot td { font-weight: bold; border-top: 1pt solid #0f172a; }
   tr { page-break-inside: avoid; }
   .nowrap { white-space: nowrap; }
+  .summary { margin-top: 7px; font-size: 7.4pt; }
+  .summary span { display: inline-block; margin-right: 18px; }
 </style>
 </head>
 <body>
@@ -35,5 +37,10 @@
   {% endfor %}</tr></tfoot>
   {% endif %}
 </table>
+{% if data.summary %}
+<div class="summary">
+  {% for label, value in data.summary %}<span><strong>{{ label }}:</strong> {{ value|report_cell }}</span>{% endfor %}
+</div>
+{% endif %}
 </body>
 </html>

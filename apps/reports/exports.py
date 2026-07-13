@@ -31,6 +31,10 @@ def export_csv(title, data):
         writer.writerow([_csv_cell(v) for v in row])
     if data.get("totals"):
         writer.writerow(data["totals"])
+    if data.get("summary"):
+        writer.writerow([])
+        for label, value in data["summary"]:
+            writer.writerow([label, _csv_cell(value)])
     return response
 
 
@@ -53,8 +57,15 @@ def export_xlsx(title, data):
         ws.append([_cell(v) for v in data["totals"]])
         for cell in ws[ws.max_row]:
             cell.font = Font(bold=True)
+    if data.get("summary"):
+        ws.append([])
+        for label, value in data["summary"]:
+            ws.append([label, _cell(value)])
+            ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
     for idx, col in enumerate(data["columns"], start=1):
         width = max(len(str(col)) + 2, 12)
+        if idx == 1 and data.get("summary"):
+            width = max(width, max(len(str(label)) + 2 for label, _ in data["summary"]))
         ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = width
     response = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument"

@@ -243,6 +243,7 @@
       <td>{{ forloop.counter }}</td>
       <td>
         <div class="item-name">{{ item.product_name }}</div>
+        {% if item.is_tailoring_line %}<div class="sku-small">Garment: {{ item.garment_classification_label }}</div>{% endif %}
         {% if item.sku %}<div class="sku-small">SKU {{ item.sku }}</div>{% endif %}
       </td>
       <td class="muted">{{ item.sku|default:"-" }}</td>

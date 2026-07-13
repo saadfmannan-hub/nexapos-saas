@@ -114,6 +114,13 @@ class Product(TenantModel):
     reorder_level = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     track_inventory = models.BooleanField(default=True)
     allow_discount = models.BooleanField(default=True)
+    is_tailoring_item = models.BooleanField(
+        default=False,
+        help_text=(
+            "Require garment classification and a delivery date when this "
+            "product is sold through POS."
+        ),
+    )
 
     image = models.ImageField(upload_to="products/", blank=True, null=True)
     description = models.TextField(blank=True)

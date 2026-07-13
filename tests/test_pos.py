@@ -186,6 +186,10 @@ class PosEndpointTests(TenantTestCase):
             content_type="application/json",
         )
 
+    def enable_tailoring_product(self):
+        self.product_a.is_tailoring_item = True
+        self.product_a.save(update_fields=["is_tailoring_item"])
+
     def discounted_credit_sale(self):
         from apps.customers.models import Customer
 
@@ -221,12 +225,14 @@ class PosEndpointTests(TenantTestCase):
         self.assertIn("invoice_number", data["sale"])
 
     def test_checkout_endpoint_requires_delivery_date(self):
+        self.enable_tailoring_product()
         response = self.checkout({
             "branch_id": self.branch_a.id,
             "customer_id": self.walk_in_a.id,
             "items": [{"product_id": self.product_a.id, "variant_id": None,
                        "quantity": "1", "unit_price": "10.000",
-                       "discount_amount": "0"}],
+                       "discount_amount": "0",
+                       "garment_classification": "adult"}],
             "payments": [{"method_id": self.cash_a.id, "amount": "10.500"}],
             "invoice_discount": "0",
         })
@@ -234,10 +240,11 @@ class PosEndpointTests(TenantTestCase):
         self.assertFalse(data["ok"])
         self.assertEqual(
             data["error"],
-            "Please select delivery date before completing sale.",
+            "Please select delivery date before completing the tailoring booking.",
         )
 
     def test_checkout_endpoint_stores_item_tailoring_details(self):
+        self.enable_tailoring_product()
         response = self.checkout({
             "branch_id": self.branch_a.id,
             "customer_id": self.walk_in_a.id,
@@ -245,26 +252,27 @@ class PosEndpointTests(TenantTestCase):
                 {"product_id": self.product_a.id, "variant_id": None,
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
+                 "garment_classification": "adult",
                  "tailoring_details": {
                      "design_type": "Daraz",
                      "daraz_details": "3 Line",
-                     "priority": "urgent",
                      "customer_notes": "Loose fitting",
                      "workshop_notes": "Press before packing",
                  }},
                 {"product_id": self.product_a.id, "variant_id": None,
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
+                 "garment_classification": "child",
                  "tailoring_details": {
-                     "design_type": "VIP 3D",
+                     "design_type": "VIP 3D Design",
                      "vip_3d_design": "MM3",
                      "computer_design": "Sultani",
-                     "priority": "vip",
                  }},
             ],
             "payments": [{"method_id": self.cash_a.id, "amount": "21.000"}],
             "invoice_discount": "0",
             "delivery_date": str(timezone.localdate()),
+            "priority": "high",
         })
         data = response.json()
         self.assertTrue(data["ok"], data)
@@ -274,12 +282,14 @@ class PosEndpointTests(TenantTestCase):
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0].tailoring_details["design_type"], "Daraz")
         self.assertEqual(items[0].tailoring_details["daraz_details"], "3 Line")
-        self.assertEqual(items[0].tailoring_details["priority"], "urgent")
-        self.assertEqual(items[1].tailoring_details["design_type"], "VIP 3D")
+        self.assertEqual(items[0].garment_classification, "adult")
+        self.assertEqual(items[1].tailoring_details["design_type"], "VIP 3D Design")
         self.assertEqual(items[1].tailoring_details["vip_3d_design"], "MM3")
         self.assertEqual(items[1].tailoring_details["computer_design"], "Sultani")
-        self.assertEqual(items[1].tailoring_details["priority"], "vip")
+        self.assertEqual(items[1].garment_classification, "child")
+        self.assertEqual(sale.priority, Sale.Priority.HIGH)
         for item in items:
+            self.assertNotIn("priority", item.tailoring_details)
             self.assertNotIn("fabric", item.tailoring_details)
             self.assertNotIn("measurements", item.tailoring_details)
             self.assertNotIn("expected_delivery", item.tailoring_details)
@@ -573,17 +583,19 @@ class PosEndpointTests(TenantTestCase):
         customer.save(update_fields=["mobile", "address", "email", "more_options"])
         self.product_a.description = "Use premium cuff finish."
         self.product_a.save(update_fields=["description"])
+        self.enable_tailoring_product()
         sale = self.make_sale(
             customer=customer,
             delivery_date=timezone.localdate(),
+            priority=Sale.Priority.HIGH,
             items=[{
                 "product": self.product_a,
                 "quantity": D("1.000"),
                 "unit_price": D("10.000"),
+                "garment_classification": "adult",
                 "tailoring_details": {
                     "design_type": "Daraz",
                     "daraz_details": "3 Line",
-                    "priority": "vip",
                     "customer_notes": "Loose fitting",
                     "workshop_notes": "Press before packing",
                 },
@@ -598,8 +610,8 @@ class PosEndpointTests(TenantTestCase):
             "job_card_number": f"JC-{sale.invoice_number}-01",
             "workshop_copy_number": 1,
             "copy_type": "Original",
-            "priority_label": "VIP",
-            "priority_class": "vip",
+            "priority_label": "High",
+            "priority_class": "high",
             "tailoring": item.tailoring_details,
             "job_delivery_date": sale.delivery_date,
             "more_options": [
@@ -684,51 +696,54 @@ class PosEndpointTests(TenantTestCase):
         self.assertTrue(response.content.startswith(b"%PDF"))
 
     def test_tailoring_sale_creates_one_production_job_per_sale_item(self):
+        self.enable_tailoring_product()
         sale = self.make_sale(
             items=[
                 {
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
+                    "garment_classification": "adult",
                     "tailoring_details": {
                         "design_type": "Daraz",
                         "daraz_details": "3 Line",
-                        "priority": "urgent",
                         "customer_notes": "Loose fitting",
                     },
                 },
                 {
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
+                    "garment_classification": "child",
                     "tailoring_details": {
                         "design_type": "Computer Design",
                         "computer_design": "Sultani",
-                        "priority": "normal",
                     },
                 },
                 {
                     "product": self.product_a, "quantity": D("1.000"),
                     "unit_price": D("10.000"),
+                    "garment_classification": "adult",
                     "tailoring_details": {
-                        "design_type": "VIP 3D",
+                        "design_type": "VIP 3D Design",
                         "vip_3d_design": "MM3",
-                        "priority": "vip",
                         "workshop_notes": "Premium stitching",
                     },
                 },
             ],
             payments=[{"method": self.cash_a, "amount": D("31.500")}],
             delivery_date=timezone.localdate(),
+            priority=Sale.Priority.URGENT,
         )
         self.assertEqual(sale.items.count(), 3)
         items = list(sale.items.order_by("id"))
         self.assertEqual(items[0].tailoring_details["design_type"], "Daraz")
         self.assertEqual(items[0].tailoring_details["daraz_details"], "3 Line")
-        self.assertEqual(items[0].tailoring_details["priority"], "urgent")
+        self.assertEqual(items[0].garment_classification, "adult")
         self.assertEqual(items[1].tailoring_details["design_type"], "Computer Design")
         self.assertEqual(items[1].tailoring_details["computer_design"], "Sultani")
-        self.assertEqual(items[1].tailoring_details["priority"], "normal")
-        self.assertEqual(items[2].tailoring_details["design_type"], "VIP 3D")
+        self.assertEqual(items[1].garment_classification, "child")
+        self.assertEqual(items[2].tailoring_details["design_type"], "VIP 3D Design")
         self.assertEqual(items[2].tailoring_details["vip_3d_design"], "MM3")
+        self.assertEqual(sale.priority, Sale.Priority.URGENT)
 
         with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:
             response = self.client.get(reverse(
@@ -740,7 +755,7 @@ class PosEndpointTests(TenantTestCase):
         self.assertEqual(context["sale"], sale)
         self.assertEqual(context["items"], [items[1]])
         self.assertEqual(context["tailoring"]["computer_design"], "Sultani")
-        self.assertEqual(context["priority_label"], "Normal")
+        self.assertEqual(context["priority_label"], "Urgent")
         self.assertEqual(context["job_card_number"], f"JC-{sale.invoice_number}-02")
 
         with patch("apps.reports.pdf.render_pdf", return_value=b"%PDF fake") as render_pdf:

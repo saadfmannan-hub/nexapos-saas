@@ -51,6 +51,10 @@
     <div class="card mt-3"><div class="card-header">Inventory</div><div class="card-body">
       <div class="form-check mb-2">{{ form.track_inventory }}
         <label class="form-check-label" for="{{ form.track_inventory.id_for_label }}">Track inventory for this product</label></div>
+      <div class="form-check mb-2">{{ form.is_tailoring_item }}
+        <label class="form-check-label" for="{{ form.is_tailoring_item.id_for_label }}">Tailoring garment</label>
+        {% if form.is_tailoring_item.help_text %}<div class="form-text">{{ form.is_tailoring_item.help_text }}</div>{% endif %}
+      </div>
       {% include "components/form_field.html" with field=form.reorder_level %}
       {% if form.opening_stock %}
       <div class="row">

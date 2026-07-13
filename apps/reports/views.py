@@ -29,6 +29,12 @@ def _parse_filters(request):
     f["branch_id"] = int(branch) if branch.isdigit() else None
     warehouse = request.GET.get("warehouse", "")
     f["warehouse_id"] = int(warehouse) if warehouse.isdigit() else None
+    product = request.GET.get("product", "")
+    f["product_id"] = int(product) if product.isdigit() else None
+    classification = request.GET.get("garment_classification", "").strip().lower()
+    f["garment_classification"] = (
+        classification if classification in ("adult", "child") else None
+    )
     return f
 
 
@@ -442,6 +448,7 @@ def _run_report(request, key):
 @business_required
 def report_view(request, key):
     from apps.branches.models import Branch, Warehouse
+    from apps.catalog.models import Product
 
     title, data, filters = _run_report(request, key)
     export = request.GET.get("export", "")
@@ -464,5 +471,9 @@ def report_view(request, key):
         "active_nav": "reports",
         "branches": Branch.objects.for_business(request.business).filter(is_active=True),
         "warehouses": Warehouse.objects.for_business(request.business).filter(is_active=True),
+        "products": (
+            Product.objects.for_business(request.business).only("id", "name").order_by("name")
+            if key == "sales_detailed" else []
+        ),
         "can_export": request.membership.has_perm("reports.export"),
     })

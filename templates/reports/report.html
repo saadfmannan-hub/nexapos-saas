@@ -35,6 +35,21 @@
         {% for w in warehouses %}<option value="{{ w.id }}" {% if filters.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
       </select>
     </div>
+    {% if key == "sales_detailed" %}
+    <div class="col-auto">
+      <select name="product" class="form-select form-select-sm">
+        <option value="">All products</option>
+        {% for product in products %}<option value="{{ product.id }}" {% if filters.product_id == product.id %}selected{% endif %}>{{ product.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <select name="garment_classification" class="form-select form-select-sm">
+        <option value="">All garment classifications</option>
+        <option value="adult" {% if filters.garment_classification == "adult" %}selected{% endif %}>Adult</option>
+        <option value="child" {% if filters.garment_classification == "child" %}selected{% endif %}>Child</option>
+      </select>
+    </div>
+    {% endif %}
     <div class="col-auto"><button class="btn btn-sm btn-primary">Apply</button>
       <a href="{% url 'reports:view' key %}" class="btn btn-sm btn-outline-secondary">Reset</a></div>
   </form>
@@ -71,6 +86,13 @@
     {% endif %}
   </table>
 </div>
-<div class="card-body py-2 small text-secondary">{{ data.rows|length }} row{{ data.rows|length|pluralize }}</div></div>
+<div class="card-body py-2 small d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <span class="text-secondary">{{ data.rows|length }} row{{ data.rows|length|pluralize }}</span>
+  {% if data.summary %}
+  <span class="d-flex flex-wrap gap-3">
+    {% for label, value in data.summary %}<span><strong>{{ label }}:</strong> {{ value|report_cell }}</span>{% endfor %}
+  </span>
+  {% endif %}
+</div></div>
 </div>
 {% endblock %}
