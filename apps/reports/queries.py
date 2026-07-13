@@ -175,6 +175,8 @@ def sales_detailed(business, f):
 
     rows = []
     pieces = {"adult": ZERO, "child": ZERO, "legacy": ZERO}
+    fabric_totals = {"estimated": ZERO, "actual": ZERO, "variance": ZERO}
+    has_fabric = {"estimated": False, "actual": False, "variance": False}
     for item in qs[:2000]:
         sale = item.sale
         quantity = item.quantity - item.returned_quantity
@@ -184,6 +186,17 @@ def sales_detailed(business, f):
         if item.is_tailoring_line:
             key = item.garment_classification or "legacy"
             pieces[key] += quantity
+        estimated_fabric = item.estimated_fabric
+        actual_fabric = item.actual_fabric_used
+        variance = item.fabric_variance
+        for key, value in (
+            ("estimated", estimated_fabric),
+            ("actual", actual_fabric),
+            ("variance", variance),
+        ):
+            if value is not None:
+                fabric_totals[key] += value
+                has_fabric[key] = True
         rows.append([
             sale.invoice_number,
             sale.sale_date.strftime("%Y-%m-%d %H:%M"),
@@ -193,6 +206,9 @@ def sales_detailed(business, f):
             item.product_name,
             classification,
             quantity,
+            estimated_fabric,
+            actual_fabric,
+            variance,
             _payment_method_summary(sale),
             sale.net_total,
             sale.net_amount_paid,
@@ -202,8 +218,9 @@ def sales_detailed(business, f):
     return {
         "columns": [
             "Invoice", "Date", "Customer", "Branch", "Cashier", "Product",
-            "Garment Classification", "Quantity", "Payment Method", "Total",
-            "Paid", "Balance", "Status",
+            "Garment Classification", "Quantity", "Estimated Fabric",
+            "Actual Fabric", "Variance", "Payment Method", "Total", "Paid",
+            "Balance", "Status",
         ],
         "rows": rows,
         "totals": None,
@@ -211,6 +228,18 @@ def sales_detailed(business, f):
             ("Total Adult Pieces", pieces["adult"]),
             ("Total Child Pieces", pieces["child"]),
             ("Total Legacy/Unclassified Pieces", pieces["legacy"]),
+            (
+                "Estimated Total",
+                fabric_totals["estimated"] if has_fabric["estimated"] else None,
+            ),
+            (
+                "Actual Total",
+                fabric_totals["actual"] if has_fabric["actual"] else None,
+            ),
+            (
+                "Variance Total",
+                fabric_totals["variance"] if has_fabric["variance"] else None,
+            ),
         ],
     }
 

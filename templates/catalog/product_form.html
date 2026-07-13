@@ -4,8 +4,8 @@
 <style>[x-cloak]{display:none!important;}</style>
 <h1 class="page-title mb-3">{% if product %}Edit: {{ product.name }}{% else %}New product{% endif %}</h1>
 {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
-<form method="post" enctype="multipart/form-data"
-      x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %})">{% csrf_token %}
+  <form method="post" enctype="multipart/form-data"
+      x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %}, {% if form.is_tailoring_item.value %}true{% else %}false{% endif %})">{% csrf_token %}
 <div class="row g-3">
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Basics</div><div class="card-body">
@@ -54,6 +54,13 @@
       <div class="form-check mb-2">{{ form.is_tailoring_item }}
         <label class="form-check-label" for="{{ form.is_tailoring_item.id_for_label }}">Tailoring garment</label>
         {% if form.is_tailoring_item.help_text %}<div class="form-text">{{ form.is_tailoring_item.help_text }}</div>{% endif %}
+      </div>
+      <div x-show="isTailoring" x-cloak>
+        <div class="row">
+          <div class="col-6">{% include "components/form_field.html" with field=form.estimated_adult_fabric %}</div>
+          <div class="col-6">{% include "components/form_field.html" with field=form.estimated_child_fabric %}</div>
+        </div>
+        <div class="form-text mb-2">Fabric estimates are meters per garment and are copied to each completed sale line.</div>
       </div>
       {% include "components/form_field.html" with field=form.reorder_level %}
       {% if form.opening_stock %}
@@ -183,10 +190,11 @@
 </form>
 
 <script>
-function productForm(initialType, initialAutoSku) {
+function productForm(initialType, initialAutoSku, initialIsTailoring) {
   return {
     productType: initialType || 'standard',
     autoSku: !!initialAutoSku,
+    isTailoring: !!initialIsTailoring,
     types: [],
     newTypeChoice: 'Size',
     newTypeCustom: '',

@@ -26,16 +26,16 @@
   </div>
 
   <div class="pos-shell">
-    <!-- LEFT: products -->
+    <!-- Product workspace -->
     <div class="pos-products-pane d-flex flex-column gap-2">
-      <div class="d-flex gap-2">
+      <div class="pos-product-tools">
         <div class="input-group">
           <span class="input-group-text"><i class="bi bi-upc-scan"></i></span>
           <input type="text" x-ref="barcode" x-model="barcodeInput" @keydown.enter.prevent="scanBarcode()"
                  class="form-control" placeholder="Scan barcode or type SKU + Enter (F2)">
         </div>
         <input type="search" x-model="search" @input.debounce.300ms="loadProducts()"
-               class="form-control" placeholder="Search products… (F4)" x-ref="search" style="max-width: 280px">
+               class="form-control" placeholder="Search products… (F4)" x-ref="search">
       </div>
       <div class="d-flex gap-1 overflow-auto pb-1">
         <button class="btn btn-sm pos-cat-pill" :class="category === '' ? 'btn-primary' : 'btn-outline-secondary'"
@@ -65,7 +65,7 @@
       </div>
     </div>
 
-    <!-- RIGHT: cart -->
+    <!-- Sale / cart workspace -->
     <div class="pos-cart">
       <div class="p-2 border-bottom d-flex gap-2 align-items-center">
         <div class="dropdown flex-grow-1">
@@ -135,7 +135,7 @@
                         aria-label="Remove item"><i class="bi bi-x-lg"></i></button>
               </div>
             </div>
-            <div class="d-flex gap-2 align-items-center mt-1">
+            <div class="d-flex gap-2 align-items-center mt-1 pos-line-pricing">
               <div class="input-group input-group-sm" style="width: 110px">
                 <button class="btn btn-outline-secondary" @click="line.quantity = Math.max(1, +line.quantity - 1)">−</button>
                 <input type="number" step="any" min="0.001" class="form-control text-center" x-model="line.quantity">
@@ -170,7 +170,7 @@
                   <label class="btn btn-outline-primary" :for="'garment-child-' + i">Child</label>
                 </div>
               </div>
-              <div class="text-danger small mb-2" role="alert" x-show="line.validation_error"
+              <div class="text-danger small mb-2 pos-validation-message" role="alert" x-show="line.validation_error"
                    x-text="line.validation_error"></div>
               <button class="btn btn-sm btn-outline-secondary w-100 text-start" type="button"
                       @click="line.expanded = !line.expanded">
@@ -178,7 +178,7 @@
                 <span class="float-end" x-text="line.expanded ? 'â–´' : 'â–¾'"></span>
               </button>
               <div class="border rounded p-2 mt-2 bg-light" x-show="line.expanded" x-cloak>
-                <div class="row g-2">
+                <div class="row g-2 pos-tailoring-fields">
                   <div class="col-6">
                     <label class="form-label small mb-1">Design Type</label>
                     <select class="form-select form-select-sm" x-model="line.tailoring_details.design_type">

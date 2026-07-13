@@ -4,14 +4,15 @@ complete_sale() is the single transactional entry point that turns a
 validated cart into an immutable Sale with items, payments, stock
 movements, customer balance changes and an invoice number.
 """
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
-from apps.core.money import D, money
+from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
@@ -25,6 +26,7 @@ from .models import (
     SalePayment,
     SaleReturn,
     SaleReturnItem,
+    MAX_FABRIC_TOTAL,
 )
 
 ZERO = Decimal("0")
@@ -172,6 +174,55 @@ def _clean_tailoring_details(raw, *, field_prefix="tailoring_details"):
     return details
 
 
+def _fabric_estimate(product, classification, quantity, *, field_prefix):
+    field_name = (
+        "estimated_adult_fabric"
+        if classification == SaleItem.GarmentClassification.ADULT
+        else "estimated_child_fabric"
+    )
+    per_garment = getattr(product, field_name)
+    if per_garment is None:
+        label = classification.title()
+        message = (
+            f"Configure Estimated {label} Fabric for {product.name} before selling it."
+        )
+        raise SaleError(message, errors={f"{field_prefix}.garment_classification": message})
+    estimate = qty(quantity * per_garment)
+    if estimate > MAX_FABRIC_TOTAL:
+        message = f"Estimated fabric for {product.name} is too large."
+        raise SaleError(message, errors={field_prefix: message})
+    return estimate
+
+
+def _clean_actual_fabric(value):
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        amount = Decimal(str(value).strip())
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SaleError(
+            "Enter a valid actual fabric amount.",
+            errors={"actual_fabric_used": "Enter a valid decimal amount."},
+        ) from exc
+    if not amount.is_finite():
+        raise SaleError(
+            "Enter a valid actual fabric amount.",
+            errors={"actual_fabric_used": "Enter a valid decimal amount."},
+        )
+    amount = qty(amount)
+    if amount < 0:
+        raise SaleError(
+            "Actual fabric used cannot be negative.",
+            errors={"actual_fabric_used": "Actual fabric used cannot be negative."},
+        )
+    if amount > MAX_FABRIC_TOTAL:
+        raise SaleError(
+            "Actual fabric used is too large.",
+            errors={"actual_fabric_used": "Actual fabric used is too large."},
+        )
+    return amount
+
+
 def _validate_sale_context(
     *, business, branch, warehouse, cashier, customer, membership, register, shift
 ):
@@ -302,6 +353,7 @@ def complete_sale(
         classification = str(
             line.get("garment_classification", "") or ""
         ).strip().lower()
+        estimated_fabric = None
         if product.is_tailoring_item:
             has_tailoring_items = True
             if classification not in dict(SaleItem.GarmentClassification.choices):
@@ -310,6 +362,12 @@ def complete_sale(
                     message,
                     errors={f"{field_prefix}.garment_classification": message},
                 )
+            estimated_fabric = _fabric_estimate(
+                product,
+                classification,
+                qty,
+                field_prefix=field_prefix,
+            )
         elif classification or tailoring_details:
             message = f"{product.name} is not configured as a tailoring garment."
             raise SaleError(message, errors={field_prefix: message})
@@ -320,6 +378,7 @@ def complete_sale(
             "unit_price": unit_price,
             "discount_amount": discount,
             "garment_classification": classification,
+            "estimated_fabric": estimated_fabric,
             "tailoring_details": tailoring_details,
         })
 
@@ -453,6 +512,7 @@ def complete_sale(
             unit_cost=unit_cost,
             gross_profit=money(parts["base"] - line_cost),
             garment_classification=line.get("garment_classification", ""),
+            estimated_fabric=line.get("estimated_fabric"),
             tailoring_details=line.get("tailoring_details", {}),
         )
         if product.is_stocked:
@@ -603,6 +663,50 @@ def set_delivery_status(*, sale, status, user, request=None):
               description=(f"Delivery status of {sale.invoice_number} "
                            f"changed {old or '—'} → {status}."))
     return sale
+
+
+@transaction.atomic
+def update_actual_fabric(
+    *, sale_item, actual_fabric_used, user, membership, request=None
+):
+    if (
+        membership is None
+        or not membership.is_active
+        or membership.business_id != sale_item.business_id
+        or membership.user_id != user.id
+        or not membership.has_perm("workshop.fabric_actual")
+    ):
+        raise PermissionDenied
+
+    item = (
+        SaleItem.objects.select_for_update()
+        .select_related("sale__branch", "product")
+        .get(pk=sale_item.pk, business_id=membership.business_id)
+    )
+    if not membership.can_access_branch(item.sale.branch):
+        raise PermissionDenied
+    if not item.is_tailoring_line:
+        raise SaleError("Actual fabric can only be recorded for tailoring items.")
+
+    amount = _clean_actual_fabric(actual_fabric_used)
+    old = item.actual_fabric_used
+    item.actual_fabric_used = amount
+    item.save(update_fields=["actual_fabric_used", "updated_at"])
+    audit.log(
+        "sale.fabric_actual_updated",
+        business=item.business,
+        user=user,
+        request=request,
+        module="sales",
+        obj=item,
+        old_values={"actual_fabric_used": None if old is None else str(old)},
+        new_values={"actual_fabric_used": None if amount is None else str(amount)},
+        description=(
+            f"Actual fabric for {item.product_name} on "
+            f"{item.sale.invoice_number} updated."
+        ),
+    )
+    return item
 
 
 @transaction.atomic

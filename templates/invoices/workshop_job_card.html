@@ -340,6 +340,26 @@
             <div class="value">{{ tailoring.workshop_notes|default:"-" }}</div>
           </td>
         </tr>
+        {% if job_item.is_tailoring_line %}
+        <tr>
+          <td>
+            <div class="label">Fabric Unit</div>
+            <div class="value">Meters</div>
+          </td>
+          <td>
+            <div class="label">Estimated Fabric</div>
+            <div class="value">{% if job_item.estimated_fabric is not None %}{{ job_item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</div>
+          </td>
+          <td>
+            <div class="label">Actual Fabric</div>
+            <div class="value">{% if job_item.actual_fabric_used is not None %}{{ job_item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</div>
+          </td>
+          <td>
+            <div class="label">Variance</div>
+            <div class="value">{% if job_item.fabric_variance is not None %}{{ job_item.fabric_variance|floatformat:"-3" }} m{% else %}Not available{% endif %}</div>
+          </td>
+        </tr>
+        {% endif %}
       </table>
     </div>
   </div>

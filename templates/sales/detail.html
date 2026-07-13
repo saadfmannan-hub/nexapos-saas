@@ -45,6 +45,13 @@
               {{ item.product_name }}
               {% if item.is_tailoring_line %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
+                <div class="small text-secondary">
+                  Estimated: <span class="fw-semibold text-body">{% if item.estimated_fabric is not None %}{{ item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
+                </div>
+                <div class="small text-secondary">
+                  Actual: <span class="fw-semibold text-body">{% if item.actual_fabric_used is not None %}{{ item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
+                  <span class="ms-2">Variance: <span class="fw-semibold text-body">{% if item.fabric_variance is not None %}{{ item.fabric_variance|floatformat:"-3" }} m{% else %}Not available{% endif %}</span></span>
+                </div>
               {% endif %}
               <span class="small text-secondary">{{ item.sku }}</span>
             </td>
@@ -59,6 +66,17 @@
               {% if item.is_tailoring_line %}
                 <a href="{% url 'sales:sale_item_workshop_job_card_pdf' sale.public_id item.id %}"
                    class="btn btn-sm btn-outline-primary" target="_blank">Job Card</a>
+                {% if can_edit_actual_fabric %}
+                <form method="post" action="{% url 'sales:sale_item_update_fabric' sale.public_id item.id %}"
+                      class="d-flex gap-1 mt-2 justify-content-end">
+                  {% csrf_token %}
+                  <input type="number" name="actual_fabric_used" min="0" max="{{ max_fabric_total }}"
+                         step="0.001" value="{{ item.actual_fabric_used|default_if_none:'' }}"
+                         class="form-control form-control-sm" style="width:8rem"
+                         aria-label="Actual fabric used in meters" placeholder="Actual m">
+                  <button class="btn btn-sm btn-outline-success">Save</button>
+                </form>
+                {% endif %}
               {% else %}
                 <span class="text-secondary">—</span>
               {% endif %}

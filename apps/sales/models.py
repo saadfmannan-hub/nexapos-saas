@@ -7,14 +7,16 @@ corrections happen through void, return or credit note.
 from decimal import Decimal
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models import Sum
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.models import TenantModel
-from apps.core.money import money
+from apps.core.money import money, qty
 
 ZERO = Decimal("0")
+MAX_FABRIC_TOTAL = Decimal("99999999999.999")
 
 
 class PaymentMethod(TenantModel):
@@ -281,6 +283,30 @@ class SaleItem(TenantModel):
         blank=True,
         default="",
     )
+    estimated_fabric = models.DecimalField(
+        "Estimated Fabric",
+        max_digits=14,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(ZERO),
+            MaxValueValidator(MAX_FABRIC_TOTAL),
+        ],
+        help_text="Persisted estimated fabric consumption in meters.",
+    )
+    actual_fabric_used = models.DecimalField(
+        "Actual Fabric Used",
+        max_digits=14,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(ZERO),
+            MaxValueValidator(MAX_FABRIC_TOTAL),
+        ],
+        help_text="Workshop-recorded actual fabric consumption in meters.",
+    )
     tailoring_details = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -288,7 +314,21 @@ class SaleItem(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(garment_classification__in=["", "adult", "child"]),
                 name="saleitem_classification_valid",
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(estimated_fabric__isnull=True)
+                    | models.Q(estimated_fabric__gte=0)
+                ),
+                name="saleitem_estimated_fabric_nonnegative",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(actual_fabric_used__isnull=True)
+                    | models.Q(actual_fabric_used__gte=0)
+                ),
+                name="saleitem_actual_fabric_nonnegative",
+            ),
         ]
 
     def __str__(self):
@@ -325,6 +365,12 @@ class SaleItem(TenantModel):
         if self.is_tailoring_line:
             return "Legacy / Not Recorded"
         return ""
+
+    @property
+    def fabric_variance(self):
+        if self.estimated_fabric is None or self.actual_fabric_used is None:
+            return None
+        return qty(self.actual_fabric_used - self.estimated_fabric)
 
 
 class SalePayment(TenantModel):
