@@ -5,6 +5,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.accounts.models import User
+from apps.accounts.services import post_login_redirect
 from apps.audit import services as audit
 from apps.core.decorators import business_required, require_permission
 from apps.core.middleware import SESSION_BUSINESS_KEY
@@ -15,7 +16,7 @@ from .services import provision_business
 
 def register_view(request):
     if request.user.is_authenticated:
-        return redirect("dashboard")
+        return post_login_redirect(request)
     form = RegistrationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
@@ -52,7 +53,7 @@ def no_business_view(request):
     if not request.user.is_authenticated:
         return redirect("accounts:login")
     if getattr(request, "business", None):
-        return redirect("dashboard")
+        return post_login_redirect(request)
     # Platform staff (superusers / platform admins) without a workspace
     # belong in the platform area, not on this dead-end page.
     if request.user.is_platform_staff:
@@ -72,7 +73,7 @@ def switch_business(request):
     else:
         request.session[SESSION_BUSINESS_KEY] = membership.business_id
         messages.success(request, f"Switched to {membership.business.name}.")
-    return redirect("dashboard")
+    return post_login_redirect(request, membership=membership)
 
 
 @business_required
@@ -131,7 +132,7 @@ def onboarding_view(request):
         business.onboarding_completed = True
         business.save(update_fields=["onboarding_completed"])
         messages.success(request, "Onboarding completed. Welcome aboard!")
-        return redirect("dashboard")
+        return post_login_redirect(request)
     return render(request, "tenants/onboarding.html", {
         "steps": steps, "done_count": done_count, "total": len(steps),
     })

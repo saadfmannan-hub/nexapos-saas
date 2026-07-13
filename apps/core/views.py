@@ -10,11 +10,9 @@ from django.shortcuts import redirect, render
 
 def home(request):
     if request.user.is_authenticated:
-        if getattr(request, "business", None):
-            return redirect("dashboard")
-        if request.user.is_platform_staff:
-            return redirect("platformadmin:dashboard")
-        return redirect("tenants:no_business")
+        from apps.accounts.services import post_login_redirect
+
+        return post_login_redirect(request)
     return redirect("accounts:login")
 
 
