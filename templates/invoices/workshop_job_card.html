@@ -55,6 +55,7 @@
     margin-top: 3px;
   }
   .priority-normal { background: #047857; }
+  .priority-high { background: #a16207; }
   .priority-urgent { background: #c2410c; }
   .priority-vip { background: #b91c1c; }
   .label {
@@ -307,8 +308,8 @@
             <div class="value">{{ tailoring.design_type|default:"-" }}</div>
           </td>
           <td>
-            <div class="label">Priority</div>
-            <div class="value">{{ priority_label|default:"Normal" }}</div>
+            <div class="label">Garment</div>
+            <div class="value">{% if job_item.is_tailoring_line %}{{ job_item.garment_classification_label }}{% else %}-{% endif %}</div>
           </td>
         </tr>
         <tr>

@@ -61,7 +61,7 @@ class ProductForm(TenantStyledModelForm):
             "name", "product_type", "category", "brand", "unit", "internal_code",
             "sku", "barcode", "purchase_price", "sale_price", "wholesale_price",
             "minimum_sale_price", "tax_rate", "price_includes_tax", "reorder_level",
-            "track_inventory", "allow_discount", "image", "description",
+            "track_inventory", "allow_discount", "is_tailoring_item", "image", "description",
             "preferred_supplier", "is_active",
         ]
         widgets = {

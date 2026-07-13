@@ -58,6 +58,14 @@ def _payment_breakdown(sale):
     return {key: _money(value) for key, value in amounts.items()}
 
 
+def _payment_method_summary(sale):
+    names = []
+    for payment in sale.payments.all():
+        if payment.method.name not in names:
+            names.append(payment.method.name)
+    return " + ".join(names) or "-"
+
+
 def _real_received(sale):
     from apps.sales.models import SaleReturn
 
@@ -151,19 +159,60 @@ def sales_summary(business, f):
 
 
 def sales_detailed(business, f):
+    from apps.sales.models import Sale, SaleItem
+
     qs = (
-        _sales_base(business, f, exclude_voided=False)
-        .select_related("customer", "branch", "cashier")
-        .prefetch_related("returns")
-        .order_by("-sale_date")[:2000]
+        SaleItem.objects.for_business(business)
+        .filter(sale__in=_sales_base(business, f, exclude_voided=False))
+        .select_related("sale__customer", "sale__branch", "sale__cashier", "product")
+        .prefetch_related("sale__returns", "sale__payments__method")
+        .order_by("-sale__sale_date", "sale__invoice_number", "id")
     )
-    rows = [[s.invoice_number, s.sale_date.strftime("%Y-%m-%d %H:%M"),
-             s.customer.full_name, s.branch.name, s.cashier.full_name,
-             s.net_total, s.net_amount_paid, s.balance,
-             s.get_status_display()] for s in qs]
-    return {"columns": ["Invoice", "Date", "Customer", "Branch", "Cashier",
-                        "Total", "Paid", "Balance", "Status"],
-            "rows": rows, "totals": None}
+    if f.get("product_id"):
+        qs = qs.filter(product_id=f["product_id"])
+    if f.get("garment_classification") in ("adult", "child"):
+        qs = qs.filter(garment_classification=f["garment_classification"])
+
+    rows = []
+    pieces = {"adult": ZERO, "child": ZERO, "legacy": ZERO}
+    for item in qs[:2000]:
+        sale = item.sale
+        quantity = item.quantity - item.returned_quantity
+        if sale.status == Sale.Status.VOIDED:
+            quantity = ZERO
+        classification = item.garment_classification_label or "Not Applicable"
+        if item.is_tailoring_line:
+            key = item.garment_classification or "legacy"
+            pieces[key] += quantity
+        rows.append([
+            sale.invoice_number,
+            sale.sale_date.strftime("%Y-%m-%d %H:%M"),
+            sale.customer.full_name,
+            sale.branch.name,
+            sale.cashier.full_name,
+            item.product_name,
+            classification,
+            quantity,
+            _payment_method_summary(sale),
+            sale.net_total,
+            sale.net_amount_paid,
+            sale.balance,
+            sale.get_status_display(),
+        ])
+    return {
+        "columns": [
+            "Invoice", "Date", "Customer", "Branch", "Cashier", "Product",
+            "Garment Classification", "Quantity", "Payment Method", "Total",
+            "Paid", "Balance", "Status",
+        ],
+        "rows": rows,
+        "totals": None,
+        "summary": [
+            ("Total Adult Pieces", pieces["adult"]),
+            ("Total Child Pieces", pieces["child"]),
+            ("Total Legacy/Unclassified Pieces", pieces["legacy"]),
+        ],
+    }
 
 
 def product_sales(business, f):

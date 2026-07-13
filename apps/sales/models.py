@@ -85,6 +85,11 @@ class Sale(TenantModel):
         PART_RETURNED = "partially_returned", _("Partially Returned")
         RETURNED = "fully_returned", _("Fully Returned")
 
+    class Priority(models.TextChoices):
+        NORMAL = "normal", _("Normal")
+        HIGH = "high", _("High")
+        URGENT = "urgent", _("Urgent")
+
     branch = models.ForeignKey("branches.Branch", on_delete=models.PROTECT, related_name="sales")
     warehouse = models.ForeignKey(
         "branches.Warehouse", on_delete=models.PROTECT, related_name="sales"
@@ -110,6 +115,9 @@ class Sale(TenantModel):
 
     invoice_number = models.CharField(max_length=40, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    priority = models.CharField(
+        max_length=10, choices=Priority.choices, default=Priority.NORMAL, db_index=True
+    )
     sale_date = models.DateTimeField(db_index=True)
 
     # Delivery / order fulfilment (optional — used by made-to-order and
@@ -159,7 +167,11 @@ class Sale(TenantModel):
                 fields=["business", "invoice_number"],
                 condition=~models.Q(invoice_number=""),
                 name="uniq_invoice_number_per_business",
-            )
+            ),
+            models.CheckConstraint(
+                condition=models.Q(priority__in=["normal", "high", "urgent"]),
+                name="sale_priority_valid",
+            ),
         ]
 
     def __str__(self):
@@ -239,6 +251,10 @@ class Sale(TenantModel):
 
 
 class SaleItem(TenantModel):
+    class GarmentClassification(models.TextChoices):
+        ADULT = "adult", _("Adult")
+        CHILD = "child", _("Child")
+
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey(
         "catalog.Product", on_delete=models.PROTECT, related_name="sale_items"
@@ -259,7 +275,21 @@ class SaleItem(TenantModel):
     unit_cost = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     gross_profit = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     returned_quantity = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    garment_classification = models.CharField(
+        max_length=5,
+        choices=GarmentClassification.choices,
+        blank=True,
+        default="",
+    )
     tailoring_details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(garment_classification__in=["", "adult", "child"]),
+                name="saleitem_classification_valid",
+            )
+        ]
 
     def __str__(self):
         return f"{self.product_name} x {self.quantity}"
@@ -270,6 +300,8 @@ class SaleItem(TenantModel):
 
     @property
     def has_tailoring_details(self):
+        if self.garment_classification:
+            return True
         for key, value in (self.tailoring_details or {}).items():
             value = str(value or "").strip()
             if not value:
@@ -278,6 +310,21 @@ class SaleItem(TenantModel):
                 continue
             return True
         return False
+
+    @property
+    def is_tailoring_line(self):
+        return bool(
+            self.has_tailoring_details
+            or (self.product_id and self.product.is_tailoring_item)
+        )
+
+    @property
+    def garment_classification_label(self):
+        if self.garment_classification:
+            return self.get_garment_classification_display()
+        if self.is_tailoring_line:
+            return "Legacy / Not Recorded"
+        return ""
 
 
 class SalePayment(TenantModel):

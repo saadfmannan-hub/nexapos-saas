@@ -41,7 +41,13 @@
         <tbody>
           {% for item in items %}
           <tr>
-            <td>{{ item.product_name }}<br><span class="small text-secondary">{{ item.sku }}</span></td>
+            <td>
+              {{ item.product_name }}
+              {% if item.is_tailoring_line %}
+                <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
+              {% endif %}
+              <span class="small text-secondary">{{ item.sku }}</span>
+            </td>
             <td class="text-end">{{ item.quantity }}</td>
             <td class="text-end">{% money item.unit_price %}</td>
             <td class="text-end">{% money item.discount_amount %}</td>
@@ -50,7 +56,7 @@
             {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
             <td class="text-end">
-              {% if item.has_tailoring_details %}
+              {% if item.is_tailoring_line %}
                 <a href="{% url 'sales:sale_item_workshop_job_card_pdf' sale.public_id item.id %}"
                    class="btn btn-sm btn-outline-primary" target="_blank">Job Card</a>
               {% else %}
@@ -94,6 +100,7 @@
         {% if sale.customer.mobile %}<tr><th>Customer Phone</th><td>{{ sale.customer.mobile }}</td></tr>{% endif %}
         <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
+        <tr><th>Priority</th><td>{{ sale.get_priority_display }}</td></tr>
         <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
         <tr><th>Invoice Discount</th><td>-{% money sale.discount_amount %}</td></tr>
         <tr><th>Discounted Subtotal</th><td>{% money discounted_subtotal %}</td></tr>

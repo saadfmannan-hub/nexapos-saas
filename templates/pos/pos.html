@@ -124,13 +124,15 @@
 
       <div class="pos-cart-items">
         <template x-for="(line, i) in cart" :key="i">
-          <div class="cart-row">
+          <div class="cart-row" :id="'cart-line-' + i">
             <div class="d-flex justify-content-between align-items-start">
               <div class="fw-semibold small" x-text="line.name"></div>
               <div class="d-flex gap-2">
                 <button class="btn btn-sm p-0 text-secondary" title="Add separate garment"
-                        @click="duplicateLine(i)"><i class="bi bi-files"></i></button>
-                <button class="btn btn-sm p-0 text-danger" @click="cart.splice(i,1)"><i class="bi bi-x-lg"></i></button>
+                        x-show="line.is_tailoring_item" @click="duplicateLine(i)"
+                        aria-label="Add separate garment"><i class="bi bi-files"></i></button>
+                <button class="btn btn-sm p-0 text-danger" @click="removeLine(i)"
+                        aria-label="Remove item"><i class="bi bi-x-lg"></i></button>
               </div>
             </div>
             <div class="d-flex gap-2 align-items-center mt-1">
@@ -152,7 +154,24 @@
               {% endif %}
               <div class="ms-auto fw-bold small" x-text="fmt(lineTotal(line))"></div>
             </div>
-            <div class="mt-2">
+            <div class="mt-2" x-show="line.is_tailoring_item" x-cloak>
+              <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                <label class="form-label small mb-0 required-star"
+                       :id="'garment-classification-label-' + i">Garment</label>
+                <div class="btn-group btn-group-sm garment-classification" role="radiogroup"
+                     :aria-labelledby="'garment-classification-label-' + i">
+                  <input type="radio" class="btn-check" value="adult"
+                         :id="'garment-adult-' + i" :name="'garment-classification-' + i"
+                         x-model="line.garment_classification" @change="line.validation_error = ''">
+                  <label class="btn btn-outline-primary" :for="'garment-adult-' + i">Adult</label>
+                  <input type="radio" class="btn-check" value="child"
+                         :id="'garment-child-' + i" :name="'garment-classification-' + i"
+                         x-model="line.garment_classification" @change="line.validation_error = ''">
+                  <label class="btn btn-outline-primary" :for="'garment-child-' + i">Child</label>
+                </div>
+              </div>
+              <div class="text-danger small mb-2" role="alert" x-show="line.validation_error"
+                   x-text="line.validation_error"></div>
               <button class="btn btn-sm btn-outline-secondary w-100 text-start" type="button"
                       @click="line.expanded = !line.expanded">
                 <i class="bi bi-scissors me-1"></i>Tailoring details
@@ -165,37 +184,34 @@
                     <select class="form-select form-select-sm" x-model="line.tailoring_details.design_type">
                       <option value="">Select design type</option>
                       <option value="Daraz">Daraz</option>
-                      <option value="VIP 3D">VIP 3D</option>
+                      <option value="VIP 3D Design">VIP 3D Design</option>
                       <option value="Computer Design">Computer Design</option>
                     </select>
                   </div>
                   <div class="col-6">
-                    <label class="form-label small mb-1">Daraz Details</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.daraz_details" placeholder="3 Line">
+                    <label class="form-label small mb-1">Daraz</label>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.daraz_details"
+                           maxlength="200" placeholder="Enter Daraz instructions">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">VIP 3D Design</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.vip_3d_design" placeholder="MM3">
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.vip_3d_design"
+                           maxlength="200" placeholder="MM3">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Computer Design</label>
-                    <input class="form-control form-control-sm" x-model="line.tailoring_details.computer_design" placeholder="Sultani">
-                  </div>
-                  <div class="col-6">
-                    <label class="form-label small mb-1">Priority</label>
-                    <select class="form-select form-select-sm" x-model="line.tailoring_details.priority">
-                      <option value="normal">Normal</option>
-                      <option value="urgent">Urgent</option>
-                      <option value="vip">VIP</option>
-                    </select>
+                    <input class="form-control form-control-sm" x-model="line.tailoring_details.computer_design"
+                           maxlength="200" placeholder="Sultani">
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Customer Notes</label>
-                    <textarea class="form-control form-control-sm" rows="2" x-model="line.tailoring_details.customer_notes" placeholder="Loose fitting"></textarea>
+                    <textarea class="form-control form-control-sm" rows="2" maxlength="500"
+                              x-model="line.tailoring_details.customer_notes" placeholder="Loose fitting"></textarea>
                   </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Workshop Notes</label>
-                    <textarea class="form-control form-control-sm" rows="2" x-model="line.tailoring_details.workshop_notes" placeholder="Premium stitching"></textarea>
+                    <textarea class="form-control form-control-sm" rows="2" maxlength="500"
+                              x-model="line.tailoring_details.workshop_notes" placeholder="Premium stitching"></textarea>
                   </div>
                 </div>
               </div>
@@ -230,12 +246,21 @@
         <div class="d-flex justify-content-between fs-5 fw-bold border-top pt-2 mt-1">
           <span>Grand Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
         </div>
+        <div class="d-flex align-items-center justify-content-between gap-2 my-2">
+          <label class="form-label mb-0 required-star" for="orderPriority">Priority</label>
+          <select id="orderPriority" class="form-select form-select-sm pos-priority-select"
+                  x-model="priority" required>
+            <option value="normal">Normal</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
         <input type="text" class="form-control form-control-sm my-2" placeholder="Sale notes…" x-model="notes">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" @click="holdSale()" :disabled="!cart.length" title="Hold (F7)">
             <i class="bi bi-pause"></i> Hold</button>
           <button class="btn btn-primary btn-pos-pay flex-grow-1" :disabled="!cart.length || busy"
-                  @click="openPayment()" data-bs-toggle="modal" data-bs-target="#payModal" title="Pay (F9)">
+                  @click="openPayment()" title="Pay (F9)">
             <i class="bi bi-credit-card me-1"></i> PAY <span x-text="fmt(totals.total)"></span></button>
         </div>
       </div>
@@ -244,7 +269,7 @@
 
   <!-- Payment modal -->
   <div class="modal fade" id="payModal" tabindex="-1">
-    <div class="modal-dialog modal-lg"><div class="modal-content">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable"><div class="modal-content pos-payment-modal">
       <div class="modal-header py-2">
         <h5 class="modal-title">Payment — <span x-text="fmt(totals.total)"></span> {{ currency }}</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -267,9 +292,13 @@
               Store credit available: <strong x-text="fmt(customer.store_credit)"></strong>
             </div>
             <div class="mt-2">
-              <label class="form-label small mb-1"><i class="bi bi-truck me-1"></i>Delivery date *</label>
-              <input type="date" class="form-control form-control-sm" x-model="deliveryDate"
-                     required>
+              <label class="form-label small mb-1" for="deliveryDate">
+                <i class="bi bi-truck me-1"></i>Delivery date
+                <span class="text-danger" x-show="requiresDelivery">*</span>
+              </label>
+              <input id="deliveryDate" type="date" class="form-control form-control-sm"
+                     x-model="deliveryDate" min="{{ today|date:'Y-m-d' }}" :required="requiresDelivery">
+              <div class="form-text" x-show="requiresDelivery">Required for tailoring bookings.</div>
             </div>
           </div>
           <div class="col-md-7">
@@ -294,7 +323,8 @@
                         x-text="fmt(amt)" title="Quick cash tender"></button>
               </template>
             </div>
-            <div class="alert alert-danger py-2 small" x-show="payError" x-text="payError"></div>
+            <div class="alert alert-danger py-2 small" x-show="payError" x-text="payError"
+                 role="alert" tabindex="-1" x-ref="payError"></div>
             <button class="btn btn-success w-100 btn-pos-pay" @click="checkout()" :disabled="busy">
               <span x-show="!busy"><i class="bi bi-check-circle me-1"></i> Complete sale</span>
               <span x-show="busy"><span class="spinner-border spinner-border-sm me-2"></span>Processing…</span>
@@ -358,7 +388,8 @@ function pos() {
   const STORAGE_SCALE = 1000;
   return {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
-    cart: [], invoiceDiscount: 0, notes: '', deliveryDate: '', busy: false, payError: '',
+    cart: [], invoiceDiscount: 0, notes: '', priority: 'normal', deliveryDate: '',
+    busy: false, payError: '',
     customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []},
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
     recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
@@ -383,6 +414,9 @@ function pos() {
     get discountLabel() {
       return this.totals.invoiceDiscount > 0 ? '-' + this.fmt(this.totals.invoiceDiscount) : this.fmt(0);
     },
+    get requiresDelivery() {
+      return this.cart.some(line => !!line.is_tailoring_item);
+    },
 
     async loadProducts() {
       this.loading = true;
@@ -402,36 +436,81 @@ function pos() {
       else { this.search = code; this.loadProducts(); }
     },
     addToCart(p) {
-      const existing = this.cart.find(l => l.product_id === p.product_id && l.variant_id === p.variant_id
-                                          && +l.unit_price === +p.price
-                                          && !this.hasTailoringDetails(l));
+      const existing = this.cart.find(line => this.canMerge(line, p));
       if (existing) { existing.quantity = +existing.quantity + 1; }
       else this.cart.push({product_id: p.product_id, variant_id: p.variant_id, name: p.name,
                            quantity: 1, unit_price: p.price, discount_amount: 0,
                            tax_rate: p.tax_rate, allow_discount: p.allow_discount,
+                           is_tailoring_item: !!p.is_tailoring_item,
+                           garment_classification: '', validation_error: '',
                            expanded: false, tailoring_details: this.blankTailoringDetails()});
       this.$refs.barcode.focus();
+    },
+    canMerge(line, product) {
+      if (line.product_id !== product.product_id || line.variant_id !== product.variant_id
+          || +line.unit_price !== +product.price
+          || !!line.is_tailoring_item !== !!product.is_tailoring_item) return false;
+      if (!product.is_tailoring_item) return true;
+      return !line.garment_classification && !this.hasTailoringDetails(line);
     },
     blankTailoringDetails() {
       return {
         design_type: '', daraz_details: '', vip_3d_design: '', computer_design: '',
-        priority: 'normal', customer_notes: '', workshop_notes: ''
+        customer_notes: '', workshop_notes: ''
       };
     },
     hasTailoringDetails(line) {
-      return Object.entries(line.tailoring_details || {}).some(([key, value]) => {
-        const clean = String(value || '').trim();
-        return clean && !(key === 'priority' && clean === 'normal');
-      });
+      return Object.values(line.tailoring_details || {}).some(value => String(value || '').trim());
     },
     duplicateLine(index) {
       const source = this.cart[index];
       this.cart.splice(index + 1, 0, {
         ...source,
         quantity: 1,
+        garment_classification: '',
+        validation_error: '',
         expanded: true,
         tailoring_details: this.blankTailoringDetails()
       });
+    },
+    removeLine(index) {
+      this.cart.splice(index, 1);
+    },
+    validateCart() {
+      let firstInvalid = -1;
+      this.cart.forEach((line, index) => {
+        line.validation_error = '';
+        if (line.is_tailoring_item && !['adult', 'child'].includes(line.garment_classification)) {
+          line.validation_error = 'Select Adult or Child for this garment.';
+          if (firstInvalid < 0) firstInvalid = index;
+        }
+      });
+      if (!['normal', 'high', 'urgent'].includes(this.priority)) {
+        this.payError = 'Select a valid order priority.';
+        document.getElementById('orderPriority')?.focus();
+        return false;
+      }
+      if (firstInvalid >= 0) {
+        this.$nextTick(() => this.focusInvalidLine(firstInvalid));
+        return false;
+      }
+      return true;
+    },
+    focusInvalidLine(index) {
+      const row = document.getElementById('cart-line-' + index);
+      row?.scrollIntoView({block: 'center', behavior: 'smooth'});
+      row?.querySelector('input[type="radio"]')?.focus({preventScroll: true});
+    },
+    checkoutItems() {
+      return this.cart.map(line => ({
+        product_id: line.product_id,
+        variant_id: line.variant_id,
+        quantity: line.quantity,
+        unit_price: line.unit_price,
+        discount_amount: line.discount_amount,
+        garment_classification: line.garment_classification || '',
+        tailoring_details: {...this.blankTailoringDetails(), ...(line.tailoring_details || {})},
+      }));
     },
     lineParts(l, invoiceShare = 0) {
       const gross = this.storageMoney((+l.unit_price * +l.quantity) - (+l.discount_amount || 0));
@@ -529,16 +608,30 @@ function pos() {
 
     openPayment() {
       this.payError = '';
+      if (!this.validateCart()) return;
       this.payments = [{method_id: '{{ payment_methods.0.id }}', amount: this.totals.total.toFixed(PREC), reference: ''}];
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('payModal')).show();
     },
     addPayment() { this.payments.push({method_id: '{{ payment_methods.0.id }}', amount: '', reference: ''}); },
     exactCash() { if (this.payments.length) this.payments[0].amount = this.totals.total.toFixed(PREC); },
 
     async checkout() {
       this.payError = ''; this.busy = true;
-      if (!this.deliveryDate) {
-        this.payError = 'Please select delivery date before completing sale.';
+      if (!this.validateCart()) {
+        bootstrap.Modal.getInstance(document.getElementById('payModal'))?.hide();
         this.busy = false;
+        return;
+      }
+      if (this.requiresDelivery && !this.deliveryDate) {
+        this.payError = 'Please select delivery date before completing the tailoring booking.';
+        this.busy = false;
+        this.$nextTick(() => document.getElementById('deliveryDate')?.focus());
+        return;
+      }
+      if (this.deliveryDate && this.deliveryDate < '{{ today|date:"Y-m-d" }}') {
+        this.payError = 'Delivery date cannot be in the past.';
+        this.busy = false;
+        this.$nextTick(() => document.getElementById('deliveryDate')?.focus());
         return;
       }
       if (this.remaining > 0) {
@@ -553,25 +646,48 @@ function pos() {
           body: JSON.stringify({
             branch_id: {{ branch.id }},
             customer_id: this.customer.id,
-            items: this.cart,
+            items: this.checkoutItems(),
             payments: this.payments.filter(p => +p.amount > 0),
             invoice_discount: this.invoiceDiscount || 0,
             notes: this.notes,
             delivery_date: this.deliveryDate || null,
+            priority: this.priority,
             held_id: this.resumedHeldId,
           }),
         });
         const data = await r.json();
-        if (!data.ok) { this.payError = data.error; return; }
+        if (!data.ok) {
+          this.payError = data.error;
+          const lineError = this.applyServerErrors(data.errors || {});
+          if (lineError) {
+            bootstrap.Modal.getInstance(document.getElementById('payModal'))?.hide();
+          } else {
+            this.$nextTick(() => this.$refs.payError?.focus());
+          }
+          return;
+        }
         this.lastSale = data.sale;
         bootstrap.Modal.getInstance(document.getElementById('payModal'))?.hide();
         new bootstrap.Modal(document.getElementById('doneModal')).show();
       } catch (e) { this.payError = 'Network error — sale was not completed.'; }
       finally { this.busy = false; }
     },
+    applyServerErrors(errors) {
+      let firstInvalid = -1;
+      Object.entries(errors).forEach(([field, message]) => {
+        const match = field.match(/^items\.(\d+)/);
+        if (!match) return;
+        const index = Number(match[1]);
+        if (!this.cart[index]) return;
+        this.cart[index].validation_error = message;
+        if (firstInvalid < 0) firstInvalid = index;
+      });
+      if (firstInvalid >= 0) this.$nextTick(() => this.focusInvalidLine(firstInvalid));
+      return firstInvalid >= 0;
+    },
     newSale() {
       this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
-      this.deliveryDate = ''; this.resumedHeldId = null;
+      this.priority = 'normal'; this.deliveryDate = ''; this.resumedHeldId = null;
       this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []};
       this.$refs.barcode.focus();
     },
@@ -588,7 +704,8 @@ function pos() {
         headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
         body: JSON.stringify({branch_id: {{ branch.id }}, label,
           cart: {items: this.cart, customer: this.customer,
-                 invoice_discount: this.invoiceDiscount, notes: this.notes}}),
+                 invoice_discount: this.invoiceDiscount, notes: this.notes,
+                 priority: this.priority}}),
       });
       const data = await r.json();
       if (data.ok) { this.heldCount++; this.newSale(); } else alert(data.error);
@@ -600,9 +717,23 @@ function pos() {
     },
     resumeHeld(h) {
       this.cart = h.cart.items || [];
+      const legacyPriorities = this.cart.map(line =>
+        String(line.tailoring_details?.priority || '').toLowerCase());
+      this.priority = h.cart.priority
+        || (legacyPriorities.includes('urgent') ? 'urgent'
+          : legacyPriorities.some(value => ['high', 'vip'].includes(value)) ? 'high' : 'normal');
       this.cart.forEach(line => {
+        const product = this.products.find(p =>
+          p.product_id === line.product_id && p.variant_id === (line.variant_id || null));
+        line.is_tailoring_item = line.is_tailoring_item ?? !!product?.is_tailoring_item;
+        line.garment_classification = String(line.garment_classification || '').toLowerCase();
+        line.validation_error = '';
         line.expanded = !!line.expanded;
         line.tailoring_details = {...this.blankTailoringDetails(), ...(line.tailoring_details || {})};
+        if (line.tailoring_details.design_type === 'VIP 3D') {
+          line.tailoring_details.design_type = 'VIP 3D Design';
+        }
+        delete line.tailoring_details.priority;
       });
       if (h.cart.customer) this.customer = h.cart.customer;
       this.invoiceDiscount = h.cart.invoice_discount || 0;
@@ -624,9 +755,7 @@ function pos() {
       if (e.key === 'F4') { e.preventDefault(); this.$refs.search.focus(); }
       if (e.key === 'F7') { e.preventDefault(); if (this.cart.length) this.holdSale(); }
       if (e.key === 'F8') { e.preventDefault(); this.clearCart(); }
-      if (e.key === 'F9') { e.preventDefault();
-        if (this.cart.length) { this.openPayment();
-          new bootstrap.Modal(document.getElementById('payModal')).show(); } }
+      if (e.key === 'F9') { e.preventDefault(); if (this.cart.length) this.openPayment(); }
     },
   }
 }

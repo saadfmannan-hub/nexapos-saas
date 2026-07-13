@@ -5,6 +5,7 @@ from django.core.paginator import Paginator
 from django.db.models import Q, Sum
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.core.decorators import require_permission
@@ -50,7 +51,6 @@ TAILORING_CHECKOUT_FIELDS = (
     "daraz_details",
     "vip_3d_design",
     "computer_design",
-    "priority",
     "customer_notes",
     "workshop_notes",
 )
@@ -59,12 +59,35 @@ TAILORING_CHECKOUT_FIELDS = (
 def _checkout_tailoring_details(raw):
     raw_details = raw.get("tailoring_details") or raw.get("tailoring") or {}
     if not isinstance(raw_details, dict):
-        return {}
+        return raw_details
     return {
-        key: str(raw_details.get(key, "") or "").strip()[:500]
+        key: str(raw_details.get(key, "") or "").strip()
         for key in TAILORING_CHECKOUT_FIELDS
         if str(raw_details.get(key, "") or "").strip()
     }
+
+
+def _checkout_priority(payload, raw_items):
+    raw_priority = str(payload.get("priority") or "").strip().lower()
+    if raw_priority:
+        return raw_priority
+    legacy_priorities = {
+        str((item.get("tailoring_details") or {}).get("priority") or "").lower()
+        for item in raw_items
+        if isinstance(item, dict) and isinstance(item.get("tailoring_details"), dict)
+    }
+    if "urgent" in legacy_priorities:
+        return Sale.Priority.URGENT
+    if legacy_priorities.intersection({"high", "vip"}):
+        return Sale.Priority.HIGH
+    return Sale.Priority.NORMAL
+
+
+def _sale_error_response(exc, *, status=400):
+    body = {"ok": False, "error": str(exc)}
+    if getattr(exc, "errors", None):
+        body["errors"] = exc.errors
+    return JsonResponse(body, status=status)
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +145,7 @@ def pos_view(request):
         "vat_enabled": settings_obj.vat_enabled,
         "vat_rate": vat_rate,
         "show_vat_on_invoice_receipt": settings_obj.show_vat_on_invoice_receipt,
+        "today": timezone.localdate(),
     })
 
 
@@ -168,6 +192,7 @@ def pos_products(request):
                     "tax_rate": str(tax_rate),
                     "stocked": p.is_stocked,
                     "allow_discount": p.allow_discount,
+                    "is_tailoring_item": p.is_tailoring_item,
                     "min_price": str(p.minimum_sale_price),
                     "stock": stock_map.get((p.id, v.id), None),
                     "image": v.image.url if v.image else (p.image.url if p.image else None),
@@ -181,6 +206,7 @@ def pos_products(request):
                 "tax_rate": str(tax_rate),
                 "stocked": p.is_stocked,
                 "allow_discount": p.allow_discount,
+                "is_tailoring_item": p.is_tailoring_item,
                 "min_price": str(p.minimum_sale_price),
                 "stock": stock_map.get((p.id, None), None),
                 "image": p.image.url if p.image else None,
@@ -202,7 +228,7 @@ def pos_barcode(request):
         .select_related("product__tax_rate", "product")
         .first()
     )
-    if variant and not variant.product.is_archived:
+    if variant and variant.product.is_active and not variant.product.is_archived:
         p = variant.product
         tax_rate = calculations.resolve_tax_rate(request.business, p)
         return JsonResponse({"found": True, "item": {
@@ -211,6 +237,7 @@ def pos_barcode(request):
             "price": str(variant.sale_price if variant.sale_price > 0 else p.sale_price),
             "sku": variant.sku or p.sku, "tax_rate": str(tax_rate),
             "stocked": p.is_stocked, "allow_discount": p.allow_discount,
+            "is_tailoring_item": p.is_tailoring_item,
             "min_price": str(p.minimum_sale_price),
         }})
     product = (
@@ -226,6 +253,7 @@ def pos_barcode(request):
             "name": product.name, "price": str(product.sale_price),
             "sku": product.sku, "tax_rate": str(tax_rate),
             "stocked": product.is_stocked, "allow_discount": product.allow_discount,
+            "is_tailoring_item": product.is_tailoring_item,
             "min_price": str(product.minimum_sale_price),
         }})
     return JsonResponse({"found": False})
@@ -290,6 +318,8 @@ def pos_checkout(request):
         payload = json.loads(request.body)
     except json.JSONDecodeError:
         return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
+    if not isinstance(payload, dict):
+        return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
 
     try:
         branch = Branch.objects.for_business(request.business).get(
@@ -315,11 +345,20 @@ def pos_checkout(request):
         request.business, request.user, membership=request.membership
     )
 
+    raw_items = payload.get("items", [])
+    if not isinstance(raw_items, list):
+        return JsonResponse({"ok": False, "error": "Invalid cart."}, status=400)
     items = []
-    for raw in payload.get("items", []):
+    for index, raw in enumerate(raw_items):
+        if not isinstance(raw, dict):
+            return JsonResponse({
+                "ok": False,
+                "error": "Invalid product in cart.",
+                "errors": {f"items.{index}": "Invalid cart line."},
+            }, status=400)
         try:
             product = Product.objects.for_business(request.business).get(
-                pk=raw.get("product_id")
+                pk=raw.get("product_id"), is_active=True, is_archived=False
             )
         except Product.DoesNotExist:
             return JsonResponse({"ok": False, "error": "Invalid product in cart."},
@@ -328,7 +367,7 @@ def pos_checkout(request):
         if raw.get("variant_id"):
             try:
                 variant = ProductVariant.objects.for_business(request.business).get(
-                    pk=raw["variant_id"], product=product
+                    pk=raw["variant_id"], product=product, is_active=True
                 )
             except ProductVariant.DoesNotExist:
                 return JsonResponse({"ok": False, "error": "Invalid variant in cart."},
@@ -338,11 +377,17 @@ def pos_checkout(request):
             "quantity": D(raw.get("quantity")),
             "unit_price": D(raw.get("unit_price")),
             "discount_amount": D(raw.get("discount_amount")),
+            "garment_classification": raw.get("garment_classification", ""),
             "tailoring_details": _checkout_tailoring_details(raw),
         })
 
+    raw_payments = payload.get("payments", [])
+    if not isinstance(raw_payments, list):
+        return JsonResponse({"ok": False, "error": "Invalid payments."}, status=400)
     payments = []
-    for raw in payload.get("payments", []):
+    for raw in raw_payments:
+        if not isinstance(raw, dict):
+            return JsonResponse({"ok": False, "error": "Invalid payment."}, status=400)
         try:
             method = PaymentMethod.objects.for_business(request.business).get(
                 pk=raw.get("method_id"), is_active=True
@@ -355,19 +400,23 @@ def pos_checkout(request):
 
     delivery_date = None
     raw_delivery = str(payload.get("delivery_date") or "").strip()
-    if not raw_delivery:
-        return JsonResponse({
-            "ok": False,
-            "error": "Please select delivery date before completing sale.",
-        }, status=400)
+    if raw_delivery:
+        import datetime as _dt
 
-    import datetime as _dt
-
-    try:
-        delivery_date = _dt.date.fromisoformat(raw_delivery)
-    except ValueError:
-        return JsonResponse({"ok": False, "error": "Invalid delivery date."},
-                            status=400)
+        try:
+            delivery_date = _dt.date.fromisoformat(raw_delivery)
+        except ValueError:
+            return JsonResponse({
+                "ok": False,
+                "error": "Invalid delivery date.",
+                "errors": {"delivery_date": "Enter a valid delivery date."},
+            }, status=400)
+        if delivery_date < timezone.localdate():
+            return JsonResponse({
+                "ok": False,
+                "error": "Delivery date cannot be in the past.",
+                "errors": {"delivery_date": "Delivery date cannot be in the past."},
+            }, status=400)
 
     try:
         sale = services.complete_sale(
@@ -384,11 +433,12 @@ def pos_checkout(request):
             invoice_discount=D(payload.get("invoice_discount")),
             notes=str(payload.get("notes", ""))[:1000],
             delivery_date=delivery_date,
+            priority=_checkout_priority(payload, raw_items),
             request=request,
         )
     except (SaleError, subscriptions.LimitExceeded,
             subscriptions.SubscriptionInactive) as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        return _sale_error_response(exc)
     except Exception as exc:  # ValidationError from inventory etc.
         msg = "; ".join(getattr(exc, "messages", [str(exc)]))
         return JsonResponse({"ok": False, "error": msg}, status=400)
@@ -423,10 +473,15 @@ def pos_hold(request):
 
     try:
         branch = Branch.objects.for_business(request.business).get(
-            pk=payload.get("branch_id")
+            pk=payload.get("branch_id"), is_active=True
         )
     except Branch.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=400)
+    if not request.membership.can_access_branch(branch):
+        return JsonResponse(
+            {"ok": False, "error": "You cannot hold a sale for this branch."},
+            status=403,
+        )
     held = HeldSale.objects.create(
         business=request.business, branch=branch, cashier=request.user,
         label=str(payload.get("label", ""))[:80], cart=cart,
@@ -527,7 +582,7 @@ def sale_detail(request, public_id):
         request.business, public_id=public_id,
     )
     items = _invoice_display_items(list(sale.items.select_related("product", "variant")))
-    has_tailoring_jobs = any(item.has_tailoring_details for item in items)
+    has_tailoring_jobs = any(item.is_tailoring_line for item in items)
     payments = sale.payments.select_related("method", "received_by")
     returns = _invoice_display_returns(list(sale.returns.prefetch_related("items")))
     settings_obj = request.business.settings
@@ -588,14 +643,15 @@ def _job_card_data(sale, request, items, sale_item=None):
         items = [sale_item]
     priority_options = {
         "normal": ("Normal", "normal"),
+        "high": ("High", "high"),
         "urgent": ("Urgent", "urgent"),
         "vip": ("VIP", "vip"),
     }
     tailoring = sale_item.tailoring_details if sale_item is not None else {}
-    priority_key = (
-        tailoring.get("priority")
-        or request.GET.get("priority", "normal")
-    ).strip().lower()
+    legacy_priority = str(tailoring.get("priority") or "").strip().lower()
+    priority_key = sale.priority
+    if priority_key == Sale.Priority.NORMAL and legacy_priority in priority_options:
+        priority_key = legacy_priority
     priority_label, priority_class = priority_options.get(
         priority_key, priority_options["normal"]
     )
@@ -632,7 +688,10 @@ def _job_card_context(sale, request, items, sale_item=None):
 
 def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
                      pdf_mode=False):
-    items = _invoice_display_items(list(items if items is not None else sale.items.all()))
+    item_source = items if items is not None else sale.items.select_related(
+        "product", "variant"
+    )
+    items = _invoice_display_items(list(item_source))
     payments = payments if payments is not None else sale.payments.select_related(
         "method", "received_by"
     )
@@ -696,7 +755,9 @@ def sale_invoice_pdf(request, public_id):
         Sale.objects.select_related("customer", "branch", "business"),
         request.business, public_id=public_id,
     )
-    items = _invoice_display_items(list(sale.items.all()))
+    items = _invoice_display_items(list(
+        sale.items.select_related("product", "variant")
+    ))
     payments = sale.payments.select_related("method", "received_by")
     pdf = render_pdf(
         "invoices/invoice_a4.html",
@@ -720,7 +781,7 @@ def sale_workshop_job_card_pdf(request, public_id):
         public_id=public_id,
     )
     items = list(sale.items.select_related("product__unit", "variant").order_by("id"))
-    tailoring_items = [item for item in items if item.has_tailoring_details]
+    tailoring_items = [item for item in items if item.is_tailoring_line]
     cards = [
         _job_card_data(sale, request, [item], sale_item=item)
         for item in tailoring_items

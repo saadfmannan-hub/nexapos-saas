@@ -33,16 +33,29 @@ TAILORING_FIELDS = {
     "daraz_details",
     "vip_3d_design",
     "computer_design",
-    "priority",
     "customer_notes",
     "workshop_notes",
 }
-TAILORING_DESIGN_TYPES = {"Daraz", "VIP 3D", "Computer Design"}
-TAILORING_PRIORITIES = {"normal", "urgent", "vip"}
+TAILORING_DESIGN_TYPES = {
+    "Daraz",
+    "VIP 3D",
+    "VIP 3D Design",
+    "Computer Design",
+}
+TAILORING_FIELD_LIMITS = {
+    "design_type": 50,
+    "daraz_details": 200,
+    "vip_3d_design": 200,
+    "computer_design": 200,
+    "customer_notes": 500,
+    "workshop_notes": 500,
+}
 
 
 class SaleError(Exception):
-    pass
+    def __init__(self, message, *, errors=None):
+        super().__init__(message)
+        self.errors = errors or {}
 
 
 DEFAULT_PAYMENT_METHODS = [
@@ -133,23 +146,70 @@ def compute_line(
         raise SaleError(str(exc)) from exc
 
 
-def _clean_tailoring_details(raw):
+def _clean_tailoring_details(raw, *, field_prefix="tailoring_details"):
     if not isinstance(raw, dict):
-        return {}
-    details = {
-        key: str(raw.get(key, "") or "").strip()
-        for key in TAILORING_FIELDS
-    }
-    if details.get("design_type") not in TAILORING_DESIGN_TYPES:
-        details["design_type"] = ""
-    priority = details.get("priority", "").lower()
-    details["priority"] = priority if priority in TAILORING_PRIORITIES else ""
-    has_design_detail = any(
-        value for key, value in details.items() if key != "priority"
-    )
-    if details["priority"] == "normal" and not has_design_detail:
-        details["priority"] = ""
-    return {key: value[:500] for key, value in details.items() if value}
+        raise SaleError(
+            "Invalid tailoring details.",
+            errors={field_prefix: "Tailoring details must be an object."},
+        )
+    details = {}
+    for key in TAILORING_FIELDS:
+        value = str(raw.get(key, "") or "").strip()
+        if not value:
+            continue
+        if len(value) > TAILORING_FIELD_LIMITS[key]:
+            label = key.replace("_", " ").title()
+            message = f"{label} must be {TAILORING_FIELD_LIMITS[key]} characters or fewer."
+            raise SaleError(message, errors={f"{field_prefix}.{key}": message})
+        details[key] = value
+    design_type = details.get("design_type")
+    if design_type and design_type not in TAILORING_DESIGN_TYPES:
+        message = "Select a valid design type."
+        raise SaleError(
+            message,
+            errors={f"{field_prefix}.design_type": message},
+        )
+    return details
+
+
+def _validate_sale_context(
+    *, business, branch, warehouse, cashier, customer, membership, register, shift
+):
+    if branch.business_id != business.id or not branch.is_active:
+        raise SaleError("Invalid branch.")
+    if warehouse.business_id != business.id or not warehouse.is_active:
+        raise SaleError("Invalid warehouse.")
+    if customer.business_id != business.id or not customer.is_active:
+        raise SaleError("Invalid customer.")
+    if membership is not None:
+        if (
+            membership.business_id != business.id
+            or membership.user_id != cashier.id
+            or not membership.is_active
+        ):
+            raise SaleError("Invalid business membership.")
+        if not membership.has_perm("sales.create"):
+            raise SaleError("You do not have permission to complete sales.")
+        if not membership.can_access_branch(branch):
+            raise SaleError("You cannot sell from this branch.")
+    if register is not None:
+        if (
+            register.business_id != business.id
+            or register.branch_id != branch.id
+            or not register.is_active
+        ):
+            raise SaleError("Invalid or inactive register.")
+    if shift is None:
+        return
+    if (
+        shift.business_id != business.id
+        or shift.cashier_id != cashier.id
+        or shift.branch_id != branch.id
+        or shift.status != "open"
+        or register is None
+        or shift.register_id != register.id
+    ):
+        raise SaleError("Invalid open shift for this branch.")
 
 
 @transaction.atomic
@@ -169,6 +229,7 @@ def complete_sale(
     notes="",
     salesperson=None,
     delivery_date=None,
+    priority=Sale.Priority.NORMAL,
     request=None,
 ):
     """Finalize a sale.
@@ -179,20 +240,45 @@ def complete_sale(
     subscriptions.require_operational(business)
     subscriptions.check_limit(business, "monthly_invoices")
 
+    _validate_sale_context(
+        business=business,
+        branch=branch,
+        warehouse=warehouse,
+        cashier=cashier,
+        customer=customer,
+        membership=membership,
+        register=register,
+        shift=shift,
+    )
+
     if not items:
         raise SaleError("Cannot complete a sale with no items.")
+
+    priority = str(priority or Sale.Priority.NORMAL).strip().lower()
+    if priority not in dict(Sale.Priority.choices):
+        message = "Select a valid order priority."
+        raise SaleError(message, errors={"priority": message})
 
     settings_obj = business.settings
     invoice_discount = money(invoice_discount)
 
     # ---- validate cart ---------------------------------------------------
     normalized_items = []
-    for line in items:
+    has_tailoring_items = False
+    for index, line in enumerate(items):
         product, variant = line["product"], line.get("variant")
-        if product.business_id != business.id:
-            raise SaleError("Product does not belong to this business.")
-        if variant is not None and variant.product_id != product.id:
-            raise SaleError("Variant does not match product.")
+        if (
+            product.business_id != business.id
+            or not product.is_active
+            or product.is_archived
+        ):
+            raise SaleError("Invalid product in cart.")
+        if variant is not None and (
+            variant.business_id != business.id
+            or variant.product_id != product.id
+            or not variant.is_active
+        ):
+            raise SaleError("Invalid variant in cart.")
         qty = D(line["quantity"])
         if qty <= 0:
             raise SaleError("Quantity must be positive.")
@@ -208,16 +294,42 @@ def complete_sale(
         discount = money(line.get("discount_amount", ZERO))
         if discount > 0 and not product.allow_discount:
             raise SaleError(f"Discounts are not allowed on {product.name}.")
+        field_prefix = f"items.{index}"
+        tailoring_details = _clean_tailoring_details(
+            line.get("tailoring_details", {}),
+            field_prefix=f"{field_prefix}.tailoring_details",
+        )
+        classification = str(
+            line.get("garment_classification", "") or ""
+        ).strip().lower()
+        if product.is_tailoring_item:
+            has_tailoring_items = True
+            if classification not in dict(SaleItem.GarmentClassification.choices):
+                message = "Select Adult or Child for every garment."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.garment_classification": message},
+                )
+        elif classification or tailoring_details:
+            message = f"{product.name} is not configured as a tailoring garment."
+            raise SaleError(message, errors={field_prefix: message})
         normalized_items.append({
             "product": product,
             "variant": variant,
             "quantity": qty,
             "unit_price": unit_price,
             "discount_amount": discount,
-            "tailoring_details": _clean_tailoring_details(
-                line.get("tailoring_details", {})
-            ),
+            "garment_classification": classification,
+            "tailoring_details": tailoring_details,
         })
+
+    if has_tailoring_items and delivery_date is None:
+        message = "Please select delivery date before completing the tailoring booking."
+        raise SaleError(message, errors={"delivery_date": message})
+    if delivery_date is not None:
+        if not hasattr(delivery_date, "year"):
+            message = "Invalid delivery date."
+            raise SaleError(message, errors={"delivery_date": message})
 
     try:
         totals = calculations.calculate_sale_totals(
@@ -245,7 +357,7 @@ def complete_sale(
     # ---- payments --------------------------------------------------------
     for p in payments:
         method = p["method"]
-        if method.business_id != business.id:
+        if method.business_id != business.id or not method.is_active:
             raise SaleError("Invalid payment method.")
     try:
         clean_payments, payment_totals = calculations.calculate_payment_totals(
@@ -305,6 +417,7 @@ def complete_sale(
         customer=customer,
         invoice_number=next_invoice_number(business, branch),
         status=Sale.Status.COMPLETED,
+        priority=priority,
         sale_date=timezone.now(),
         subtotal=totals["subtotal"],
         discount_amount=total_discount,
@@ -339,6 +452,7 @@ def complete_sale(
             line_total=parts["total"],
             unit_cost=unit_cost,
             gross_profit=money(parts["base"] - line_cost),
+            garment_classification=line.get("garment_classification", ""),
             tailoring_details=line.get("tailoring_details", {}),
         )
         if product.is_stocked:
