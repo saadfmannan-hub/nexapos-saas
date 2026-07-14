@@ -6,9 +6,24 @@ Filters: date_from, date_to (date objects or None), branch_id, warehouse_id.
 The same data feeds HTML tables and CSV/Excel/PDF exports, so exported
 numbers always match what is on screen.
 """
+from datetime import date
 from decimal import Decimal
 
-from django.db.models import Avg, Count, F, Sum
+from django.db.models import (
+    Avg,
+    Case,
+    Count,
+    DecimalField,
+    ExpressionWrapper,
+    F,
+    OuterRef,
+    Subquery,
+    Sum,
+    Value,
+    When,
+)
+from django.db.models.functions import Coalesce, Greatest, Round
+from django.utils import timezone
 
 ZERO = Decimal("0")
 
@@ -107,6 +122,235 @@ def _sales_base(business, f, exclude_voided=True):
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
     return qs
+
+
+def _scope_to_membership_branches(
+    queryset,
+    *,
+    business,
+    membership,
+    branch_id=None,
+    branch_field="branch_id",
+):
+    """Limit a tenant queryset to the membership's permitted branches."""
+    if membership is None or membership.business_id != business.id:
+        return queryset.none()
+
+    allowed = membership.allowed_branch_ids
+    if branch_id is not None:
+        if allowed is not None and branch_id not in allowed:
+            return queryset.none()
+        return queryset.filter(**{branch_field: branch_id})
+    if allowed is not None:
+        return queryset.filter(**{f"{branch_field}__in": allowed})
+    return queryset
+
+
+def current_year_financial_summary(
+    business,
+    membership,
+    *,
+    branch_id=None,
+    today=None,
+    include_profit=True,
+):
+    """Current-calendar-year dashboard totals, independent of date filters.
+
+    Receivable follows ``customer_receivables``: the current outstanding
+    amount on valid invoices created in the requested range. Real payments
+    are cash, card, and bank entries; cash/card/bank refunds are backed out
+    before the per-invoice balance is clamped at zero.
+    """
+    from apps.core.money import money
+    from apps.expenses.models import Expense
+    from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment, SaleReturn
+
+    today = today or timezone.localdate()
+    year_start = date(today.year, 1, 1)
+    try:
+        selected_branch_id = int(branch_id) if branch_id is not None else None
+    except (TypeError, ValueError):
+        selected_branch_id = None
+
+    receivable_payment_kinds = (
+        PaymentMethod.Kind.CASH,
+        PaymentMethod.Kind.CARD,
+        PaymentMethod.Kind.BANK,
+    )
+    income_payment_kinds = receivable_payment_kinds + (
+        PaymentMethod.Kind.ONLINE,
+        PaymentMethod.Kind.OTHER,
+    )
+    amount_field = DecimalField(max_digits=30, decimal_places=3)
+    calculation_field = DecimalField(max_digits=38, decimal_places=12)
+    zero = Value(ZERO, output_field=amount_field)
+
+    valid_sales = _sales_base(
+        business,
+        {"date_from": year_start, "date_to": today},
+    )
+    valid_sales = _scope_to_membership_branches(
+        valid_sales,
+        business=business,
+        membership=membership,
+        branch_id=selected_branch_id,
+    )
+
+    payment_subquery = (
+        SalePayment.objects.for_business(business)
+        .filter(
+            sale_id=OuterRef("pk"),
+            method__kind__in=receivable_payment_kinds,
+        )
+        .values("sale_id")
+        .annotate(total=Sum("amount"))
+        .values("total")[:1]
+    )
+    return_subquery = (
+        SaleReturn.objects.for_business(business)
+        .filter(sale_id=OuterRef("pk"))
+        .values("sale_id")
+        .annotate(total=Sum("refund_amount"))
+        .values("total")[:1]
+    )
+    paid_refund_subquery = (
+        SaleReturn.objects.for_business(business)
+        .filter(
+            sale_id=OuterRef("pk"),
+            refund_method__in=receivable_payment_kinds,
+        )
+        .values("sale_id")
+        .annotate(total=Sum("refund_amount"))
+        .values("total")[:1]
+    )
+    sales_with_balance = valid_sales.annotate(
+        _real_received=Coalesce(
+            Subquery(payment_subquery, output_field=amount_field),
+            zero,
+            output_field=amount_field,
+        ),
+        _returned_total=Coalesce(
+            Subquery(return_subquery, output_field=amount_field),
+            zero,
+            output_field=amount_field,
+        ),
+        _paid_refunds=Coalesce(
+            Subquery(paid_refund_subquery, output_field=amount_field),
+            zero,
+            output_field=amount_field,
+        ),
+    ).annotate(
+        _receivable=Greatest(
+            ExpressionWrapper(
+                F("total")
+                - F("_returned_total")
+                - F("_real_received")
+                + F("_paid_refunds"),
+                output_field=amount_field,
+            ),
+            zero,
+            output_field=amount_field,
+        )
+    )
+    sales_totals = sales_with_balance.aggregate(
+        total_sales=Sum("total", output_field=amount_field),
+        total_receivable=Sum("_receivable", output_field=amount_field),
+    )
+
+    payments = SalePayment.objects.for_business(business).filter(
+        payment_date__gte=year_start,
+        payment_date__lte=today,
+        method__kind__in=income_payment_kinds,
+    ).exclude(sale__status__in=[Sale.Status.DRAFT, Sale.Status.VOIDED])
+    payments = _scope_to_membership_branches(
+        payments,
+        business=business,
+        membership=membership,
+        branch_id=selected_branch_id,
+        branch_field="sale__branch_id",
+    )
+    total_income = payments.aggregate(total=Sum("amount"))["total"] or ZERO
+
+    expenses = Expense.objects.for_business(business).filter(
+        expense_date__gte=year_start,
+        expense_date__lte=today,
+        status__in=[Expense.Status.APPROVED, Expense.Status.PAID],
+    )
+    expenses = _scope_to_membership_branches(
+        expenses,
+        business=business,
+        membership=membership,
+        branch_id=selected_branch_id,
+    )
+    total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
+
+    returns = SaleReturn.objects.for_business(business).filter(
+        created_at__date__gte=year_start,
+        created_at__date__lte=today,
+    )
+    returns = _scope_to_membership_branches(
+        returns,
+        business=business,
+        membership=membership,
+        branch_id=selected_branch_id,
+    )
+    total_returns = returns.aggregate(total=Sum("refund_amount"))["total"] or ZERO
+
+    gross_profit = None
+    if include_profit:
+        net_quantity = ExpressionWrapper(
+            F("quantity") - F("returned_quantity"),
+            output_field=calculation_field,
+        )
+        proportional_profit = ExpressionWrapper(
+            F("gross_profit") * net_quantity / F("quantity"),
+            output_field=calculation_field,
+        )
+        rounded_profit = ExpressionWrapper(
+            Round(proportional_profit, precision=3),
+            output_field=amount_field,
+        )
+        gross_profit = (
+            SaleItem.objects.for_business(business)
+            .filter(sale__in=valid_sales)
+            .aggregate(
+                total=Sum(
+                    Case(
+                        When(quantity=0, then=zero),
+                        default=rounded_profit,
+                        output_field=amount_field,
+                    ),
+                    output_field=amount_field,
+                )
+            )["total"]
+            or ZERO
+        )
+
+    total_sales = money(sales_totals["total_sales"] or ZERO)
+    total_receivable = money(sales_totals["total_receivable"] or ZERO)
+    total_income = money(total_income)
+    total_expenses = money(total_expenses)
+    total_returns = money(total_returns)
+    net_sales = money(total_sales - total_returns)
+    gross_profit = money(gross_profit) if gross_profit is not None else None
+
+    return {
+        "year": today.year,
+        "start_date": year_start,
+        "end_date": today,
+        "total_sales": total_sales,
+        "total_income": total_income,
+        "total_receivable": total_receivable,
+        "total_expenses": total_expenses,
+        "total_returns": total_returns,
+        "net_sales": net_sales,
+        "gross_profit": gross_profit,
+        "estimated_net_profit": (
+            money(gross_profit - total_expenses)
+            if gross_profit is not None
+            else None
+        ),
+    }
 
 
 def sales_summary(business, f):

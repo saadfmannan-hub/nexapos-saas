@@ -22,6 +22,11 @@
   .owner-dashboard .commercial-table th,
   .owner-dashboard .commercial-table td { white-space: nowrap; }
   .owner-dashboard .commercial-table .name-cell { white-space: normal; min-width: 160px; }
+  .owner-dashboard .year-overview .kpi-pro > .d-flex > div:first-child { min-width: 0; }
+  .owner-dashboard .year-overview .kpi-value {
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
   @media (max-width: 575.98px) {
     .owner-dashboard .chart-card .card-body { padding: .85rem; }
     .owner-dashboard .chart-frame-trend { height: 280px; }
@@ -144,6 +149,91 @@
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Inventory Value</span><strong>{% if kpis.stock_value is not None %}{% money kpis.stock_value %}{% else %}-{% endif %}</strong></div></div></div>
 </div>
 {% endif %}
+
+<section class="year-overview mb-4" aria-labelledby="year-overview-title">
+  <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-3">
+    <div>
+      <h2 class="h5 mb-1" id="year-overview-title">This Year Overview &mdash; {{ current_year.year }}</h2>
+      <div class="small text-secondary">{{ current_year.start_date|date:"F j, Y" }} to Today</div>
+    </div>
+  </div>
+  <div class="row g-3">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0d6efd,#60a5fa)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Total Sales &mdash; This Year</div><div class="kpi-value">{% money current_year.total_sales %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-receipt" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0ea5a4,#5eead4)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Total Income Received &mdash; This Year</div><div class="kpi-value">{% money current_year.total_income %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#e0f2f1;color:#0ea5a4"><i class="bi bi-cash-coin" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#f59e0b,#fde68a)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Total Receivable &mdash; This Year</div><div class="kpi-value {% if current_year.total_receivable > 0 %}text-warning{% endif %}">{% money current_year.total_receivable %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#fef3c7;color:#d97706"><i class="bi bi-hourglass-split" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#7c3aed,#c4b5fd)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Total Expenses &mdash; This Year</div><div class="kpi-value">{% money current_year.total_expenses %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#ede9fe;color:#7c3aed"><i class="bi bi-wallet2" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#dc2626,#fca5a5)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Total Returns / Refunds &mdash; This Year</div><div class="kpi-value text-danger">{% money current_year.total_returns %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#fee2e2;color:#dc2626"><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#16a34a,#86efac)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Net Sales &mdash; This Year</div><div class="kpi-value {% if current_year.net_sales < 0 %}text-danger{% endif %}">{% money current_year.net_sales %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#dcfce7;color:#16a34a"><i class="bi bi-graph-up-arrow" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    {% if show_profit %}
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#059669,#6ee7b7)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Gross Profit &mdash; This Year</div><div class="kpi-value text-success">{% money current_year.gross_profit %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#d1fae5;color:#059669"><i class="bi bi-bar-chart-line" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><div class="kpi-label">Estimated Net Profit &mdash; This Year</div><div class="kpi-value {% if current_year.estimated_net_profit < 0 %}text-danger{% endif %}">{% money current_year.estimated_net_profit %}</div></div>
+          <div class="kpi-icon flex-shrink-0" style="background:#e2e8f0;color:#334155"><i class="bi bi-calculator" aria-hidden="true"></i></div>
+        </div>
+        <div class="small text-secondary mt-1">This Year</div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
 
 <div class="row g-3 mb-3">
   <div class="col-lg-8">

@@ -14,7 +14,7 @@ from apps.audit import services as audit
 from apps.core.decorators import business_required, require_permission
 
 from . import exports
-from .queries import REPORT_GROUPS, REPORTS
+from .queries import REPORT_GROUPS, REPORTS, current_year_financial_summary
 
 ZERO = Decimal("0")
 
@@ -120,6 +120,14 @@ def dashboard(request):
     period_payments = payment_totals(payments_for_range(date_from, date_to))
 
     show_profit = request.membership.has_perm("profit.view")
+    selected_branch_id = int(branch_id) if branch_id.isdigit() else None
+    current_year = current_year_financial_summary(
+        business,
+        request.membership,
+        branch_id=selected_branch_id,
+        today=today,
+        include_profit=show_profit,
+    )
     agg = period.aggregate(
         sum_total=Sum("total"), count=Count("id"), avg=Avg("total"),
         profit=Sum("gross_profit"), sum_subtotal=Sum("subtotal"),
@@ -361,6 +369,11 @@ def dashboard(request):
 
     from apps.branches.models import Branch
 
+    branches = Branch.objects.for_business(business).filter(is_active=True)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        branches = branches.filter(id__in=allowed_branch_ids)
+
     return render(request, "dashboard/index.html", {
         "active_nav": "dashboard",
         "date_from": date_from, "date_to": date_to,
@@ -369,7 +382,8 @@ def dashboard(request):
             "week": {"from": str(week_start), "to": str(today)},
             "month": {"from": str(month_start), "to": str(today)},
         },
-        "branches": Branch.objects.for_business(business).filter(is_active=True),
+        "branches": branches.order_by("name"),
+        "current_year": current_year,
         "kpis": {
             "today_sales": today_sales,
             "today_income": today_payments["income"],
