@@ -846,7 +846,7 @@ def expenses_report(business, f):
     qs = (
         Expense.objects.for_business(business)
         .exclude(status__in=["rejected", "cancelled"])
-        .select_related("category", "branch")
+        .select_related("category", "branch", "supplier")
     )
     if f.get("date_from"):
         qs = qs.filter(expense_date__gte=f["date_from"])
@@ -855,11 +855,13 @@ def expenses_report(business, f):
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
     rows = [[e.expense_number, str(e.expense_date), e.category.name,
+             e.source_display,
              e.payee or (e.supplier.name if e.supplier else ""), e.branch.name,
              e.amount, e.get_status_display()] for e in qs[:2000]]
-    totals = ["TOTAL", "", "", "", "", sum((r[5] or ZERO) for r in rows), ""]
-    return {"columns": ["Number", "Date", "Category", "Payee", "Branch",
-                        "Amount", "Status"],
+    totals = ["TOTAL", "", "", "", "", "",
+              sum((r[6] or ZERO) for r in rows), ""]
+    return {"columns": ["Number", "Date", "Category", "Source", "Payee",
+                        "Branch", "Amount", "Status"],
             "rows": rows, "totals": totals if rows else None}
 
 

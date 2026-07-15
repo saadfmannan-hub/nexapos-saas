@@ -5,7 +5,8 @@
   <h1 class="page-title">Expenses</h1>
   <div class="d-flex gap-2">
     <a href="{% url 'expenses:categories' %}" class="btn btn-outline-secondary btn-sm">Categories</a>
-    <a href="{% url 'expenses:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New expense</a>
+    <a href="{% url 'expenses:recurring_list' %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-arrow-repeat"></i> Fixed / recurring expenses</a>
+    <a href="{% url 'expenses:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New variable expense</a>
   </div>
 </div>
 
@@ -24,6 +25,13 @@
         {% for value, label in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>
     </div>
+    <div class="col-md-2">
+      <select name="source" class="form-select form-select-sm">
+        <option value="">Any source</option>
+        <option value="variable" {% if source == "variable" %}selected{% endif %}>Variable</option>
+        <option value="recurring" {% if source == "recurring" %}selected{% endif %}>Recurring</option>
+      </select>
+    </div>
     <div class="col-md-2"><input type="date" name="from" value="{{ request.GET.from }}" class="form-control form-control-sm"></div>
     <div class="col-md-2"><input type="date" name="to" value="{{ request.GET.to }}" class="form-control form-control-sm"></div>
     <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
@@ -38,7 +46,7 @@
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
-      <thead><tr><th>Number</th><th>Date</th><th>Category</th><th>Payee</th><th>Branch</th>
+      <thead><tr><th>Number</th><th>Date</th><th>Category</th><th>Source</th><th>Payee</th><th>Branch</th>
         <th class="text-end">Amount</th><th>Status</th><th class="text-end"></th></tr></thead>
       <tbody>
         {% for e in page_obj %}
@@ -46,6 +54,7 @@
           <td class="fw-semibold">{{ e.expense_number }}</td>
           <td class="small">{{ e.expense_date }}</td>
           <td>{{ e.category.name }}</td>
+          <td><span class="badge text-bg-light">{{ e.source_display }}</span></td>
           <td class="small">{% if e.payee %}{{ e.payee }}{% elif e.supplier %}{{ e.supplier.name }}{% else %}—{% endif %}</td>
           <td class="small">{{ e.branch.name }}</td>
           <td class="text-end fw-semibold">{{ e.amount }}</td>
@@ -59,11 +68,13 @@
               <button class="btn btn-sm btn-outline-danger">Reject</button></form>
             {% elif e.status == "draft" or e.status == "submitted" %}
             <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:edit' e.public_id %}"><i class="bi bi-pencil"></i></a>
+            {% elif can_manage and e.recurring_template and e.status == "approved" %}
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:edit' e.public_id %}" title="Edit expense"><i class="bi bi-pencil"></i></a>
             {% endif %}
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="8"><div class="empty-state"><i class="bi bi-wallet2 d-block mb-2"></i>No expenses recorded.</div></td></tr>
+        <tr><td colspan="9"><div class="empty-state"><i class="bi bi-wallet2 d-block mb-2"></i>No expenses recorded.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -1,0 +1,16 @@
+{% extends "layouts/base.html" %}
+{% block title %}Delete recurring expense &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-5">
+  <div class="card">
+    <div class="card-header">Delete recurring expense</div>
+    <div class="card-body">
+      <p>Delete <strong>{{ template.name }}</strong> permanently?</p>
+      <form method="post">{% csrf_token %}
+        <button class="btn btn-danger">Delete</button>
+        <a href="{% url 'expenses:recurring_list' %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+    </div>
+  </div>
+</div></div>
+{% endblock %}
