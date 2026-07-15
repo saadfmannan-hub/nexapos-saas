@@ -20,6 +20,25 @@ class ProductUnitSelect(forms.Select):
         return option
 
 
+class ProductIdentifierValidationMixin:
+    def _unique_check(self, field, value):
+        if not value:
+            return value
+        products = Product.objects.for_business(self.business).filter(**{field: value})
+        variants = ProductVariant.objects.for_business(self.business).filter(**{field: value})
+        if self.instance.pk:
+            products = products.exclude(pk=self.instance.pk)
+        if products.exists() or variants.exists():
+            raise forms.ValidationError(f"This {field.upper()} is already in use.")
+        return value
+
+    def clean_sku(self):
+        return self._unique_check("sku", self.cleaned_data.get("sku", "").strip())
+
+    def clean_barcode(self):
+        return self._unique_check("barcode", self.cleaned_data.get("barcode", "").strip())
+
+
 class CategoryForm(TenantStyledModelForm):
     class Meta:
         model = Category
@@ -52,7 +71,7 @@ class TaxRateForm(TenantStyledModelForm):
         fields = ["name", "rate", "is_default", "is_active"]
 
 
-class ProductForm(TenantStyledModelForm):
+class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
     auto_generate_sku = forms.BooleanField(
         required=False, label="Auto Generate SKU",
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
@@ -162,24 +181,6 @@ class ProductForm(TenantStyledModelForm):
                 )
         return cleaned
 
-    def _unique_check(self, field, value):
-        if not value:
-            return value
-        qs = Product.objects.for_business(self.business).filter(**{field: value})
-        variant_qs = ProductVariant.objects.for_business(self.business).filter(**{field: value})
-        if self.instance.pk:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists() or variant_qs.exists():
-            raise forms.ValidationError(f"This {field.upper()} is already in use.")
-        return value
-
-    def clean_sku(self):
-        return self._unique_check("sku", self.cleaned_data.get("sku", "").strip())
-
-    def clean_barcode(self):
-        return self._unique_check("barcode", self.cleaned_data.get("barcode", "").strip())
-
-
 class VariantForm(TenantStyledModelForm):
     attr_size = forms.CharField(required=False, label="Size",
                                 widget=forms.TextInput(attrs={"class": "form-control"}))
@@ -231,6 +232,47 @@ class VariantForm(TenantStyledModelForm):
         elif other:
             attrs["Attribute"] = other.strip()
         return attrs
+
+
+class QuickProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
+    """Essential product fields for creation within a purchase order."""
+
+    class Meta:
+        model = Product
+        fields = [
+            "name", "sku", "category", "unit", "purchase_price", "sale_price",
+            "tax_rate", "price_includes_tax", "track_inventory",
+        ]
+        widgets = {
+            "price_includes_tax": forms.Select(choices=[
+                (None, "Follow business setting"), (True, "Tax inclusive"),
+                (False, "Tax exclusive"),
+            ]),
+        }
+
+    def __init__(self, business, *args, **kwargs):
+        super().__init__(business, *args, **kwargs)
+        self.fields["category"].queryset = Category.objects.for_business(
+            business).filter(is_active=True)
+        self.fields["unit"].queryset = Unit.objects.for_business(
+            business).filter(is_active=True)
+        self.fields["tax_rate"].queryset = TaxRate.objects.for_business(
+            business).filter(is_active=True)
+        self.fields["category"].required = False
+        self.fields["unit"].required = True
+        self.fields["tax_rate"].required = False
+        self.fields["price_includes_tax"].required = False
+        self.fields["track_inventory"].initial = True
+        self.fields["name"].label = "Product Name"
+        self.fields["sku"].label = "SKU / Product Code"
+        self.fields["unit"].label = "Product Unit"
+        self.fields["purchase_price"].label = "Cost Price"
+        self.fields["sale_price"].label = "Selling Price"
+        self.fields["sku"].help_text = "Optional. Must be unique when entered."
+        self.fields["name"].error_messages["required"] = "Enter the product name."
+        self.fields["unit"].error_messages["required"] = "Select a product unit."
+        for name, field in self.fields.items():
+            field.widget.attrs["data-quick-field"] = name
 
 
 class ProductImportForm(forms.Form):

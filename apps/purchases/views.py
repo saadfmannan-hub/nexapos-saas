@@ -2,11 +2,17 @@ from django import forms as django_forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
 from django.db.models import Q
+from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
+from apps.audit import services as audit
 from apps.branches.models import Branch, Warehouse
+from apps.catalog.forms import QuickProductForm
+from apps.catalog.models import Product
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
@@ -119,7 +125,70 @@ def purchase_create(request):
     return render(request, "purchases/form.html", {
         "suppliers": suppliers, "warehouses": warehouses, "branches": branches,
         "active_nav": "purchases", "today": timezone.now().date(),
+        "quick_product_form": QuickProductForm(request.business),
+        "can_quick_add_product": request.membership.has_perm("products.manage"),
     })
+
+
+def _form_errors(form):
+    return {
+        field: [str(error) for error in errors]
+        for field, errors in form.errors.items()
+    }
+
+
+@require_permission("purchases.manage")
+@require_permission("products.manage")
+@require_POST
+def quick_add_product(request):
+    """Create a standard product for the current purchase without posting stock."""
+    if not subscriptions.has_feature(request.business, "purchases"):
+        return JsonResponse({
+            "ok": False,
+            "errors": {"__all__": ["Purchases are not included in your plan."]},
+        }, status=403)
+
+    form = QuickProductForm(request.business, request.POST)
+    if not form.is_valid():
+        return JsonResponse(
+            {"ok": False, "errors": _form_errors(form)}, status=400,
+        )
+
+    try:
+        subscriptions.check_limit(request.business, "products")
+        with transaction.atomic():
+            product = form.save(commit=False)
+            product.business = request.business
+            product.product_type = Product.Type.STANDARD
+            product.is_active = True
+            product.save()
+    except (subscriptions.LimitExceeded,
+            subscriptions.SubscriptionInactive) as exc:
+        return JsonResponse({
+            "ok": False, "errors": {"__all__": [str(exc)]},
+        }, status=400)
+    except IntegrityError:
+        return JsonResponse({
+            "ok": False,
+            "errors": {"sku": ["This SKU is already in use."]},
+        }, status=400)
+
+    audit.log(
+        "product.saved", request=request, module="catalog", obj=product,
+        description=f"Product '{product.name}' quick-added from a purchase.",
+    )
+    unit_label = product.unit.abbreviation or product.unit.name
+    return JsonResponse({
+        "ok": True,
+        "product": {
+            "product_id": product.id,
+            "variant_id": None,
+            "label": product.name,
+            "sku": product.sku,
+            "unit": unit_label,
+            "unit_cost": str(product.purchase_price),
+        },
+    }, status=201)
 
 
 @require_permission("purchases.view")

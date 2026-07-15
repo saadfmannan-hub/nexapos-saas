@@ -7,6 +7,7 @@ app_name = "purchases"
 urlpatterns = [
     path("", views.purchase_list, name="list"),
     path("new/", views.purchase_create, name="create"),
+    path("quick-add-product/", views.quick_add_product, name="quick_add_product"),
     path("shared/<str:token>/", views.purchase_shared, name="shared"),
     path("<uuid:public_id>/", views.purchase_detail, name="detail"),
     path("<uuid:public_id>/print/", views.purchase_print, name="print"),
