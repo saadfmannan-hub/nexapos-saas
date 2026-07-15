@@ -1,6 +1,7 @@
 {% extends "layouts/base.html" %}
 {% load money_tags %}
 {% block title %}{{ purchase.purchase_number }} — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}<style>[x-cloak]{display:none!important}</style>{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Purchase {{ purchase.purchase_number }}
@@ -114,37 +115,119 @@
         <tr><th>Discount</th><td>−{% money purchase.discount_amount %}</td></tr>
         <tr><th>Shipping</th><td>{% money purchase.shipping_cost %}</td></tr>
         <tr><th>Other</th><td>{% money purchase.other_charges %}</td></tr>
-        <tr class="fw-bold"><th>Total</th><td>{% money purchase.total symbol=1 %}</td></tr>
+        <tr class="fw-bold"><th>Purchase Total</th><td>{% money purchase.total symbol=1 %}</td></tr>
         <tr><th>Paid</th><td>{% money purchase.amount_paid %}</td></tr>
-        <tr class="{% if purchase.outstanding > 0 %}text-danger fw-bold{% endif %}"><th>Outstanding</th><td>{% money purchase.outstanding %}</td></tr>
+        <tr><th>Cheques Pending</th><td>{% money purchase.cheques_pending %}</td></tr>
+        <tr class="{% if purchase.remaining_balance > 0 %}text-danger fw-bold{% endif %}"><th>Remaining Balance</th><td>{% money purchase.remaining_balance %}</td></tr>
+        <tr><th>Supplier Balance</th><td>{% money purchase.supplier_balance %}</td></tr>
         {% if purchase.attachment %}<tr><th>Attachment</th><td><a href="{{ purchase.attachment.url }}" target="_blank">View file</a></td></tr>{% endif %}
       </table>
     </div></div>
 
-    {% if can_manage and purchase.outstanding > 0 and purchase.status != "cancelled" and purchase.status != "order" %}
-    <div class="card mt-3 border-primary"><div class="card-header text-primary">Record payment</div><div class="card-body">
-      <form method="post" action="{% url 'purchases:pay' purchase.public_id %}">{% csrf_token %}
-        <div class="mb-2"><label class="form-label">Amount</label>
-          <input type="number" step="any" min="0" max="{{ purchase.outstanding }}" name="amount"
-                 value="{{ purchase.outstanding }}" class="form-control" required></div>
-        <div class="mb-2"><label class="form-label">Method</label>
-          <select name="method_id" class="form-select">
-            {% for m in methods %}<option value="{{ m.id }}">{{ m.name }}</option>{% endfor %}
-          </select></div>
-        <div class="mb-2"><label class="form-label">Reference</label>
-          <input name="reference" class="form-control"></div>
-        <button class="btn btn-primary w-100">Pay supplier</button>
+    {% if can_manage and purchase.remaining_balance > 0 and purchase.status != "cancelled" %}
+    <div class="card mt-3 border-primary">
+      <div class="card-header text-primary">Add supplier payments</div>
+      <div class="card-body">
+      <form method="post" action="{% url 'purchases:pay' purchase.public_id %}"
+            x-data="{ rows: [{method: 'cash'}], addRow() { this.rows.push({method: 'cash'}) } }">
+        {% csrf_token %}
+        <template x-for="(row, index) in rows" :key="index">
+          <div class="border rounded p-2 mb-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label small">Method</label>
+                <select name="method" class="form-select" x-model="row.method" required>
+                  <option value="cash">Cash</option>
+                  <option value="bank">Bank Transfer</option>
+                  <option value="card">Card</option>
+                  <option value="cheque">Cheque</option>
+                </select>
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small">Amount</label>
+                <input type="number" step="0.001" min="0.001" name="amount"
+                       class="form-control" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Reference</label>
+                <input name="reference" class="form-control">
+              </div>
+              <div class="col-md-1" x-show="rows.length > 1">
+                <button type="button" class="btn btn-outline-danger w-100"
+                        @click="rows.splice(index, 1)" title="Remove row">
+                  <i class="bi bi-x-lg"></i>
+                </button>
+              </div>
+            </div>
+            <div class="row g-2 mt-1" x-show="row.method === 'cheque'" x-cloak>
+              <div class="col-md-4">
+                <label class="form-label small">Cheque Number</label>
+                <input name="cheque_number" class="form-control"
+                       :required="row.method === 'cheque'">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small">Bank Name</label>
+                <input name="bank_name" class="form-control"
+                       :required="row.method === 'cheque'">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label small">Due Date</label>
+                <input type="date" name="due_date" class="form-control"
+                       :required="row.method === 'cheque'">
+              </div>
+            </div>
+          </div>
+        </template>
+        <div class="d-flex gap-2 mt-3">
+          <button type="button" class="btn btn-outline-primary" @click="addRow()">
+            <i class="bi bi-plus-lg"></i> Add payment row
+          </button>
+          <button class="btn btn-primary flex-grow-1">Save payments</button>
+        </div>
+        <div class="form-text mt-2">Pending cheques are shown separately and do not count as Paid until cleared.</div>
       </form>
-    </div></div>
+      </div>
+    </div>
     {% endif %}
 
-    <div class="card mt-3"><div class="card-header">Payments</div>
-      <div class="table-responsive"><table class="table table-sm mb-0">
+    <div class="card mt-3"><div class="card-header">Payment history</div>
+      <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <thead><tr><th>Date</th><th>Method</th><th class="text-end">Amount</th>
+          <th>Cheque Number</th><th>Bank Name</th><th>Due Date</th><th>Status</th></tr></thead>
         <tbody>
           {% for p in payments %}
-          <tr><td>{{ p.payment_number }}<br><span class="small text-secondary">{{ p.created_at|date:"Y-m-d" }} · {{ p.payment_method.name }}</span></td>
-              <td class="text-end fw-semibold">{{ p.amount }}</td></tr>
-          {% empty %}<tr><td class="text-center text-secondary py-3">No payments yet</td></tr>{% endfor %}
+          <tr>
+            <td class="text-nowrap">{{ p.created_at|date:"Y-m-d" }}</td>
+            <td>{{ p.method_label }}</td>
+            <td class="text-end fw-semibold">{% money p.amount %}</td>
+            <td>{{ p.cheque_number|default:"—" }}</td>
+            <td>{{ p.bank_name|default:"—" }}</td>
+            <td class="text-nowrap">{{ p.due_date|date:"Y-m-d"|default:"—" }}</td>
+            <td>
+              {% if p.is_cheque %}
+                {% if p.cheque_status == "pending" and can_manage %}
+                <form method="post" class="d-flex gap-1"
+                      action="{% url 'purchases:cheque_status' purchase.public_id p.public_id %}">
+                  {% csrf_token %}
+                  <select name="status" class="form-select form-select-sm" aria-label="Cheque status">
+                    <option value="pending" selected>Pending</option>
+                    <option value="cleared">Cleared</option>
+                    <option value="bounced">Bounced</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                  <button class="btn btn-sm btn-outline-primary">Update</button>
+                </form>
+                {% else %}
+                <span class="badge {% if p.cheque_status == 'cleared' %}text-bg-success{% elif p.cheque_status == 'bounced' %}text-bg-danger{% elif p.cheque_status == 'cancelled' %}text-bg-secondary{% else %}text-bg-warning{% endif %}">
+                  {{ p.get_cheque_status_display }}
+                </span>
+                {% endif %}
+              {% else %}
+              <span class="badge text-bg-success">Paid</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}<tr><td colspan="7" class="text-center text-secondary py-3">No payments yet</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>

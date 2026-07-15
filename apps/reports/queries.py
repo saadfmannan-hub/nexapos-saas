@@ -17,6 +17,7 @@ from django.db.models import (
     ExpressionWrapper,
     F,
     OuterRef,
+    Q,
     Subquery,
     Sum,
     Value,
@@ -757,8 +758,25 @@ def stock_movements_report(business, f):
 
 def purchases_summary(business, f):
     from apps.purchases.models import Purchase
+    from apps.suppliers.models import SupplierPayment
 
-    qs = Purchase.objects.for_business(business).select_related("supplier")
+    qs = (
+        Purchase.objects.for_business(business)
+        .select_related("supplier")
+        .annotate(
+            _cheques_pending=Coalesce(
+                Sum(
+                    "payments__amount",
+                    filter=Q(
+                        payments__method=SupplierPayment.Method.CHEQUE,
+                        payments__cheque_status=SupplierPayment.ChequeStatus.PENDING,
+                    ),
+                ),
+                Value(ZERO),
+                output_field=DecimalField(max_digits=14, decimal_places=3),
+            )
+        )
+    )
     if f.get("date_from"):
         qs = qs.filter(purchase_date__gte=f["date_from"])
     if f.get("date_to"):
@@ -766,12 +784,15 @@ def purchases_summary(business, f):
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
     rows = [[p.purchase_number, str(p.purchase_date), p.supplier.name,
-             p.total, p.amount_paid, p.outstanding, p.get_status_display()]
+             p.total, p.amount_paid, p.cheques_pending, p.remaining_balance,
+             p.supplier_balance, p.get_status_display()]
             for p in qs[:2000]]
     totals = ["TOTAL", "", "", sum((r[3] or ZERO) for r in rows),
-              sum((r[4] or ZERO) for r in rows), sum((r[5] or ZERO) for r in rows), ""]
-    return {"columns": ["Number", "Date", "Supplier", "Total", "Paid",
-                        "Outstanding", "Status"],
+              sum((r[4] or ZERO) for r in rows), sum((r[5] or ZERO) for r in rows),
+              sum((r[6] or ZERO) for r in rows), sum((r[7] or ZERO) for r in rows), ""]
+    return {"columns": ["Number", "Date", "Supplier", "Purchase Total", "Paid",
+                        "Cheques Pending", "Remaining Balance", "Supplier Balance",
+                        "Status"],
             "rows": rows, "totals": totals if rows else None}
 
 
@@ -986,9 +1007,18 @@ def cash_flow(business, f):
     collections = ranged(
         CustomerPayment.objects.for_business(business).filter(kind="collection"),
         "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
-    supplier_pay = ranged(
-        SupplierPayment.objects.for_business(business),
+    supplier_immediate = ranged(
+        SupplierPayment.objects.for_business(business).exclude(
+            method=SupplierPayment.Method.CHEQUE,
+        ),
         "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
+    supplier_cleared_cheques = ranged(
+        SupplierPayment.objects.for_business(business).filter(
+            method=SupplierPayment.Method.CHEQUE,
+            cheque_status=SupplierPayment.ChequeStatus.CLEARED,
+        ),
+        "cleared_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
+    supplier_pay = supplier_immediate + supplier_cleared_cheques
     expenses = ranged(
         Expense.objects.for_business(business)
         .exclude(status__in=["rejected", "cancelled"]),

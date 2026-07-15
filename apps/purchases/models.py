@@ -1,4 +1,6 @@
 """Purchases: orders, receiving, payments and purchase returns."""
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
@@ -53,7 +55,30 @@ class Purchase(TenantModel):
 
     @property
     def outstanding(self):
+        """Legacy settled-only balance retained for backward compatibility."""
         return self.total - self.amount_paid
+
+    @property
+    def cheques_pending(self):
+        annotated = getattr(self, "_cheques_pending", None)
+        if annotated is not None:
+            return annotated
+        return (
+            self.payments.filter(
+                method="cheque", cheque_status="pending",
+            ).aggregate(total=models.Sum("amount"))["total"]
+            or Decimal("0")
+        )
+
+    @property
+    def remaining_balance(self):
+        return max(
+            Decimal("0"), self.total - self.amount_paid - self.cheques_pending,
+        )
+
+    @property
+    def supplier_balance(self):
+        return max(Decimal("0"), self.total - self.amount_paid)
 
 
 class PurchaseItem(TenantModel):

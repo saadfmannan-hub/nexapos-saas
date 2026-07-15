@@ -3,7 +3,8 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Q
+from django.db.models import DecimalField, Q, Sum, Value
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -17,9 +18,8 @@ from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
-from apps.sales.models import PaymentMethod
 from apps.subscriptions import services as subscriptions
-from apps.suppliers.models import Supplier
+from apps.suppliers.models import Supplier, SupplierPayment
 
 from . import services
 from .models import Purchase
@@ -33,6 +33,19 @@ def purchase_list(request):
     qs = (
         Purchase.objects.for_business(request.business)
         .select_related("supplier", "warehouse", "created_by")
+        .annotate(
+            _cheques_pending=Coalesce(
+                Sum(
+                    "payments__amount",
+                    filter=Q(
+                        payments__method=SupplierPayment.Method.CHEQUE,
+                        payments__cheque_status=SupplierPayment.ChequeStatus.PENDING,
+                    ),
+                ),
+                Value(0),
+                output_field=DecimalField(max_digits=14, decimal_places=3),
+            )
+        )
     )
     q = request.GET.get("q", "").strip()
     if q:
@@ -46,7 +59,7 @@ def purchase_list(request):
     qs = qs.filter(
         purchase_date__gte=date_from,
         purchase_date__lte=date_to,
-    )
+    ).order_by("-purchase_date", "-created_at")
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     querystring = date_range_querystring(request.GET, date_from, date_to)
@@ -209,11 +222,9 @@ def purchase_detail(request, public_id):
     items = purchase.items.select_related("product", "variant")
     payments = purchase.payments.select_related("payment_method")
     returns = purchase.purchase_returns.all()
-    methods = PaymentMethod.objects.for_business(request.business).filter(
-        is_active=True).exclude(kind__in=["customer_credit", "store_credit"])
     return render(request, "purchases/detail.html", {
         "purchase": purchase, "items": items, "payments": payments,
-        "returns": returns, "methods": methods, "active_nav": "purchases",
+        "returns": returns, "active_nav": "purchases",
         "can_manage": request.membership.has_perm("purchases.manage"),
     })
 
@@ -246,23 +257,66 @@ def purchase_receive(request, public_id):
     return redirect("purchases:detail", public_id=public_id)
 
 
+def _parse_payment_rows(request):
+    fields = [
+        "method", "amount", "cheque_number", "bank_name", "due_date",
+        "reference",
+    ]
+    values = {field: request.POST.getlist(field) for field in fields}
+    count = max((len(items) for items in values.values()), default=0)
+    rows = []
+    for index in range(count):
+        row = {
+            field: items[index] if index < len(items) else ""
+            for field, items in values.items()
+        }
+        if any(str(value).strip() for value in row.values()):
+            rows.append(row)
+    return rows
+
+
 @require_permission("purchases.manage")
+@require_POST
 def purchase_pay(request, public_id):
     purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
-    if request.method == "POST":
-        try:
-            subscriptions.require_operational(request.business)
-            method = get_tenant_object(PaymentMethod, request.business,
-                                       pk=request.POST.get("method_id"))
-            services.pay_purchase(
-                purchase=purchase, amount=D(request.POST.get("amount")),
-                method=method, user=request.user,
-                reference=request.POST.get("reference", ""),
-                notes=request.POST.get("notes", ""), request=request,
-            )
-            messages.success(request, "Supplier payment recorded.")
-        except (ValidationError, subscriptions.SubscriptionInactive) as exc:
-            messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
+    try:
+        subscriptions.require_operational(request.business)
+        payments = services.record_purchase_payments(
+            purchase=purchase,
+            rows=_parse_payment_rows(request),
+            user=request.user,
+            request=request,
+        )
+        messages.success(
+            request,
+            f"{len(payments)} payment row{'s' if len(payments) != 1 else ''} recorded.",
+        )
+    except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+        messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
+    return redirect("purchases:detail", public_id=public_id)
+
+
+@require_permission("purchases.manage")
+@require_POST
+def purchase_cheque_status(request, public_id, payment_public_id):
+    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    payment = get_tenant_object(
+        SupplierPayment.objects.select_related("purchase", "supplier"),
+        request.business,
+        public_id=payment_public_id,
+        purchase=purchase,
+    )
+    try:
+        subscriptions.require_operational(request.business)
+        services.update_cheque_status(
+            payment=payment,
+            status=request.POST.get("status", ""),
+            user=request.user,
+            request=request,
+        )
+        messages.success(request, "Cheque status updated.")
+    except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+        messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return redirect("purchases:detail", public_id=public_id)
 
 
@@ -429,6 +483,14 @@ def purchase_cancel(request, public_id):
         if purchase.items.filter(quantity_received__gt=0).exists():
             messages.error(request, "Purchases with received goods cannot be "
                                     "cancelled — use a purchase return instead.")
+        elif purchase.amount_paid > 0 or purchase.payments.filter(
+            method=SupplierPayment.Method.CHEQUE,
+            cheque_status=SupplierPayment.ChequeStatus.PENDING,
+        ).exists():
+            messages.error(
+                request,
+                "Purchases with Paid or Pending Cheques cannot be cancelled.",
+            )
         else:
             purchase.status = Purchase.Status.CANCELLED
             purchase.save(update_fields=["status", "updated_at"])

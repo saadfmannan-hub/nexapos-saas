@@ -16,6 +16,11 @@ urlpatterns = [
     path("<uuid:public_id>/email/", views.purchase_email, name="email"),
     path("<uuid:public_id>/receive/", views.purchase_receive, name="receive"),
     path("<uuid:public_id>/pay/", views.purchase_pay, name="pay"),
+    path(
+        "<uuid:public_id>/payments/<uuid:payment_public_id>/status/",
+        views.purchase_cheque_status,
+        name="cheque_status",
+    ),
     path("<uuid:public_id>/return/", views.purchase_return, name="return"),
     path("<uuid:public_id>/cancel/", views.purchase_cancel, name="cancel"),
 ]
