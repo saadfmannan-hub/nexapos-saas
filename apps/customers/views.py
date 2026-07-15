@@ -7,6 +7,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 
 from apps.audit import services as audit
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import money
@@ -339,7 +340,7 @@ def customer_statement(request, public_id):
         request.business, customer, branch_id=branch_id)
 
     # Period slice with brought-forward balance
-    date_from, date_to = request.GET.get("from", ""), request.GET.get("to", "")
+    date_from, date_to = resolve_date_range(request.GET, request.business)
     brought_forward = None
     if date_from:
         cutoff = _dt.date.fromisoformat(date_from)
@@ -409,6 +410,11 @@ def customer_statement(request, public_id):
 
     from apps.branches.models import Branch
 
+    filter_querystring = date_range_querystring(
+        request.GET,
+        date_from,
+        date_to,
+    )
     return render(request, "customers/statement.html", {
         "customer": customer, "entries": entries, "active_nav": "customers",
         "closing_balance": entries[-1]["balance"] if entries
@@ -418,4 +424,5 @@ def customer_statement(request, public_id):
         "branches": Branch.objects.for_business(request.business).filter(
             is_active=True),
         "branch_id": branch_id,
+        "filter_querystring": filter_querystring,
     })

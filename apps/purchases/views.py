@@ -13,6 +13,7 @@ from apps.audit import services as audit
 from apps.branches.models import Branch, Warehouse
 from apps.catalog.forms import QuickProductForm
 from apps.catalog.models import Product
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
@@ -41,11 +42,19 @@ def purchase_list(request):
     status = request.GET.get("status", "")
     if status:
         qs = qs.filter(status=status)
+    date_from, date_to = resolve_date_range(request.GET, request.business)
+    qs = qs.filter(
+        purchase_date__gte=date_from,
+        purchase_date__lte=date_to,
+    )
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
+    querystring = date_range_querystring(request.GET, date_from, date_to)
     return render(request, "purchases/list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "purchases",
-        "statuses": Purchase.Status.choices, "querystring": "",
+        "statuses": Purchase.Status.choices,
+        "date_from": date_from, "date_to": date_to,
+        "querystring": f"{querystring}&" if querystring else "",
     })
 
 

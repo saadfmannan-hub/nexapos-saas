@@ -3,11 +3,16 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">Sales returns</h1>
-  <form class="d-flex gap-2" method="get">
-    <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Return #, invoice, customer…">
-    <button class="btn btn-sm btn-primary">Search</button>
-  </form>
 </div>
+<div class="card mb-3"><div class="card-body py-2">
+  <form class="row g-2 align-items-center" method="get">
+    <div class="col-md-4"><input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Return #, invoice, customer…"></div>
+    <div class="col-md-2"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
+    <div class="col-md-2"><input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm" aria-label="To date"></div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
+      <a href="{% url 'sales:return_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
+  </form>
+</div></div>
 <div class="card"><div class="table-responsive">
   <table class="table table-hover mb-0">
     <thead><tr><th>Return #</th><th>Invoice</th><th>Customer</th><th>Refund method</th>

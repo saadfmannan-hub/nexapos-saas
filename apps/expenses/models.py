@@ -172,7 +172,7 @@ class Expense(TenantModel):
 
     @property
     def source_display(self):
-        return "Recurring" if self.recurring_template_id else "Variable"
+        return "Fixed" if self.recurring_template_id else "Current"
 
     def clean(self):
         super().clean()

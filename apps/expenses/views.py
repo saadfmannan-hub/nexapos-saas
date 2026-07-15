@@ -1,3 +1,5 @@
+import logging
+
 from django import forms
 from django.contrib import messages
 from django.core.paginator import Paginator
@@ -5,18 +7,27 @@ from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
 from apps.branches.forms import TenantStyledModelForm
 from apps.branches.models import Branch
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
 
 from .models import Expense, ExpenseCategory, RecurringExpenseTemplate
-from .services import next_expense_number
+from .services import (
+    RecurringExpenseGenerationError,
+    ensure_recurring_expenses_for_month,
+    next_expense_number,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ExpenseForm(TenantStyledModelForm):
@@ -74,7 +85,7 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
         labels = {
             "name": "Expense name",
             "category": "Expense category",
-            "default_amount": "Default amount",
+            "default_amount": "Monthly amount",
             "due_day": "Due day",
             "is_active": "Active",
         }
@@ -105,7 +116,7 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
     def clean_default_amount(self):
         amount = self.cleaned_data["default_amount"]
         if amount < 0:
-            raise forms.ValidationError("Default amount cannot be negative.")
+            raise forms.ValidationError("Monthly amount cannot be negative.")
         return amount
 
     def clean(self):
@@ -122,11 +133,22 @@ def expense_list(request):
     if not subscriptions.has_feature(request.business, "expenses"):
         return render(request, "inventory/feature_locked.html",
                       {"feature": "Expenses", "active_nav": "expenses"})
+    try:
+        ensure_recurring_expenses_for_month(
+            request.business,
+            timezone.localdate(),
+        )
+    except RecurringExpenseGenerationError as exc:
+        logger.warning(
+            "Fixed-expense generation skipped for business %s: %s",
+            request.business.pk,
+            exc,
+        )
     qs = (
         Expense.objects.for_business(request.business)
+        .filter(recurring_template__isnull=True)
         .select_related(
             "category", "branch", "created_by", "payment_method",
-            "recurring_template",
         )
     )
     q = request.GET.get("q", "").strip()
@@ -139,32 +161,31 @@ def expense_list(request):
     category_id = request.GET.get("category", "")
     if category_id.isdigit():
         qs = qs.filter(category_id=category_id)
-    source = request.GET.get("source", "")
-    if source == "variable":
-        qs = qs.filter(recurring_template__isnull=True)
-    elif source == "recurring":
-        qs = qs.filter(recurring_template__isnull=False)
-    else:
-        source = ""
-    date_from, date_to = request.GET.get("from", ""), request.GET.get("to", "")
-    if date_from:
-        qs = qs.filter(expense_date__gte=date_from)
-    if date_to:
-        qs = qs.filter(expense_date__lte=date_to)
+    date_from, date_to = resolve_date_range(request.GET, request.business)
+    qs = qs.filter(
+        expense_date__gte=date_from,
+        expense_date__lte=date_to,
+    )
     total = qs.exclude(status__in=["rejected", "cancelled"]).aggregate(
         t=Sum("amount"))["t"] or 0
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     categories = ExpenseCategory.objects.for_business(request.business)
-    params = request.GET.copy()
-    params.pop("page", None)
+    fixed_templates = (
+        RecurringExpenseTemplate.objects.for_business(request.business)
+        .select_related("category")
+        .annotate(generated_count=Count("generated_expenses"))
+        .order_by("name", "id")
+    )
+    querystring = date_range_querystring(request.GET, date_from, date_to)
     return render(request, "expenses/list.html", {
         "page_obj": page_obj, "q": q, "total": total, "categories": categories,
         "statuses": Expense.Status.choices, "active_nav": "expenses",
-        "querystring": (params.urlencode() + "&") if params else "",
+        "date_from": date_from, "date_to": date_to,
+        "querystring": f"{querystring}&" if querystring else "",
         "can_approve": request.membership.has_perm("expenses.approve"),
         "can_manage": request.membership.has_perm("expenses.manage"),
-        "source": source,
+        "fixed_templates": fixed_templates,
     })
 
 
@@ -265,22 +286,20 @@ def _recurring_feature_lock(request):
     )
 
 
+def _fixed_expenses_url():
+    return f"{reverse('expenses:list')}#fixed-expenses"
+
+
+def _fixed_expenses_redirect():
+    return redirect(_fixed_expenses_url())
+
+
 @require_permission("expenses.view")
 def recurring_template_list(request):
     locked = _recurring_feature_lock(request)
     if locked is not None:
         return locked
-    templates = (
-        RecurringExpenseTemplate.objects.for_business(request.business)
-        .select_related("category")
-        .annotate(generated_count=Count("generated_expenses"))
-        .order_by("name", "id")
-    )
-    return render(request, "expenses/recurring_list.html", {
-        "templates": templates,
-        "active_nav": "expenses",
-        "can_manage": request.membership.has_perm("expenses.manage"),
-    })
+    return _fixed_expenses_redirect()
 
 
 @require_permission("expenses.manage")
@@ -305,7 +324,7 @@ def recurring_template_form(request, public_id=None):
             subscriptions.require_operational(request.business)
         except subscriptions.SubscriptionInactive as exc:
             messages.error(request, str(exc))
-            return redirect("expenses:recurring_list")
+            return _fixed_expenses_redirect()
         template = form.save(commit=False)
         template.business = request.business
         template.save()
@@ -315,10 +334,10 @@ def recurring_template_form(request, public_id=None):
             request=request,
             module="expenses",
             obj=template,
-            description=f"Recurring expense template '{template.name}' {action}.",
+            description=f"Fixed expense '{template.name}' {action}.",
         )
-        messages.success(request, "Recurring expense template saved.")
-        return redirect("expenses:recurring_list")
+        messages.success(request, "Fixed expense saved.")
+        return _fixed_expenses_redirect()
     return render(request, "expenses/recurring_form.html", {
         "form": form,
         "template": instance,
@@ -339,25 +358,25 @@ def recurring_template_action(request, public_id, action):
     )
     if action == "archive":
         template.is_active = False
-        message = "Recurring expense template archived. History was preserved."
+        message = "Fixed expense made inactive. Previous expenses were preserved."
         audit_action = "archived"
     elif action == "restore":
         template.is_active = True
-        message = "Recurring expense template restored."
+        message = "Fixed expense made active."
         audit_action = "restored"
     else:
-        messages.error(request, "Unknown recurring expense action.")
-        return redirect("expenses:recurring_list")
+        messages.error(request, "Unknown fixed expense action.")
+        return _fixed_expenses_redirect()
     template.save(update_fields=["is_active", "updated_at"])
     audit.log(
         f"recurring_expense_template.{audit_action}",
         request=request,
         module="expenses",
         obj=template,
-        description=f"Recurring expense template '{template.name}' {audit_action}.",
+        description=f"Fixed expense '{template.name}' {audit_action}.",
     )
     messages.success(request, message)
-    return redirect("expenses:recurring_list")
+    return _fixed_expenses_redirect()
 
 
 @require_permission("expenses.manage")
@@ -373,10 +392,10 @@ def recurring_template_delete(request, public_id):
     if template.generated_expenses.exists():
         messages.error(
             request,
-            "This template has generated expense history and cannot be "
-            "permanently deleted. Archive it instead.",
+            "This fixed expense already has monthly history and cannot be "
+            "deleted. Make it inactive instead.",
         )
-        return redirect("expenses:recurring_list")
+        return _fixed_expenses_redirect()
     if request.method != "POST":
         return render(request, "expenses/recurring_delete_confirm.html", {
             "template": template,
@@ -398,20 +417,20 @@ def recurring_template_delete(request, public_id):
     except ProtectedError:
         messages.error(
             request,
-            "This template has generated expense history and cannot be "
-            "permanently deleted. Archive it instead.",
+            "This fixed expense already has monthly history and cannot be "
+            "deleted. Make it inactive instead.",
         )
-        return redirect("expenses:recurring_list")
+        return _fixed_expenses_redirect()
 
     audit.log(
         "recurring_expense_template.deleted",
         request=request,
         module="expenses",
         obj=template,
-        description=f"Recurring expense template '{template.name}' deleted.",
+        description=f"Fixed expense '{template.name}' deleted.",
     )
-    messages.success(request, "Recurring expense template deleted.")
-    return redirect("expenses:recurring_list")
+    messages.success(request, "Fixed expense deleted.")
+    return _fixed_expenses_redirect()
 
 
 @require_permission("expenses.manage")

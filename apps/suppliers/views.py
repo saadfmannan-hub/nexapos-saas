@@ -6,6 +6,7 @@ from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
 from apps.branches.forms import TenantStyledModelForm
+from apps.core.date_ranges import resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 
@@ -85,17 +86,33 @@ def supplier_detail(request, public_id):
     from apps.purchases.models import Purchase, PurchaseReturn
 
     supplier = get_tenant_object(Supplier, request.business, public_id=public_id)
+    date_from, date_to = resolve_date_range(request.GET, request.business)
     purchases = (
         Purchase.objects.for_business(request.business)
-        .filter(supplier=supplier).order_by("-purchase_date")[:25]
+        .filter(
+            supplier=supplier,
+            purchase_date__gte=date_from,
+            purchase_date__lte=date_to,
+        )
+        .order_by("-purchase_date")[:25]
     )
     payments = (
         SupplierPayment.objects.for_business(request.business)
-        .filter(supplier=supplier).select_related("purchase", "payment_method")[:25]
+        .filter(
+            supplier=supplier,
+            created_at__date__gte=date_from,
+            created_at__date__lte=date_to,
+        )
+        .select_related("purchase", "payment_method")[:25]
     )
     returns = (
         PurchaseReturn.objects.for_business(request.business)
-        .filter(supplier=supplier).select_related("purchase")[:15]
+        .filter(
+            supplier=supplier,
+            created_at__date__gte=date_from,
+            created_at__date__lte=date_to,
+        )
+        .select_related("purchase")[:15]
     )
     stats = Purchase.objects.for_business(request.business).filter(
         supplier=supplier
@@ -103,4 +120,5 @@ def supplier_detail(request, public_id):
     return render(request, "suppliers/detail.html", {
         "supplier": supplier, "purchases": purchases, "payments": payments,
         "returns": returns, "stats": stats, "active_nav": "suppliers",
+        "date_from": date_from, "date_to": date_to,
     })

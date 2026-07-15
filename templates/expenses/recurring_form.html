@@ -1,9 +1,9 @@
 {% extends "layouts/base.html" %}
-{% block title %}{% if template %}Edit recurring expense{% else %}New recurring expense{% endif %} &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block title %}{% if template %}Edit Fixed Expense{% else %}Add Fixed Expense{% endif %} &mdash; {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="row justify-content-center"><div class="col-lg-6">
   <div class="card">
-    <div class="card-header">{% if template %}Edit recurring expense{% else %}New recurring expense{% endif %}</div>
+    <div class="card-header">{% if template %}Edit Fixed Expense{% else %}Add Fixed Expense{% endif %}</div>
     <div class="card-body">
       <form method="post">{% csrf_token %}
         {% include "components/form_field.html" with field=form.name %}
@@ -18,8 +18,8 @@
         </div>
         {% include "components/form_field.html" with field=form.notes %}
         <div class="form-check mb-3">{{ form.is_active }}<label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
-        <button class="btn btn-primary">Save recurring expense</button>
-        <a href="{% url 'expenses:recurring_list' %}" class="btn btn-outline-secondary">Cancel</a>
+        <button class="btn btn-primary">Save Fixed Expense</button>
+        <a href="{% url 'expenses:list' %}#fixed-expenses" class="btn btn-outline-secondary">Cancel</a>
       </form>
     </div>
   </div>

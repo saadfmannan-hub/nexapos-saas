@@ -10,9 +10,9 @@
     <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print</button>
     {% if can_export %}
     <div class="btn-group">
-      <a class="btn btn-sm btn-primary" href="?{{ request.GET.urlencode }}&export=xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
-      <a class="btn btn-sm btn-outline-primary" href="?{{ request.GET.urlencode }}&export=csv">CSV</a>
-      <a class="btn btn-sm btn-outline-primary" href="?{{ request.GET.urlencode }}&export=pdf">PDF</a>
+      <a class="btn btn-sm btn-primary" href="?{{ filter_querystring }}&export=xlsx"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+      <a class="btn btn-sm btn-outline-primary" href="?{{ filter_querystring }}&export=csv">CSV</a>
+      <a class="btn btn-sm btn-outline-primary" href="?{{ filter_querystring }}&export=pdf">PDF</a>
     </div>
     {% endif %}
   </div>

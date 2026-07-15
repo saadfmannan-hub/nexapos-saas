@@ -1,9 +1,9 @@
 {% extends "layouts/base.html" %}
-{% block title %}{% if expense %}Edit expense{% else %}New variable expense{% endif %} — {{ PRODUCT_NAME }}{% endblock %}
+{% block title %}{% if expense %}Edit expense{% else %}Add Current Expense{% endif %} &mdash; {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="row justify-content-center"><div class="col-lg-6">
   <div class="card">
-    <div class="card-header">{% if expense %}Edit {{ expense.expense_number }}{% if expense.recurring_template %} <span class="badge text-bg-light ms-1">Recurring</span>{% endif %}{% else %}New variable expense{% endif %}</div>
+    <div class="card-header">{% if expense %}Edit {{ expense.expense_number }}{% if expense.recurring_template %} <span class="badge text-bg-light ms-1">Fixed</span>{% endif %}{% else %}Add Current Expense{% endif %}</div>
     <div class="card-body">
       <form method="post" enctype="multipart/form-data">{% csrf_token %}
         <div class="row">

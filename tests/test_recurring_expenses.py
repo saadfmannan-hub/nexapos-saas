@@ -117,7 +117,7 @@ class RecurringExpenseServiceTests(RecurringExpenseTestMixin, TenantTestCase):
         self.assertEqual(expense.description, template.notes)
         self.assertEqual(expense.status, Expense.Status.APPROVED)
         self.assertEqual(expense.source, "recurring")
-        self.assertEqual(expense.source_display, "Recurring")
+        self.assertEqual(expense.source_display, "Fixed")
 
     def test_generation_is_idempotent(self):
         template = self.make_template()
@@ -352,7 +352,10 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             reverse("expenses:recurring_create"),
             self.template_payload(),
         )
-        self.assertRedirects(response, reverse("expenses:recurring_list"))
+        self.assertRedirects(
+            response,
+            reverse("expenses:list") + "#fixed-expenses",
+        )
         template = RecurringExpenseTemplate.objects.get(name="Internet")
         self.assertEqual(template.business, self.business_a)
         self.assertEqual(template.default_amount, D("35.500"))
@@ -362,7 +365,10 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             reverse("expenses:recurring_create"),
             self.template_payload(default_amount="0.000"),
         )
-        self.assertRedirects(response, reverse("expenses:recurring_list"))
+        self.assertRedirects(
+            response,
+            reverse("expenses:list") + "#fixed-expenses",
+        )
         self.assertEqual(
             RecurringExpenseTemplate.objects.get(name="Internet").default_amount,
             D("0.000"),
@@ -470,9 +476,14 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             role=role,
         )
         self.client.force_login(user)
-        response = self.client.get(reverse("expenses:recurring_list"))
+        response = self.client.get(reverse("expenses:list"))
         self.assertContains(response, template.name)
-        self.assertNotContains(response, "New recurring expense")
+        self.assertNotContains(response, "Add Fixed Expense")
+        legacy_response = self.client.get(reverse("expenses:recurring_list"))
+        self.assertRedirects(
+            legacy_response,
+            reverse("expenses:list") + "#fixed-expenses",
+        )
         self.assertEqual(
             self.client.get(reverse("expenses:recurring_create")).status_code,
             403,
@@ -484,7 +495,7 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             business=self.business_b,
             name="Tenant B Rent",
         )
-        response = self.client.get(reverse("expenses:recurring_list"))
+        response = self.client.get(reverse("expenses:list"))
         self.assertContains(response, template_a.name)
         self.assertNotContains(response, template_b.name)
         self.assertEqual(
@@ -540,7 +551,10 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
         url = reverse("expenses:recurring_delete", args=[template.public_id])
         self.assertEqual(self.client.get(url).status_code, 200)
         response = self.client.post(url)
-        self.assertRedirects(response, reverse("expenses:recurring_list"))
+        self.assertRedirects(
+            response,
+            reverse("expenses:list") + "#fixed-expenses",
+        )
         self.assertFalse(
             RecurringExpenseTemplate.objects.filter(pk=template.pk).exists()
         )
@@ -552,7 +566,7 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             reverse("expenses:recurring_delete", args=[template.public_id]),
             follow=True,
         )
-        self.assertContains(response, "cannot be permanently deleted")
+        self.assertContains(response, "cannot be deleted")
         self.assertTrue(
             RecurringExpenseTemplate.objects.filter(pk=template.pk).exists()
         )
@@ -561,17 +575,17 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
     def test_delete_action_is_hidden_when_template_has_history(self):
         template = self.make_template()
         ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
-        response = self.client.get(reverse("expenses:recurring_list"))
+        response = self.client.get(reverse("expenses:list"))
         delete_url = reverse("expenses:recurring_delete", args=[template.public_id])
         self.assertNotContains(response, delete_url)
         self.assertContains(response, template.name)
 
     def test_recurring_list_shows_required_fields(self):
         template = self.make_template(end_date=date(2026, 12, 31), due_day=28)
-        response = self.client.get(reverse("expenses:recurring_list"))
+        response = self.client.get(reverse("expenses:list"))
         for label in (
-            "Expense name", "Category", "Default amount", "Due day",
-            "Start date", "End date", "Status", "Actions",
+            "Expense Name", "Category", "Monthly Amount", "Due Day",
+            "Start Date", "End Date", "Status", "Actions",
         ):
             self.assertContains(response, label)
         self.assertContains(response, template.name)
@@ -586,7 +600,7 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
         expense = Expense.objects.get(reference="MANUAL")
         self.assertIsNone(expense.recurring_template_id)
         self.assertIsNone(expense.generated_for_month)
-        self.assertEqual(expense.source_display, "Variable")
+        self.assertEqual(expense.source_display, "Current")
         self.assertEqual(expense.amount, D("25.000"))
         self.assertEqual(expense.status, Expense.Status.APPROVED)
 
@@ -633,28 +647,22 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
         self.assertEqual(template.default_amount, D("250.000"))
         self.assertEqual(template.name, "Workshop Rent")
 
-    def test_expense_source_and_existing_filters_remain_correct(self):
+    def test_current_expense_list_and_existing_filters_remain_correct(self):
         manual = self.make_manual_expense()
         template = self.make_template()
         ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
-        recurring = template.generated_expenses.get()
 
-        variable_response = self.client.get(
-            reverse("expenses:list") + "?source=variable"
-        )
-        self.assertEqual(list(variable_response.context["page_obj"]), [manual])
-        recurring_response = self.client.get(
-            reverse("expenses:list") + "?source=recurring"
-        )
-        self.assertEqual(list(recurring_response.context["page_obj"]), [recurring])
+        list_response = self.client.get(reverse("expenses:list"))
+        self.assertEqual(list(list_response.context["page_obj"]), [manual])
+        self.assertEqual(list(list_response.context["fixed_templates"]), [template])
         filtered_response = self.client.get(
             reverse("expenses:list")
             + f"?category={self.category_a.pk}&status=approved"
             + "&from=2026-07-01&to=2026-07-31"
         )
         self.assertEqual(
-            set(filtered_response.context["page_obj"].object_list),
-            {manual, recurring},
+            list(filtered_response.context["page_obj"].object_list),
+            [manual],
         )
 
 
@@ -673,7 +681,7 @@ class RecurringExpenseReportTests(RecurringExpenseTestMixin, TenantTestCase):
             "Number", "Date", "Category", "Source", "Payee", "Branch",
             "Amount", "Status",
         ])
-        self.assertEqual({row[3] for row in data["rows"]}, {"Variable", "Recurring"})
+        self.assertEqual({row[3] for row in data["rows"]}, {"Current", "Fixed"})
         self.assertEqual(data["totals"][6], D("30.000"))
         self.assertEqual(len(data["rows"]), 2)
 
@@ -725,8 +733,8 @@ class RecurringExpenseReportTests(RecurringExpenseTestMixin, TenantTestCase):
         csv_body = csv_response.content.decode("utf-8-sig")
         self.assertEqual(csv_response.status_code, 200)
         self.assertIn("Number,Date,Category,Source,Payee,Branch,Amount,Status", csv_body)
-        self.assertIn("Variable", csv_body)
-        self.assertIn("Recurring", csv_body)
+        self.assertIn("Current", csv_body)
+        self.assertIn("Fixed", csv_body)
         self.assertIn("30.000", csv_body)
 
         xlsx_response = self.client.get(base_url + "&export=xlsx")

@@ -8,6 +8,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import business_required, require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
@@ -69,10 +70,15 @@ def shift_list(request):
         branches = branches.filter(id__in=allowed)
 
     page_obj = None
+    date_from, date_to = resolve_date_range(request.GET, request.business)
     if can_open_shifts:
         shifts = (
             Shift.objects.for_business(request.business)
             .select_related("register", "branch", "cashier", "approved_by")
+            .filter(
+                opened_at__date__gte=date_from,
+                opened_at__date__lte=date_to,
+            )
         )
         if not request.membership.has_perm("shifts.approve"):
             shifts = shifts.filter(cashier=request.user)
@@ -101,9 +107,12 @@ def shift_list(request):
             "allowed": allowed_by_plan,
         }
 
+    querystring = date_range_querystring(request.GET, date_from, date_to)
     return render(request, "registers/shift_list.html", {
         "my_shift": my_shift, "registers": registers, "branches": branches,
-        "page_obj": page_obj, "active_nav": "registers", "querystring": "",
+        "page_obj": page_obj, "active_nav": "registers",
+        "date_from": date_from, "date_to": date_to,
+        "querystring": f"{querystring}&" if querystring else "",
         "managed_registers": managed_registers,
         "register_usage": register_usage,
         "can_open_shifts": can_open_shifts,

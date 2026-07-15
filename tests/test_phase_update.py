@@ -219,16 +219,19 @@ class CustomerStatementTests(TenantTestCase):
             customer=self.customer,
             payments=[{"method": self.credit_a, "amount": D("21.000")}],
         )
+        self.payment_date = timezone.localdate() + timedelta(days=3)
         sales.add_sale_payment(
             sale=self.sale, amount=D("6.000"), method=self.cash_a,
             user=self.owner_a,
-            payment_date=timezone.localdate() + timedelta(days=3),
+            payment_date=self.payment_date,
         )
         self.client.force_login(self.owner_a)
 
     def test_running_balance_debits_and_credits(self):
         response = self.client.get(
-            reverse("customers:statement", args=[self.customer.public_id]))
+            reverse("customers:statement", args=[self.customer.public_id]),
+            {"to": str(self.payment_date)},
+        )
         entries = response.context["entries"]
         self.assertEqual(entries[0]["type"], "Credit sale")
         self.assertEqual(entries[0]["debit"], D("21.000"))
@@ -245,7 +248,7 @@ class CustomerStatementTests(TenantTestCase):
         cutoff = timezone.localdate() + timedelta(days=1)
         response = self.client.get(
             reverse("customers:statement", args=[self.customer.public_id]),
-            {"from": str(cutoff)},
+            {"from": str(cutoff), "to": str(self.payment_date)},
         )
         self.assertEqual(response.context["brought_forward"], D("21.000"))
         types = [e["type"] for e in response.context["entries"]]

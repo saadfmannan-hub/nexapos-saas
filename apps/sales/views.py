@@ -8,6 +8,7 @@ from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D, money
@@ -522,10 +523,8 @@ def pos_held_delete(request, pk):
 # ---------------------------------------------------------------------------
 # Sales list / detail / invoice / receipt / void
 # ---------------------------------------------------------------------------
-def _qs_without_page(request):
-    params = request.GET.copy()
-    params.pop("page", None)
-    encoded = params.urlencode()
+def _qs_without_page(request, date_from, date_to):
+    encoded = date_range_querystring(request.GET, date_from, date_to)
     return f"{encoded}&" if encoded else ""
 
 
@@ -547,12 +546,11 @@ def sale_list(request):
     branch_id = request.GET.get("branch", "")
     if branch_id.isdigit():
         qs = qs.filter(branch_id=branch_id)
-    date_from = request.GET.get("from", "")
-    date_to = request.GET.get("to", "")
-    if date_from:
-        qs = qs.filter(sale_date__date__gte=date_from)
-    if date_to:
-        qs = qs.filter(sale_date__date__lte=date_to)
+    date_from, date_to = resolve_date_range(request.GET, request.business)
+    qs = qs.filter(
+        sale_date__date__gte=date_from,
+        sale_date__date__lte=date_to,
+    )
 
     # Delivery filters
     from django.utils import timezone as _tz
@@ -579,7 +577,8 @@ def sale_list(request):
     return render(request, "sales/list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "sales",
         "statuses": Sale.Status.choices, "branches": _user_branches(request),
-        "totals": totals, "querystring": _qs_without_page(request),
+        "totals": totals, "date_from": date_from, "date_to": date_to,
+        "querystring": _qs_without_page(request, date_from, date_to),
     })
 
 
@@ -966,11 +965,17 @@ def return_list(request):
         qs = qs.filter(Q(return_number__icontains=q) |
                        Q(sale__invoice_number__icontains=q) |
                        Q(customer__full_name__icontains=q))
+    date_from, date_to = resolve_date_range(request.GET, request.business)
+    qs = qs.filter(
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    )
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     return render(request, "sales/return_list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "returns",
-        "querystring": _qs_without_page(request),
+        "date_from": date_from, "date_to": date_to,
+        "querystring": _qs_without_page(request, date_from, date_to),
     })
 
 

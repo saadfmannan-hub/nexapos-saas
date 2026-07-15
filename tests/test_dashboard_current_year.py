@@ -124,7 +124,7 @@ class CurrentYearDashboardTests(TenantTestCase):
 
     def test_dates_and_heading_use_dynamic_application_local_date(self):
         local_today = date(2032, 5, 6)
-        with patch("apps.reports.views.timezone.localdate", return_value=local_today):
+        with patch("apps.reports.views.business_localdate", return_value=local_today):
             response = self.client.get(reverse("dashboard"))
 
         current_year = response.context["current_year"]

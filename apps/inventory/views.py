@@ -6,6 +6,7 @@ from django.db.models import F, Q
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 
+from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
@@ -174,12 +175,19 @@ def movement_list(request):
     mtype = request.GET.get("type", "")
     if mtype:
         qs = qs.filter(movement_type=mtype)
+    date_from, date_to = resolve_date_range(request.GET, request.business)
+    qs = qs.filter(
+        created_at__date__gte=date_from,
+        created_at__date__lte=date_to,
+    )
     paginator = Paginator(qs, 40)
     page_obj = paginator.get_page(request.GET.get("page"))
+    querystring = date_range_querystring(request.GET, date_from, date_to)
     return render(request, "inventory/movement_list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "inventory",
         "movement_types": StockMovement.Type.choices,
-        "querystring": _qs_without_page(request),
+        "date_from": date_from, "date_to": date_to,
+        "querystring": f"{querystring}&" if querystring else "",
     })
 
 

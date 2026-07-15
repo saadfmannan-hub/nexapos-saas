@@ -1,3 +1,4 @@
+import logging
 from datetime import date as date_cls
 from datetime import timedelta
 from decimal import Decimal
@@ -8,23 +9,41 @@ from django.db.models import Avg, Count, F, Q, Sum
 from django.db.models.functions import ExtractHour, TruncDate
 from django.http import Http404
 from django.shortcuts import redirect, render
-from django.utils import timezone
 
 from apps.audit import services as audit
+from apps.core.date_ranges import (
+    business_localdate,
+    date_range_querystring,
+    resolve_date_range,
+)
 from apps.core.decorators import business_required, require_permission
+from apps.expenses.services import (
+    RecurringExpenseGenerationError,
+    RecurringExpenseRangeError,
+    ensure_recurring_expenses_for_range,
+)
 
 from . import exports
 from .queries import REPORT_GROUPS, REPORTS, current_year_financial_summary
 
 ZERO = Decimal("0")
+logger = logging.getLogger(__name__)
+
+EXPENSE_AWARE_REPORTS = {
+    "expenses",
+    "profit",
+    "profit_loss",
+    "cash_flow",
+    "expense_analysis",
+}
 
 
 def _parse_filters(request):
     f = {}
-    date_from = request.GET.get("from", "")
-    date_to = request.GET.get("to", "")
-    f["date_from"] = date_from or None
-    f["date_to"] = date_to or None
+    f["date_from"], f["date_to"] = resolve_date_range(
+        request.GET,
+        request.business,
+    )
     branch = request.GET.get("branch", "")
     f["branch_id"] = int(branch) if branch.isdigit() else None
     warehouse = request.GET.get("warehouse", "")
@@ -36,12 +55,6 @@ def _parse_filters(request):
         classification if classification in ("adult", "child") else None
     )
     return f
-
-
-def _default_range(request):
-    """Default: this month."""
-    today = timezone.localdate()
-    return today.replace(day=1), today
 
 
 # ---------------------------------------------------------------------------
@@ -58,11 +71,10 @@ def dashboard(request):
     from apps.suppliers.models import Supplier
 
     business = request.business
-    today = timezone.localdate()
+    today = business_localdate(business)
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
-    date_from = request.GET.get("from") or str(month_start)
-    date_to = request.GET.get("to") or str(today)
+    date_from, date_to = resolve_date_range(request.GET, business)
     branch_id = request.GET.get("branch", "")
 
     sales = Sale.objects.for_business(business).exclude(
@@ -450,11 +462,23 @@ def _run_report(request, key):
     if not request.membership.has_perm(perm):
         raise PermissionDenied
     filters = _parse_filters(request)
-    if filters["date_from"] is None and key not in (
-        "current_stock", "low_stock", "supplier_balances", "receivables"
-    ):
-        start, end = _default_range(request)
-        filters["date_from"], filters["date_to"] = str(start), str(end)
+    if key in EXPENSE_AWARE_REPORTS:
+        try:
+            ensure_recurring_expenses_for_range(
+                request.business,
+                filters["date_from"],
+                filters["date_to"],
+            )
+        except RecurringExpenseRangeError:
+            raise
+        except RecurringExpenseGenerationError as exc:
+            logger.warning(
+                "Fixed-expense generation skipped for business %s and "
+                "report %s: %s",
+                request.business.pk,
+                key,
+                exc,
+            )
     data = fn(request.business, filters)
     return title, data, filters
 
@@ -464,7 +488,11 @@ def report_view(request, key):
     from apps.branches.models import Branch, Warehouse
     from apps.catalog.models import Product
 
-    title, data, filters = _run_report(request, key)
+    try:
+        title, data, filters = _run_report(request, key)
+    except RecurringExpenseRangeError as exc:
+        messages.error(request, str(exc))
+        return redirect("reports:view", key=key)
     export = request.GET.get("export", "")
     if export:
         if not request.membership.has_perm("reports.export"):
@@ -488,6 +516,11 @@ def report_view(request, key):
         "products": (
             Product.objects.for_business(request.business).only("id", "name").order_by("name")
             if key == "sales_detailed" else []
+        ),
+        "filter_querystring": date_range_querystring(
+            request.GET,
+            filters["date_from"],
+            filters["date_to"],
         ),
         "can_export": request.membership.has_perm("reports.export"),
     })

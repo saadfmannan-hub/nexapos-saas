@@ -11,8 +11,8 @@
         {% for m in modules %}<option value="{{ m }}" {% if request.GET.module == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
       </select>
     </div>
-    <div class="col-md-2"><input type="date" name="from" value="{{ request.GET.from }}" class="form-control form-control-sm"></div>
-    <div class="col-md-2"><input type="date" name="to" value="{{ request.GET.to }}" class="form-control form-control-sm"></div>
+    <div class="col-md-2"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
+    <div class="col-md-2"><input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm" aria-label="To date"></div>
     <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
       <a href="{% url 'audit:list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
   </form>
