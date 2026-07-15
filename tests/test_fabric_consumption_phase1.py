@@ -66,6 +66,7 @@ class FabricConsumptionPhase1Tests(TenantTestCase):
             "minimum_sale_price": "0.000",
             "price_includes_tax": "",
             "reorder_level": "0.000",
+            "opening_stock": "0.000",
             "allow_discount": "on",
             "is_tailoring_item": "on",
             "estimated_adult_fabric": "3.500",

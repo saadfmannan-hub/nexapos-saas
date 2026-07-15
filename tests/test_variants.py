@@ -55,6 +55,7 @@ class ProductFormBaseTest(TenantTestCase):
             "wholesale_price": "0",
             "minimum_sale_price": "0",
             "reorder_level": "0",
+            "opening_stock": "0",
             "track_inventory": "on",
             "is_active": "on",
         }

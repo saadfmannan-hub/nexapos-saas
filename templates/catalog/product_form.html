@@ -5,7 +5,7 @@
 <h1 class="page-title mb-3">{% if product %}Edit: {{ product.name }}{% else %}New product{% endif %}</h1>
 {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
   <form method="post" enctype="multipart/form-data"
-      x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %}, {% if form.is_tailoring_item.value %}true{% else %}false{% endif %})">{% csrf_token %}
+      x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %}, {% if form.is_tailoring_item.value %}true{% else %}false{% endif %}, '{{ form.unit.value|default_if_none:''|escapejs }}')">{% csrf_token %}
 <div class="row g-3">
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Basics</div><div class="card-body">
@@ -65,7 +65,17 @@
       {% include "components/form_field.html" with field=form.reorder_level %}
       {% if form.opening_stock %}
       <div class="row">
-        <div class="col-6">{% include "components/form_field.html" with field=form.opening_stock %}</div>
+        <div class="col-6">
+          <div class="mb-3">
+            <label class="form-label required-star" for="{{ form.opening_stock.id_for_label }}">{{ form.opening_stock.label }}</label>
+            <div class="input-group">
+              {{ form.opening_stock }}
+              <span class="input-group-text" x-text="openingStockUnitLabel() || 'unit'"></span>
+            </div>
+            {% if form.opening_stock.help_text %}<div class="form-text">{{ form.opening_stock.help_text }}</div>{% endif %}
+            {% for error in form.opening_stock.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
         <div class="col-6">{% include "components/form_field.html" with field=form.opening_warehouse %}</div>
       </div>
       <p class="form-text" x-show="productType === 'variant'" x-cloak>For products with variants,
@@ -190,15 +200,24 @@
 </form>
 
 <script>
-function productForm(initialType, initialAutoSku, initialIsTailoring) {
+function productForm(initialType, initialAutoSku, initialIsTailoring, initialUnitId) {
   return {
     productType: initialType || 'standard',
     autoSku: !!initialAutoSku,
     isTailoring: !!initialIsTailoring,
+    unitId: String(initialUnitId || ''),
     types: [],
     newTypeChoice: 'Size',
     newTypeCustom: '',
     variants: [],
+    openingStockUnitLabel() {
+      const select = this.$refs.productUnit;
+      if (!select) return '';
+      const selected = Array.from(select.options).find(
+        option => option.value === String(this.unitId)
+      );
+      return selected ? (selected.dataset.unitLabel || selected.textContent.trim()) : '';
+    },
     addType() {
       let name = this.newTypeChoice === 'Custom' ? (this.newTypeCustom || '').trim() : this.newTypeChoice;
       if (!name) return;

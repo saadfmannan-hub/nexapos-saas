@@ -6,6 +6,20 @@ from apps.branches.models import Warehouse
 from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
 
 
+class ProductUnitSelect(forms.Select):
+    """Expose each unit's display suffix to the product form UI."""
+
+    def create_option(self, name, value, label, selected, index,
+                      subindex=None, attrs=None):
+        option = super().create_option(
+            name, value, label, selected, index, subindex=subindex, attrs=attrs,
+        )
+        unit = getattr(value, "instance", None)
+        if unit is not None:
+            option["attrs"]["data-unit-label"] = unit.abbreviation or unit.name
+        return option
+
+
 class CategoryForm(TenantStyledModelForm):
     class Meta:
         model = Category
@@ -46,9 +60,14 @@ class ProductForm(TenantStyledModelForm):
                   "Applies to this product and any generated variants.",
     )
     opening_stock = forms.DecimalField(
-        required=False, min_value=0, decimal_places=3, max_digits=14,
+        required=True, min_value=0, decimal_places=3, max_digits=14,
         widget=forms.NumberInput(attrs={"class": "form-control", "step": "any"}),
-        help_text="Optional. Creates an opening stock entry in the selected warehouse.",
+        help_text="Required when creating a product. Uses the selected product unit.",
+        error_messages={
+            "required": "Enter the opening stock.",
+            "invalid": "Enter a valid opening stock quantity.",
+            "min_value": "Opening stock cannot be negative.",
+        },
     )
     opening_warehouse = forms.ModelChoiceField(
         queryset=Warehouse.objects.none(), required=False,
@@ -67,6 +86,7 @@ class ProductForm(TenantStyledModelForm):
         ]
         widgets = {
             "description": forms.Textarea(attrs={"rows": 2}),
+            "unit": ProductUnitSelect(),
             "price_includes_tax": forms.Select(choices=[
                 (None, "Follow business setting"), (True, "Tax inclusive"),
                 (False, "Tax exclusive"),
@@ -96,6 +116,10 @@ class ProductForm(TenantStyledModelForm):
             self.fields[name].widget.attrs.update({"step": "0.001", "min": "0", "max": "1000"})
             self.fields[name].label = label
         self.fields["auto_generate_sku"].widget.attrs["x-model"] = "autoSku"
+        self.fields["unit"].widget.attrs.update({
+            "x-model": "unitId",
+            "x-ref": "productUnit",
+        })
         self.fields["sku"].widget.attrs["x-bind:disabled"] = "autoSku"
         self.fields["sku"].widget.attrs["x-bind:placeholder"] = (
             "autoSku ? 'Auto-generated on save' : ''"
@@ -114,6 +138,28 @@ class ProductForm(TenantStyledModelForm):
         else:
             for name in fabric_fields:
                 cleaned[name] = None
+
+        opening_stock = cleaned.get("opening_stock")
+        if opening_stock is not None and opening_stock > 0:
+            product_type = cleaned.get("product_type")
+            tracks_inventory = cleaned.get("track_inventory")
+            if product_type and not (
+                tracks_inventory
+                and product_type in (Product.Type.STANDARD, Product.Type.VARIANT)
+            ):
+                self.add_error(
+                    "opening_stock",
+                    "Opening stock must be 0 for products that do not track inventory.",
+                )
+            elif (
+                product_type
+                and not cleaned.get("opening_warehouse")
+                and "opening_warehouse" not in self.errors
+            ):
+                self.add_error(
+                    "opening_warehouse",
+                    "Select a warehouse for the opening stock.",
+                )
         return cleaned
 
     def _unique_check(self, field, value):
