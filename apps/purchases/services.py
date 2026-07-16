@@ -9,7 +9,8 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import F, Sum
+from django.db.models import DecimalField, F, Q, Sum, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
@@ -139,6 +140,24 @@ IMMEDIATE_METHOD_KINDS = {
 }
 
 
+def with_pending_cheques(queryset):
+    """Annotate purchases with the pending amount used by model totals."""
+    return queryset.annotate(
+        _cheques_pending=Coalesce(
+            Sum(
+                "payments__amount",
+                filter=Q(
+                    payments__business_id=F("business_id"),
+                    payments__method=SupplierPayment.Method.CHEQUE,
+                    payments__cheque_status=SupplierPayment.ChequeStatus.PENDING,
+                ),
+            ),
+            Value(ZERO),
+            output_field=DecimalField(max_digits=14, decimal_places=3),
+        )
+    )
+
+
 def _normalise_payment_row(*, business, row):
     method = str(row.get("method", "")).strip()
     allowed = {choice for choice, _label in SupplierPayment.Method.choices}
@@ -157,13 +176,23 @@ def _normalise_payment_row(*, business, row):
         "payment_method": None,
         "cheque_number": "",
         "bank_name": "",
+        "cheque_issue_date": None,
         "due_date": None,
         "cheque_status": "",
     }
     if method == SupplierPayment.Method.CHEQUE:
         cheque_number = str(row.get("cheque_number", "")).strip()
         bank_name = str(row.get("bank_name", "")).strip()
+        raw_issue_date = row.get("cheque_issue_date")
         raw_due_date = row.get("due_date")
+        try:
+            cheque_issue_date = (
+                raw_issue_date
+                if isinstance(raw_issue_date, date)
+                else parse_date(str(raw_issue_date or ""))
+            )
+        except ValueError:
+            cheque_issue_date = None
         try:
             due_date = raw_due_date if isinstance(raw_due_date, date) else parse_date(
                 str(raw_due_date or "")
@@ -174,13 +203,16 @@ def _normalise_payment_row(*, business, row):
             raise ValidationError("Cheque Number is required.")
         if not bank_name:
             raise ValidationError("Bank Name is required.")
+        if cheque_issue_date is None:
+            raise ValidationError("Cheque Issue Date is required.")
         if due_date is None:
-            raise ValidationError("Due Date is required for a cheque.")
+            raise ValidationError("Cheque Payment Date is required.")
         if due_date <= business_localdate(business):
-            raise ValidationError("Cheque Due Date must be in the future.")
+            raise ValidationError("Cheque Payment Date must be in the future.")
         normalised.update({
             "cheque_number": cheque_number[:100],
             "bank_name": bank_name[:120],
+            "cheque_issue_date": cheque_issue_date,
             "due_date": due_date,
             "cheque_status": SupplierPayment.ChequeStatus.PENDING,
         })

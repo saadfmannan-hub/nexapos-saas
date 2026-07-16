@@ -160,18 +160,24 @@
               </div>
             </div>
             <div class="row g-2 mt-1" x-show="row.method === 'cheque'" x-cloak>
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label small">Cheque Number</label>
                 <input name="cheque_number" class="form-control"
                        :required="row.method === 'cheque'">
               </div>
-              <div class="col-md-4">
+              <div class="col-md-3">
                 <label class="form-label small">Bank Name</label>
                 <input name="bank_name" class="form-control"
                        :required="row.method === 'cheque'">
               </div>
-              <div class="col-md-4">
-                <label class="form-label small">Due Date</label>
+              <div class="col-md-3">
+                <label class="form-label small">Cheque Issue Date</label>
+                <input type="date" name="cheque_issue_date" class="form-control"
+                       value="{{ cheque_issue_date_default|date:'Y-m-d' }}"
+                       :required="row.method === 'cheque'">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small">Cheque Payment Date</label>
                 <input type="date" name="due_date" class="form-control"
                        :required="row.method === 'cheque'">
               </div>
@@ -193,7 +199,8 @@
     <div class="card mt-3"><div class="card-header">Payment history</div>
       <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
         <thead><tr><th>Date</th><th>Method</th><th class="text-end">Amount</th>
-          <th>Cheque Number</th><th>Bank Name</th><th>Due Date</th><th>Status</th></tr></thead>
+          <th>Cheque Number</th><th>Bank Name</th><th>Cheque Issue Date</th>
+          <th>Cheque Payment Date</th><th>Status</th></tr></thead>
         <tbody>
           {% for p in payments %}
           <tr>
@@ -202,6 +209,7 @@
             <td class="text-end fw-semibold">{% money p.amount %}</td>
             <td>{{ p.cheque_number|default:"—" }}</td>
             <td>{{ p.bank_name|default:"—" }}</td>
+            <td class="text-nowrap">{{ p.cheque_issue_date|date:"Y-m-d"|default:"—" }}</td>
             <td class="text-nowrap">{{ p.due_date|date:"Y-m-d"|default:"—" }}</td>
             <td>
               {% if p.is_cheque %}
@@ -227,7 +235,7 @@
               {% endif %}
             </td>
           </tr>
-          {% empty %}<tr><td colspan="7" class="text-center text-secondary py-3">No payments yet</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="8" class="text-center text-secondary py-3">No payments yet</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>

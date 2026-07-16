@@ -39,6 +39,8 @@ EXPENSE_AWARE_REPORTS = {
 
 
 def _parse_filters(request):
+    from apps.suppliers.models import SupplierPayment
+
     f = {}
     f["date_from"], f["date_to"] = resolve_date_range(
         request.GET,
@@ -54,6 +56,14 @@ def _parse_filters(request):
     f["garment_classification"] = (
         classification if classification in ("adult", "child") else None
     )
+    supplier = request.GET.get("supplier", "")
+    f["supplier_id"] = int(supplier) if supplier.isdigit() else None
+    payment_method = request.GET.get("method", "").strip().lower()
+    valid_methods = {value for value, _label in SupplierPayment.Method.choices}
+    f["payment_method"] = payment_method if payment_method in valid_methods else None
+    cheque_status = request.GET.get("cheque_status", "").strip().lower()
+    valid_statuses = {value for value, _label in SupplierPayment.ChequeStatus.choices}
+    f["cheque_status"] = cheque_status if cheque_status in valid_statuses else None
     return f
 
 
@@ -487,6 +497,7 @@ def _run_report(request, key):
 def report_view(request, key):
     from apps.branches.models import Branch, Warehouse
     from apps.catalog.models import Product
+    from apps.suppliers.models import Supplier, SupplierPayment
 
     try:
         title, data, filters = _run_report(request, key)
@@ -508,11 +519,27 @@ def report_view(request, key):
             return exports.export_pdf(title, data, request.business, label)
         messages.error(request, "Unknown export format.")
         return redirect("reports:view", key=key)
+    branches = Branch.objects.for_business(request.business)
+    warehouses = Warehouse.objects.for_business(request.business)
+    if key != "supplier_payments_cheques":
+        branches = branches.filter(is_active=True)
+        warehouses = warehouses.filter(is_active=True)
     return render(request, "reports/report.html", {
         "key": key, "title": title, "data": data, "filters": filters,
         "active_nav": "reports",
-        "branches": Branch.objects.for_business(request.business).filter(is_active=True),
-        "warehouses": Warehouse.objects.for_business(request.business).filter(is_active=True),
+        "branches": branches.order_by("name"),
+        "warehouses": warehouses.order_by("name"),
+        "suppliers": (
+            Supplier.objects.for_business(request.business).order_by("name")
+            if key == "supplier_payments_cheques" else []
+        ),
+        "supplier_payment_methods": (
+            SupplierPayment.Method.choices if key == "supplier_payments_cheques" else []
+        ),
+        "supplier_cheque_statuses": (
+            SupplierPayment.ChequeStatus.choices
+            if key == "supplier_payments_cheques" else []
+        ),
         "products": (
             Product.objects.for_business(request.business).only("id", "name").order_by("name")
             if key == "sales_detailed" else []

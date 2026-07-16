@@ -3,8 +3,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import DecimalField, Q, Sum, Value
-from django.db.models.functions import Coalesce
+from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -14,7 +13,11 @@ from apps.audit import services as audit
 from apps.branches.models import Branch, Warehouse
 from apps.catalog.forms import QuickProductForm
 from apps.catalog.models import Product
-from apps.core.date_ranges import date_range_querystring, resolve_date_range
+from apps.core.date_ranges import (
+    business_localdate,
+    date_range_querystring,
+    resolve_date_range,
+)
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
@@ -30,22 +33,9 @@ def purchase_list(request):
     if not subscriptions.has_feature(request.business, "purchases"):
         return render(request, "inventory/feature_locked.html",
                       {"feature": "Purchases", "active_nav": "purchases"})
-    qs = (
+    qs = services.with_pending_cheques(
         Purchase.objects.for_business(request.business)
         .select_related("supplier", "warehouse", "created_by")
-        .annotate(
-            _cheques_pending=Coalesce(
-                Sum(
-                    "payments__amount",
-                    filter=Q(
-                        payments__method=SupplierPayment.Method.CHEQUE,
-                        payments__cheque_status=SupplierPayment.ChequeStatus.PENDING,
-                    ),
-                ),
-                Value(0),
-                output_field=DecimalField(max_digits=14, decimal_places=3),
-            )
-        )
     )
     q = request.GET.get("q", "").strip()
     if q:
@@ -226,6 +216,7 @@ def purchase_detail(request, public_id):
         "purchase": purchase, "items": items, "payments": payments,
         "returns": returns, "active_nav": "purchases",
         "can_manage": request.membership.has_perm("purchases.manage"),
+        "cheque_issue_date_default": business_localdate(request.business),
     })
 
 
@@ -259,8 +250,8 @@ def purchase_receive(request, public_id):
 
 def _parse_payment_rows(request):
     fields = [
-        "method", "amount", "cheque_number", "bank_name", "due_date",
-        "reference",
+        "method", "amount", "cheque_number", "bank_name", "cheque_issue_date",
+        "due_date", "reference",
     ]
     values = {field: request.POST.getlist(field) for field in fields}
     count = max((len(items) for items in values.values()), default=0)

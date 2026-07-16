@@ -65,7 +65,9 @@ class Purchase(TenantModel):
             return annotated
         return (
             self.payments.filter(
-                method="cheque", cheque_status="pending",
+                business=self.business,
+                method="cheque",
+                cheque_status="pending",
             ).aggregate(total=models.Sum("amount"))["total"]
             or Decimal("0")
         )

@@ -61,6 +61,7 @@ class SupplierPayment(TenantModel):
     method = models.CharField(max_length=20, choices=Method.choices, blank=True)
     cheque_number = models.CharField(max_length=100, blank=True)
     bank_name = models.CharField(max_length=120, blank=True)
+    cheque_issue_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True, db_index=True)
     cheque_status = models.CharField(
         max_length=12, choices=ChequeStatus.choices, blank=True,

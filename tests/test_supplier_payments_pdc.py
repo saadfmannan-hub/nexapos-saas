@@ -1,6 +1,7 @@
 """Phase 4A supplier payments and post-dated cheque coverage."""
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.urls import reverse
@@ -25,6 +26,7 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
             kind=PaymentMethod.Kind.BANK,
         )
         self.tomorrow = business_localdate(self.business_a) + timedelta(days=1)
+        self.issue_date = business_localdate(self.business_a)
 
     def make_purchase(self, *, receive=True):
         purchase = purchases.create_purchase(
@@ -58,6 +60,7 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
             "amount": D(amount),
             "cheque_number": number,
             "bank_name": "Bank Muscat",
+            "cheque_issue_date": self.issue_date,
             "due_date": self.tomorrow,
         }
         row.update(overrides)
@@ -235,6 +238,8 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
         invalid_rows = [
             self.cheque("100", cheque_number=""),
             self.cheque("100", bank_name=""),
+            self.cheque("100", cheque_issue_date=""),
+            self.cheque("100", cheque_issue_date="2026-99-99"),
             self.cheque("100", due_date=business_localdate(self.business_a)),
             self.cheque("100", due_date="2026-99-99"),
             self.cheque("0"),
@@ -249,10 +254,12 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
             "25",
             cheque_number="IGNORED",
             bank_name="IGNORED",
+            cheque_issue_date=self.issue_date,
             due_date=self.tomorrow,
         )])[0]
         self.assertEqual(payment.cheque_number, "")
         self.assertEqual(payment.bank_name, "")
+        self.assertIsNone(payment.cheque_issue_date)
         self.assertIsNone(payment.due_date)
         self.assertEqual(payment.cheque_status, "")
 
@@ -280,6 +287,7 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
                 "reference": ["CASH-REF", ""],
                 "cheque_number": ["", "CHQ-WEB"],
                 "bank_name": ["", "Bank Muscat"],
+                "cheque_issue_date": ["", self.issue_date.isoformat()],
                 "due_date": ["", self.tomorrow.isoformat()],
             },
         )
@@ -289,7 +297,8 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
         detail = self.client.get(reverse("purchases:detail", args=[purchase.public_id]))
         for label in (
             "Purchase Total", "Paid", "Cheques Pending", "Remaining Balance",
-            "Supplier Balance", "Cheque Number", "Bank Name", "Due Date",
+            "Supplier Balance", "Cheque Number", "Bank Name", "Cheque Issue Date",
+            "Cheque Payment Date",
         ):
             self.assertContains(detail, label)
         purchase.refresh_from_db()
@@ -407,3 +416,48 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
         )
         self.assertEqual(detail.status_code, 200)
         self.assertContains(detail, "Cash")
+        self.assertIsNone(payment.cheque_issue_date)
+
+    def test_cheque_issue_date_is_required_and_saved(self):
+        purchase = self.make_purchase()
+        row = self.cheque("100", "CHQ-ISSUE")
+        row.pop("cheque_issue_date")
+        with self.assertRaisesMessage(ValidationError, "Cheque Issue Date is required."):
+            self.record(purchase, [row])
+
+        payment = self.record(purchase, [self.cheque("100", "CHQ-DATED")])[0]
+        self.assertEqual(payment.cheque_issue_date, self.issue_date)
+
+    def test_cheque_issue_date_form_default_uses_business_local_date(self):
+        purchase = self.make_purchase()
+        self.client.force_login(self.owner_a)
+        expected = date(2031, 4, 5)
+        with patch("apps.purchases.views.business_localdate", return_value=expected):
+            response = self.client.get(
+                reverse("purchases:detail", args=[purchase.public_id]),
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'name="cheque_issue_date"')
+        self.assertContains(response, 'value="2031-04-05"')
+
+    def test_custom_cheque_issue_date_post_is_saved(self):
+        purchase = self.make_purchase()
+        self.client.force_login(self.owner_a)
+        custom_date = self.issue_date - timedelta(days=12)
+        response = self.client.post(
+            reverse("purchases:pay", args=[purchase.public_id]),
+            {
+                "method": ["cheque"],
+                "amount": ["100"],
+                "reference": [""],
+                "cheque_number": ["CHQ-CUSTOM-DATE"],
+                "bank_name": ["Bank Muscat"],
+                "cheque_issue_date": [custom_date.isoformat()],
+                "due_date": [self.tomorrow.isoformat()],
+            },
+        )
+        self.assertRedirects(
+            response, reverse("purchases:detail", args=[purchase.public_id]),
+        )
+        payment = purchase.payments.get(cheque_number="CHQ-CUSTOM-DATE")
+        self.assertEqual(payment.cheque_issue_date, custom_date)

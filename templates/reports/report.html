@@ -20,21 +20,52 @@
 
 <div class="card mb-3 no-print"><div class="card-body py-2">
   <form class="row g-2 align-items-center" method="get">
-    <div class="col-auto"><input type="date" name="from" value="{{ filters.date_from|default:'' }}" class="form-control form-control-sm"></div>
-    <div class="col-auto">→</div>
-    <div class="col-auto"><input type="date" name="to" value="{{ filters.date_to|default:'' }}" class="form-control form-control-sm"></div>
     <div class="col-auto">
+      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">From Date</label>{% endif %}
+      <input type="date" name="from" value="{{ filters.date_from|default:'' }}" class="form-control form-control-sm" aria-label="From Date">
+    </div>
+    <div class="col-auto">→</div>
+    <div class="col-auto">
+      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">To Date</label>{% endif %}
+      <input type="date" name="to" value="{{ filters.date_to|default:'' }}" class="form-control form-control-sm" aria-label="To Date">
+    </div>
+    <div class="col-auto">
+      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">Branch</label>{% endif %}
       <select name="branch" class="form-select form-select-sm">
         <option value="">All branches</option>
         {% for b in branches %}<option value="{{ b.id }}" {% if filters.branch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
       </select>
     </div>
     <div class="col-auto">
+      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">Warehouse</label>{% endif %}
       <select name="warehouse" class="form-select form-select-sm">
         <option value="">All warehouses</option>
         {% for w in warehouses %}<option value="{{ w.id }}" {% if filters.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
       </select>
     </div>
+    {% if key == "supplier_payments_cheques" %}
+    <div class="col-auto">
+      <label class="form-label small mb-1">Supplier</label>
+      <select name="supplier" class="form-select form-select-sm">
+        <option value="">All suppliers</option>
+        {% for supplier in suppliers %}<option value="{{ supplier.id }}" {% if filters.supplier_id == supplier.id %}selected{% endif %}>{{ supplier.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Pmt Medium</label>
+      <select name="method" class="form-select form-select-sm">
+        <option value="">All payment media</option>
+        {% for value, label in supplier_payment_methods %}<option value="{{ value }}" {% if filters.payment_method == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Cheque Status</label>
+      <select name="cheque_status" class="form-select form-select-sm">
+        <option value="">All cheque statuses</option>
+        {% for value, label in supplier_cheque_statuses %}<option value="{{ value }}" {% if filters.cheque_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
     {% if key == "sales_detailed" %}
     <div class="col-auto">
       <select name="product" class="form-select form-select-sm">

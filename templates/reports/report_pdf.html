@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <style>
-  @page { size: A4 landscape; margin: 10mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 7.6pt; color: #1e293b; }
+  @page { size: {% if data.wide_pdf %}A3{% else %}A4{% endif %} landscape; margin: 10mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: {% if data.wide_pdf %}7.2{% else %}7.6{% endif %}pt; color: #1e293b; }
   h1 { font-size: 14pt; margin: 0 0 2px; }
   .muted { color: #64748b; font-size: 7.6pt; margin-bottom: 10px; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }

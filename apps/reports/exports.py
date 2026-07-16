@@ -7,30 +7,44 @@ from django.http import HttpResponse
 
 from .pdf import render_pdf
 
+FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
+def _formula_safe(value):
+    """Prevent user-controlled text from becoming a spreadsheet formula."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.lstrip()
+    if stripped and stripped.startswith(FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 def _cell(value):
     if value is None or value == "":
         return "-"
     if isinstance(value, Decimal):
-        return float(value)
+        return value
     if isinstance(value, (date, datetime)):
         return str(value)
-    return value
+    return _formula_safe(value)
 
 
 def _csv_cell(value):
-    return "-" if value is None or value == "" else value
+    if value is None or value == "":
+        return "-"
+    return _formula_safe(value)
 
 
 def export_csv(title, data):
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{title}.csv"'
     writer = csv.writer(response)
-    writer.writerow(data["columns"])
+    writer.writerow([_csv_cell(v) for v in data["columns"]])
     for row in data["rows"]:
         writer.writerow([_csv_cell(v) for v in row])
     if data.get("totals"):
-        writer.writerow(data["totals"])
+        writer.writerow([_csv_cell(v) for v in data["totals"]])
     if data.get("summary"):
         writer.writerow([])
         for label, value in data["summary"]:
@@ -47,7 +61,7 @@ def export_xlsx(title, data):
     ws.title = title[:31]
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="0F172A")
-    ws.append(data["columns"])
+    ws.append([_cell(v) for v in data["columns"]])
     for cell in ws[1]:
         cell.font = header_font
         cell.fill = header_fill
@@ -60,7 +74,7 @@ def export_xlsx(title, data):
     if data.get("summary"):
         ws.append([])
         for label, value in data["summary"]:
-            ws.append([label, _cell(value)])
+            ws.append([_cell(label), _cell(value)])
             ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
     for idx, col in enumerate(data["columns"], start=1):
         width = max(len(str(col)) + 2, 12)

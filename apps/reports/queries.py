@@ -6,7 +6,7 @@ Filters: date_from, date_to (date objects or None), branch_id, warehouse_id.
 The same data feeds HTML tables and CSV/Excel/PDF exports, so exported
 numbers always match what is on screen.
 """
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from django.db.models import (
@@ -25,6 +25,9 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, Greatest, Round
 from django.utils import timezone
+from django.utils.dateparse import parse_date
+
+from apps.core.date_ranges import business_localdate, business_timezone
 
 ZERO = Decimal("0")
 
@@ -757,25 +760,12 @@ def stock_movements_report(business, f):
 
 
 def purchases_summary(business, f):
+    from apps.purchases import services as purchase_services
     from apps.purchases.models import Purchase
-    from apps.suppliers.models import SupplierPayment
 
-    qs = (
+    qs = purchase_services.with_pending_cheques(
         Purchase.objects.for_business(business)
         .select_related("supplier")
-        .annotate(
-            _cheques_pending=Coalesce(
-                Sum(
-                    "payments__amount",
-                    filter=Q(
-                        payments__method=SupplierPayment.Method.CHEQUE,
-                        payments__cheque_status=SupplierPayment.ChequeStatus.PENDING,
-                    ),
-                ),
-                Value(ZERO),
-                output_field=DecimalField(max_digits=14, decimal_places=3),
-            )
-        )
     )
     if f.get("date_from"):
         qs = qs.filter(purchase_date__gte=f["date_from"])
@@ -794,6 +784,135 @@ def purchases_summary(business, f):
                         "Cheques Pending", "Remaining Balance", "Supplier Balance",
                         "Status"],
             "rows": rows, "totals": totals if rows else None}
+
+
+def _filter_payment_record_dates(queryset, business, filters):
+    """Apply business-local date boundaries to UTC payment timestamps."""
+    date_from = filters.get("date_from")
+    date_to = filters.get("date_to")
+    if date_from and not isinstance(date_from, date):
+        date_from = parse_date(str(date_from))
+    if date_to and not isinstance(date_to, date):
+        date_to = parse_date(str(date_to))
+
+    local_timezone = business_timezone(business)
+    if date_from:
+        start = datetime.combine(date_from, time.min, tzinfo=local_timezone)
+        queryset = queryset.filter(created_at__gte=start)
+    if date_to:
+        end = datetime.combine(
+            date_to + timedelta(days=1), time.min, tzinfo=local_timezone,
+        )
+        queryset = queryset.filter(created_at__lt=end)
+    return queryset
+
+
+def supplier_payments_cheques(business, f):
+    """Purchase-side supplier payments with one row per payment record."""
+    from apps.purchases import services as purchase_services
+    from apps.purchases.models import Purchase
+    from apps.suppliers.models import SupplierPayment
+
+    payments_qs = (
+        SupplierPayment.objects.for_business(business)
+        .filter(supplier__business=business)
+        .filter(Q(purchase__isnull=True) | Q(purchase__business=business))
+        .filter(Q(payment_method__isnull=True) | Q(payment_method__business=business))
+        .filter(
+            Q(purchase__isnull=True)
+            | Q(
+                purchase__branch__business=business,
+                purchase__warehouse__business=business,
+            )
+        )
+        .select_related(
+            "supplier", "purchase", "purchase__branch", "purchase__warehouse",
+            "payment_method",
+        )
+    )
+    payments_qs = _filter_payment_record_dates(payments_qs, business, f)
+    if f.get("supplier_id"):
+        payments_qs = payments_qs.filter(supplier_id=f["supplier_id"])
+    if f.get("branch_id"):
+        payments_qs = payments_qs.filter(purchase__branch_id=f["branch_id"])
+    if f.get("warehouse_id"):
+        payments_qs = payments_qs.filter(purchase__warehouse_id=f["warehouse_id"])
+
+    method = f.get("payment_method")
+    if method in (
+        SupplierPayment.Method.CASH,
+        SupplierPayment.Method.BANK,
+        SupplierPayment.Method.CARD,
+    ):
+        payments_qs = payments_qs.filter(
+            Q(method=method)
+            | Q(
+                method="",
+                payment_method__business=business,
+                payment_method__kind=method,
+            )
+        )
+    elif method == SupplierPayment.Method.CHEQUE:
+        payments_qs = payments_qs.filter(method=method)
+    if f.get("cheque_status"):
+        payments_qs = payments_qs.filter(
+            method=SupplierPayment.Method.CHEQUE,
+            cheque_status=f["cheque_status"],
+        )
+
+    payments = list(payments_qs.order_by("-created_at", "-pk"))
+    purchase_ids = {payment.purchase_id for payment in payments if payment.purchase_id}
+    purchases = purchase_services.with_pending_cheques(
+        Purchase.objects.for_business(business).filter(pk__in=purchase_ids)
+    )
+    purchase_by_id = {purchase.pk: purchase for purchase in purchases}
+
+    rows = []
+    total_payment_amount = ZERO
+    total_pending_cheques = ZERO
+    total_cleared_cheques = ZERO
+    for payment in payments:
+        purchase = purchase_by_id.get(payment.purchase_id)
+        is_cheque = payment.is_cheque
+        rows.append([
+            business_localdate(business, now=payment.created_at),
+            payment.supplier.name,
+            purchase.purchase_number if purchase else None,
+            purchase.purchase_date if purchase else None,
+            payment.method_label,
+            payment.amount,
+            payment.cheque_number if is_cheque else None,
+            payment.bank_name if is_cheque else None,
+            payment.cheque_issue_date if is_cheque else None,
+            payment.due_date if is_cheque else None,
+            payment.get_cheque_status_display() if is_cheque else None,
+            purchase.amount_paid if purchase else None,
+            purchase.cheques_pending if purchase else None,
+            purchase.remaining_balance if purchase else None,
+            payment.supplier.balance,
+        ])
+        total_payment_amount += payment.amount
+        if payment.cheque_status == SupplierPayment.ChequeStatus.PENDING:
+            total_pending_cheques += payment.amount
+        elif payment.cheque_status == SupplierPayment.ChequeStatus.CLEARED:
+            total_cleared_cheques += payment.amount
+
+    return {
+        "columns": [
+            "Date", "Supplier", "Purchase No.", "Purchase Date", "Pmt Medium",
+            "Amount", "Cheque Number", "Bank Name", "Cheque Issue Date",
+            "Cheque Payment Date", "Cheque Status", "Paid", "Cheques Pending",
+            "Remaining Balance", "Supplier Balance",
+        ],
+        "rows": rows,
+        "totals": None,
+        "summary": [
+            ("Total Payment Amount", _money(total_payment_amount)),
+            ("Total Pending Cheques", _money(total_pending_cheques)),
+            ("Total Cleared Cheques", _money(total_cleared_cheques)),
+        ],
+        "wide_pdf": True,
+    }
 
 
 def supplier_balances(business, f):
@@ -1137,6 +1256,9 @@ REPORTS = {
     "stock_movements": ("Stock movements", stock_movements_report, "reports.view"),
     "purchases": ("Purchases", purchases_summary, "reports.view"),
     "supplier_balances": ("Outstanding supplier balances", supplier_balances, "reports.financial"),
+    "supplier_payments_cheques": (
+        "Supplier Payments & Cheques", supplier_payments_cheques, "reports.financial",
+    ),
     "receivables": ("Outstanding receivables", customer_receivables, "reports.financial"),
     "top_customers": ("Top customers", top_customers, "reports.view"),
     "expenses": ("Expenses", expenses_report, "reports.financial"),
@@ -1148,7 +1270,7 @@ REPORT_GROUPS = [
                "customer_sales", "cashier_sales", "payment_methods", "voids",
                "returns", "tax"]),
     ("Inventory", ["current_stock", "low_stock", "stock_movements"]),
-    ("Purchasing", ["purchases", "supplier_balances"]),
+    ("Purchasing", ["purchases", "supplier_balances", "supplier_payments_cheques"]),
     ("Customers", ["receivables", "top_customers"]),
     ("Financial", ["profit_loss", "cash_flow", "expense_analysis", "profit",
                    "expenses"]),
