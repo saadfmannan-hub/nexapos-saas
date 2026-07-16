@@ -45,6 +45,7 @@
               {{ item.product_name }}
               {% if item.is_tailoring_line %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
+                <div class="small text-secondary">Collection: <span class="fw-semibold text-body">{{ item.collection_type_label }}</span></div>
                 <div class="small text-secondary">
                   Estimated: <span class="fw-semibold text-body">{% if item.estimated_fabric is not None %}{{ item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
                 </div>

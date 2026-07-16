@@ -36,6 +36,7 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
                 "quantity": D(str(quantity)),
                 "unit_price": self.product_a.sale_price,
                 "garment_classification": classification,
+                "collection_type": "normal",
                 "tailoring_details": {
                     "customer_notes": f"{classification} fitting",
                 },
@@ -49,6 +50,7 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
             "quantity": D("1"),
             "unit_price": product.sale_price,
             "garment_classification": classification,
+            "collection_type": "normal",
         }
         total = sales.compute_line(
             product,
@@ -151,7 +153,7 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
         data = response.context["data"]
         self.assertIn("Garment Classification", data["columns"])
         self.assertEqual([row[6] for row in data["rows"]], ["Adult", "Child"])
-        self.assertEqual([row[7] for row in data["rows"]], [D("2"), D("3")])
+        self.assertEqual([row[8] for row in data["rows"]], [D("2"), D("3")])
         summary = dict(data["summary"])
         self.assertEqual(summary["Total Adult Pieces"], D("2"))
         self.assertEqual(summary["Total Child Pieces"], D("3"))

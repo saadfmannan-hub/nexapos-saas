@@ -431,6 +431,7 @@ def sales_detailed(business, f):
         if sale.status == Sale.Status.VOIDED:
             quantity = ZERO
         classification = item.garment_classification_label or "Not Applicable"
+        collection_type = item.collection_type_label or "Not Applicable"
         if item.is_tailoring_line:
             key = item.garment_classification or "legacy"
             pieces[key] += quantity
@@ -453,6 +454,7 @@ def sales_detailed(business, f):
             sale.cashier.full_name,
             item.product_name,
             classification,
+            collection_type,
             quantity,
             estimated_fabric,
             actual_fabric,
@@ -466,7 +468,7 @@ def sales_detailed(business, f):
     return {
         "columns": [
             "Invoice", "Date", "Customer", "Branch", "Cashier", "Product",
-            "Garment Classification", "Quantity", "Estimated Fabric",
+            "Garment Classification", "Collection", "Quantity", "Estimated Fabric",
             "Actual Fabric", "Variance", "Payment Method", "Total", "Paid",
             "Balance", "Status",
         ],

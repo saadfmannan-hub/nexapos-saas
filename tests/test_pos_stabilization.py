@@ -54,6 +54,7 @@ class TailoringBookingContractTests(TenantTestCase):
                 "unit_price": "10.000",
                 "discount_amount": "0",
                 "garment_classification": "adult",
+                "collection_type": "normal",
                 "tailoring_details": {},
             }],
             "payments": [{"method_id": self.cash_a.id, "amount": "10.500"}],
@@ -145,6 +146,7 @@ class TailoringBookingContractTests(TenantTestCase):
         self.product_a.save(update_fields=["is_tailoring_item"])
         payload = self.payload(delivery_date=None)
         payload["items"][0]["garment_classification"] = ""
+        payload["items"][0]["collection_type"] = ""
         sale = self.sale_for(self.checkout(payload))
         self.assertIsNone(sale.delivery_date)
         self.assertEqual(sale.items.get().garment_classification, "")
@@ -419,6 +421,7 @@ class PosSecurityAndOperationsTests(TenantTestCase):
                 "unit_price": "10.000",
                 "discount_amount": "0",
                 "garment_classification": "adult",
+                "collection_type": "normal",
             }],
             "payments": [{"method_id": self.cash_a.id, "amount": "10.500"}],
             "delivery_date": str(timezone.localdate()),

@@ -146,14 +146,24 @@
                 <input type="number" step="any" class="form-control" x-model="line.unit_price"
                        {% if not can_override_price %}readonly{% endif %}>
               </div>
-              {% if can_discount %}
-              <div class="input-group input-group-sm" style="width: 100px" title="Line discount" x-show="line.allow_discount">
-                <span class="input-group-text">−</span>
-                <input type="number" step="any" min="0" class="form-control" x-model="line.discount_amount">
+              <div class="pos-collection-selector" x-show="line.is_tailoring_item" x-cloak>
+                <span class="visually-hidden" :id="'collection-type-label-' + i">Collection</span>
+                <div class="btn-group btn-group-sm collection-type" role="radiogroup"
+                     :aria-labelledby="'collection-type-label-' + i">
+                  <input type="radio" class="btn-check" value="normal"
+                         :id="'collection-normal-' + i" :name="'collection-type-' + i"
+                         x-model="line.collection_type" @change="line.collection_error = ''">
+                  <label class="btn btn-outline-primary" :for="'collection-normal-' + i">Normal</label>
+                  <input type="radio" class="btn-check" value="premium"
+                         :id="'collection-premium-' + i" :name="'collection-type-' + i"
+                         x-model="line.collection_type" @change="line.collection_error = ''">
+                  <label class="btn btn-outline-primary" :for="'collection-premium-' + i">Premium</label>
+                </div>
               </div>
-              {% endif %}
               <div class="ms-auto fw-bold small" x-text="fmt(lineTotal(line))"></div>
             </div>
+            <div class="text-danger small mt-1 pos-validation-message" role="alert"
+                 x-show="line.collection_error" x-text="line.collection_error"></div>
             <div class="mt-2" x-show="line.is_tailoring_item" x-cloak>
               <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
                 <label class="form-label small mb-0 required-star"
@@ -442,7 +452,9 @@ function pos() {
                            quantity: 1, unit_price: p.price, discount_amount: 0,
                            tax_rate: p.tax_rate, allow_discount: p.allow_discount,
                            is_tailoring_item: !!p.is_tailoring_item,
-                           garment_classification: '', validation_error: '',
+                           garment_classification: '',
+                           collection_type: p.is_tailoring_item ? 'normal' : '',
+                           validation_error: '', collection_error: '',
                            expanded: false, tailoring_details: this.blankTailoringDetails()});
       this.$refs.barcode.focus();
     },
@@ -468,7 +480,9 @@ function pos() {
         ...source,
         quantity: 1,
         garment_classification: '',
+        collection_type: 'normal',
         validation_error: '',
+        collection_error: '',
         expanded: true,
         tailoring_details: this.blankTailoringDetails()
       });
@@ -480,6 +494,11 @@ function pos() {
       let firstInvalid = -1;
       this.cart.forEach((line, index) => {
         line.validation_error = '';
+        line.collection_error = '';
+        if (line.is_tailoring_item && !['normal', 'premium'].includes(line.collection_type)) {
+          line.collection_error = 'Select Normal or Premium for this garment.';
+          if (firstInvalid < 0) firstInvalid = index;
+        }
         if (line.is_tailoring_item && !['adult', 'child'].includes(line.garment_classification)) {
           line.validation_error = 'Select Adult or Child for this garment.';
           if (firstInvalid < 0) firstInvalid = index;
@@ -507,13 +526,14 @@ function pos() {
         variant_id: line.variant_id,
         quantity: line.quantity,
         unit_price: line.unit_price,
-        discount_amount: line.discount_amount,
+        discount_amount: 0,
         garment_classification: line.garment_classification || '',
+        collection_type: line.is_tailoring_item ? (line.collection_type || '') : '',
         tailoring_details: {...this.blankTailoringDetails(), ...(line.tailoring_details || {})},
       }));
     },
     lineParts(l, invoiceShare = 0) {
-      const gross = this.storageMoney((+l.unit_price * +l.quantity) - (+l.discount_amount || 0));
+      const gross = this.storageMoney(+l.unit_price * +l.quantity);
       const rate = (+l.tax_rate || 0) / 100;
       const incl = {{ request.business.settings.prices_include_tax|yesno:"true,false" }};
       const baseBefore = this.storageMoney((rate > 0 && incl) ? gross / (1 + rate) : gross);
@@ -522,13 +542,12 @@ function pos() {
       return {baseBefore, base, tax, total: this.storageMoney(base + tax)};
     },
     lineTotal(l) {
-      return this.storageMoney(Math.max(0, (+l.unit_price * +l.quantity) - (+l.discount_amount || 0)));
+      return this.storageMoney(Math.max(0, +l.unit_price * +l.quantity));
     },
     get totals() {
-      let base = 0, tax = 0, lineDisc = 0;
+      let base = 0, tax = 0;
       const lines = [];
       this.cart.forEach(l => {
-        lineDisc = this.storageMoney(lineDisc + (+l.discount_amount || 0));
         const parts = this.lineParts(l);
         base = this.storageMoney(base + parts.baseBefore);
         lines.push({line: l, baseBefore: parts.baseBefore});
@@ -556,7 +575,7 @@ function pos() {
         tax,
         invoiceDiscount: allocatedDiscount,
         discountedSubtotal,
-        discount: this.storageMoney(lineDisc + allocatedDiscount),
+        discount: allocatedDiscount,
         total
       };
     },
@@ -726,8 +745,13 @@ function pos() {
         const product = this.products.find(p =>
           p.product_id === line.product_id && p.variant_id === (line.variant_id || null));
         line.is_tailoring_item = line.is_tailoring_item ?? !!product?.is_tailoring_item;
+        line.discount_amount = 0;
         line.garment_classification = String(line.garment_classification || '').toLowerCase();
+        const collectionType = String(line.collection_type || '').toLowerCase();
+        line.collection_type = line.is_tailoring_item && ['normal', 'premium'].includes(collectionType)
+          ? collectionType : (line.is_tailoring_item ? 'normal' : '');
         line.validation_error = '';
+        line.collection_error = '';
         line.expanded = !!line.expanded;
         line.tailoring_details = {...this.blankTailoringDetails(), ...(line.tailoring_details || {})};
         if (line.tailoring_details.design_type === 'VIP 3D') {

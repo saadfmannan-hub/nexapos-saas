@@ -855,6 +855,13 @@ a { text-decoration: none; }
   min-width: 72px;
   min-height: 34px;
 }
+.collection-type .btn {
+  min-width: 68px;
+  min-height: 31px;
+  padding-left: .45rem;
+  padding-right: .45rem;
+}
+.pos-collection-selector { min-width: 136px; }
 .pos-priority-select { width: 142px; }
 .pos-payment-modal { max-height: calc(100dvh - 2rem); }
 .pos-payment-modal .modal-body { overflow-y: auto; }

@@ -232,7 +232,8 @@ class PosEndpointTests(TenantTestCase):
             "items": [{"product_id": self.product_a.id, "variant_id": None,
                        "quantity": "1", "unit_price": "10.000",
                        "discount_amount": "0",
-                       "garment_classification": "adult"}],
+                       "garment_classification": "adult",
+                       "collection_type": "normal"}],
             "payments": [{"method_id": self.cash_a.id, "amount": "10.500"}],
             "invoice_discount": "0",
         })
@@ -253,6 +254,7 @@ class PosEndpointTests(TenantTestCase):
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
                  "garment_classification": "adult",
+                 "collection_type": "normal",
                  "tailoring_details": {
                      "design_type": "Daraz",
                      "daraz_details": "3 Line",
@@ -263,6 +265,7 @@ class PosEndpointTests(TenantTestCase):
                  "quantity": "1", "unit_price": "10.000",
                  "discount_amount": "0",
                  "garment_classification": "child",
+                 "collection_type": "normal",
                  "tailoring_details": {
                      "design_type": "VIP 3D Design",
                      "vip_3d_design": "MM3",

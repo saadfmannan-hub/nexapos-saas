@@ -48,7 +48,8 @@ class SaleItemSerializer(serializers.ModelSerializer):
         model = SaleItem
         fields = ["product_name", "sku", "quantity", "unit_price",
                   "discount_amount", "tax_amount", "line_total",
-                  "garment_classification", "estimated_fabric",
+                  "garment_classification", "collection_type",
+                  "estimated_fabric",
                   "actual_fabric_used", "fabric_variance"]
 
 

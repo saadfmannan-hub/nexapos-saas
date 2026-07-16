@@ -310,6 +310,8 @@
           <td>
             <div class="label">Garment</div>
             <div class="value">{% if job_item.is_tailoring_line %}{{ job_item.garment_classification_label }}{% else %}-{% endif %}</div>
+            <div class="label">Collection</div>
+            <div class="value">{% if job_item.is_tailoring_line %}{{ job_item.collection_type_label }}{% else %}-{% endif %}</div>
           </td>
         </tr>
         <tr>

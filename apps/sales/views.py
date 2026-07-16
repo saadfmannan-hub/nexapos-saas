@@ -385,8 +385,11 @@ def pos_checkout(request):
             "product": product, "variant": variant,
             "quantity": D(raw.get("quantity")),
             "unit_price": D(raw.get("unit_price")),
-            "discount_amount": D(raw.get("discount_amount")),
+            # POS line discounts were retired in favour of invoice discounts.
+            # Keep the persisted field for historical and non-POS compatibility.
+            "discount_amount": D("0"),
             "garment_classification": raw.get("garment_classification", ""),
+            "collection_type": raw.get("collection_type", ""),
             "tailoring_details": _checkout_tailoring_details(raw),
         })
 

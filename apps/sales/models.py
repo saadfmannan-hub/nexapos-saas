@@ -257,6 +257,10 @@ class SaleItem(TenantModel):
         ADULT = "adult", _("Adult")
         CHILD = "child", _("Child")
 
+    class CollectionType(models.TextChoices):
+        NORMAL = "normal", _("Normal")
+        PREMIUM = "premium", _("Premium")
+
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey(
         "catalog.Product", on_delete=models.PROTECT, related_name="sale_items"
@@ -280,6 +284,12 @@ class SaleItem(TenantModel):
     garment_classification = models.CharField(
         max_length=5,
         choices=GarmentClassification.choices,
+        blank=True,
+        default="",
+    )
+    collection_type = models.CharField(
+        max_length=10,
+        choices=CollectionType.choices,
         blank=True,
         default="",
     )
@@ -314,6 +324,10 @@ class SaleItem(TenantModel):
             models.CheckConstraint(
                 condition=models.Q(garment_classification__in=["", "adult", "child"]),
                 name="saleitem_classification_valid",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(collection_type__in=["", "normal", "premium"]),
+                name="saleitem_collection_type_valid",
             ),
             models.CheckConstraint(
                 condition=(
@@ -362,6 +376,14 @@ class SaleItem(TenantModel):
     def garment_classification_label(self):
         if self.garment_classification:
             return self.get_garment_classification_display()
+        if self.is_tailoring_line:
+            return "Legacy / Not Recorded"
+        return ""
+
+    @property
+    def collection_type_label(self):
+        if self.collection_type:
+            return self.get_collection_type_display()
         if self.is_tailoring_line:
             return "Legacy / Not Recorded"
         return ""

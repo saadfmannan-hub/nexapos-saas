@@ -353,6 +353,8 @@ def complete_sale(
         classification = str(
             line.get("garment_classification", "") or ""
         ).strip().lower()
+        raw_collection_type = line.get("collection_type")
+        collection_type = str(raw_collection_type or "").strip().lower()
         estimated_fabric = None
         if product.is_tailoring_item:
             has_tailoring_items = True
@@ -362,13 +364,24 @@ def complete_sale(
                     message,
                     errors={f"{field_prefix}.garment_classification": message},
                 )
+            # Calls made before collection types existed omitted the key entirely.
+            # Keep those integrations compatible while requiring new POS payloads,
+            # which always include the key, to make an explicit valid selection.
+            if raw_collection_type is None:
+                collection_type = SaleItem.CollectionType.NORMAL
+            if collection_type not in dict(SaleItem.CollectionType.choices):
+                message = "Select Normal or Premium for every garment."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.collection_type": message},
+                )
             estimated_fabric = _fabric_estimate(
                 product,
                 classification,
                 qty,
                 field_prefix=field_prefix,
             )
-        elif classification or tailoring_details:
+        elif classification or collection_type or tailoring_details:
             message = f"{product.name} is not configured as a tailoring garment."
             raise SaleError(message, errors={field_prefix: message})
         normalized_items.append({
@@ -378,6 +391,7 @@ def complete_sale(
             "unit_price": unit_price,
             "discount_amount": discount,
             "garment_classification": classification,
+            "collection_type": collection_type,
             "estimated_fabric": estimated_fabric,
             "tailoring_details": tailoring_details,
         })
@@ -512,6 +526,7 @@ def complete_sale(
             unit_cost=unit_cost,
             gross_profit=money(parts["base"] - line_cost),
             garment_classification=line.get("garment_classification", ""),
+            collection_type=line.get("collection_type", ""),
             estimated_fabric=line.get("estimated_fabric"),
             tailoring_details=line.get("tailoring_details", {}),
         )
