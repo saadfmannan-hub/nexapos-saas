@@ -22,8 +22,8 @@ from apps.subscriptions import services as subscriptions
 from . import calculations, services
 from .forms import ActualFabricForm
 from .models import (
-    HeldSale,
     MAX_FABRIC_TOTAL,
+    HeldSale,
     PaymentMethod,
     Sale,
     SaleItem,
@@ -136,8 +136,8 @@ def _checkout_success_response(sale):
 # ---------------------------------------------------------------------------
 @require_permission("sales.create")
 def pos_view(request):
-    from apps.catalog.models import Category
     from apps.accounts.services import post_login_redirect
+    from apps.catalog.models import Category
 
     branches = list(_user_branches(request))
     if not branches:

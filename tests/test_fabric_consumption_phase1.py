@@ -17,12 +17,11 @@ from apps.catalog.models import Product
 from apps.inventory.models import StockMovement
 from apps.reports.queries import sales_detailed
 from apps.sales import services as sales
-from apps.sales.models import PaymentMethod, Sale, SaleItem
+from apps.sales.models import PaymentMethod, Sale
 from apps.sales.services import SaleError
 from apps.sales.views import _job_card_context
 
 from .base import TenantTestCase
-
 
 D = Decimal
 

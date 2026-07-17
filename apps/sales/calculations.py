@@ -152,7 +152,7 @@ def calculate_sale_totals(
     )
     computed = []
     subtotal = tax_total = grand_total = ZERO
-    for (line, initial), share in zip(first_pass, shares):
+    for (line, initial), share in zip(first_pass, shares, strict=True):
         parts = compute_line(
             line["product"],
             line.get("variant"),

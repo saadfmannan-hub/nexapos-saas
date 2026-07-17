@@ -7,7 +7,6 @@ from django.utils.translation import gettext_lazy as _
 
 from apps.core.models import TenantModel
 
-
 MAX_FABRIC_PER_GARMENT = Decimal("1000.000")
 
 

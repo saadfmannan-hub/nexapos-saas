@@ -20,6 +20,7 @@ from apps.subscriptions import services as subscriptions
 
 from . import calculations
 from .models import (
+    MAX_FABRIC_TOTAL,
     InvoiceSequence,
     PaymentMethod,
     Sale,
@@ -27,7 +28,6 @@ from .models import (
     SalePayment,
     SaleReturn,
     SaleReturnItem,
-    MAX_FABRIC_TOTAL,
 )
 
 ZERO = Decimal("0")
