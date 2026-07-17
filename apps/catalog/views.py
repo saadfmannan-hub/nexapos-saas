@@ -1,16 +1,18 @@
 import io
 import json
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
+from django.forms.models import construct_instance
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
-from apps.core.money import D
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
 
@@ -24,6 +26,20 @@ from .forms import (
     VariantForm,
 )
 from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
+
+
+def _allowed_warehouse_ids(request):
+    """Return None for tenant-wide access, otherwise allowed + central IDs."""
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return None
+    from apps.branches.models import Warehouse
+
+    return list(
+        Warehouse.objects.for_business(request.business)
+        .filter(Q(branch_id__in=allowed) | Q(branch__isnull=True))
+        .values_list("id", flat=True)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -129,8 +145,13 @@ def product_form(request, public_id=None):
         if blocked:
             return blocked
 
-    form = ProductForm(request.business, request.POST or None,
-                       request.FILES or None, instance=instance)
+    form = ProductForm(
+        request.business,
+        request.POST or None,
+        request.FILES or None,
+        instance=instance,
+        allowed_warehouse_ids=_allowed_warehouse_ids(request),
+    )
     if request.method == "POST" and form.is_valid():
         auto_sku = form.cleaned_data.get("auto_generate_sku")
         is_variant = form.cleaned_data.get("product_type") == Product.Type.VARIANT
@@ -141,7 +162,15 @@ def product_form(request, public_id=None):
         if is_variant:
             variant_rows, variant_errors = _parse_variant_rows(
                 request, request.POST.get("variants_json", ""), auto_sku)
-        if variant_errors:
+            if (
+                any(row["opening_stock"] > 0 for row in variant_rows)
+                and not form.cleaned_data.get("opening_warehouse")
+            ):
+                form.add_error(
+                    "opening_warehouse",
+                    "Select a warehouse for the variant opening stock.",
+                )
+        if variant_errors or form.errors:
             for err in variant_errors:
                 messages.error(request, err)
             return render(request, "catalog/product_form.html",
@@ -149,7 +178,44 @@ def product_form(request, public_id=None):
                            "active_nav": "products"})
 
         with transaction.atomic():
-            product = form.save(commit=False)
+            if instance is not None:
+                locked_product = (
+                    Product.objects.select_for_update()
+                    .select_related("unit")
+                    .get(pk=instance.pk, business=request.business)
+                )
+                try:
+                    catalog_services.validate_meter_product_shape(
+                        locked_product,
+                        target_unit=form.cleaned_data.get("unit"),
+                        target_type=form.cleaned_data.get("product_type"),
+                        target_tailoring=form.cleaned_data.get(
+                            "is_tailoring_item"
+                        ),
+                    )
+                except ValidationError as exc:
+                    form.add_error("product_type", exc)
+                    return render(
+                        request,
+                        "catalog/product_form.html",
+                        {
+                            "form": form,
+                            "product": instance,
+                            "active_nav": "products",
+                        },
+                    )
+            # A concurrent ledger write may have appeared after form.clean().
+            # The locked recheck above is authoritative before any edit write.
+            if instance is not None:
+                product = construct_instance(
+                    form,
+                    locked_product,
+                    form._meta.fields,
+                    form._meta.exclude,
+                )
+                form.instance = product
+            else:
+                product = form.save(commit=False)
             product.business = request.business
             if auto_sku and not product.sku:
                 product.sku = catalog_services.generate_sku(request.business)
@@ -157,7 +223,13 @@ def product_form(request, public_id=None):
 
             opening = form.cleaned_data.get("opening_stock")
             warehouse = form.cleaned_data.get("opening_warehouse")
-            if not public_id and opening and warehouse and product.is_stocked:
+            if (
+                not public_id
+                and opening
+                and warehouse
+                and product.is_stocked
+                and not (product.unit_id and product.unit.is_meter)
+            ):
                 inventory.set_opening_stock(
                     business=request.business, warehouse=warehouse, product=product,
                     quantity=opening, unit_cost=product.purchase_price,
@@ -179,6 +251,41 @@ def product_form(request, public_id=None):
         return redirect("catalog:product_list")
     return render(request, "catalog/product_form.html",
                   {"form": form, "product": instance, "active_nav": "products"})
+
+
+VARIANT_DECIMAL_MAX = Decimal("99999999999.999")
+VARIANT_DECIMAL_QUANTUM = Decimal("0.001")
+
+
+def _variant_decimal(item, field, label, index, errors):
+    raw = item.get(field)
+    if raw is None or str(raw).strip() == "":
+        return Decimal("0")
+    try:
+        value = Decimal(str(raw).strip())
+    except (InvalidOperation, ValueError):
+        errors.append(f"Variant {index}: enter a valid {label}.")
+        return Decimal("0")
+    if not value.is_finite():
+        errors.append(f"Variant {index}: enter a valid {label}.")
+        return Decimal("0")
+    if value < 0:
+        errors.append(f"Variant {index}: {label.capitalize()} cannot be negative.")
+        return Decimal("0")
+    if value > VARIANT_DECIMAL_MAX:
+        errors.append(f"Variant {index}: {label.capitalize()} is too large.")
+        return Decimal("0")
+    try:
+        quantized = value.quantize(VARIANT_DECIMAL_QUANTUM)
+    except InvalidOperation:
+        errors.append(f"Variant {index}: enter a valid {label}.")
+        return Decimal("0")
+    if value != quantized:
+        errors.append(
+            f"Variant {index}: {label.capitalize()} supports up to 3 decimal places."
+        )
+        return Decimal("0")
+    return quantized
 
 
 def _parse_variant_rows(request, raw_json, auto_sku):
@@ -203,13 +310,17 @@ def _parse_variant_rows(request, raw_json, auto_sku):
     seen_sku, seen_barcode = set(), set()
     for idx, item in enumerate(payload, start=1):
         if not isinstance(item, dict):
+            errors.append(f"Variant {idx}: invalid variant data.")
             continue
         attributes = item.get("attributes") or {}
+        if not isinstance(attributes, dict):
+            errors.append(f"Variant {idx}: invalid attributes data.")
+            attributes = {}
         attributes = {str(k).strip(): str(v).strip()
                       for k, v in attributes.items() if str(k).strip() and str(v).strip()}
-        name = (item.get("name") or "").strip() or " / ".join(attributes.values()) or "Variant"
-        sku = (item.get("sku") or "").strip()
-        barcode = (item.get("barcode") or "").strip()
+        name = str(item.get("name") or "").strip() or " / ".join(attributes.values()) or "Variant"
+        sku = str(item.get("sku") or "").strip()
+        barcode = str(item.get("barcode") or "").strip()
 
         if sku:
             if sku in seen_sku:
@@ -229,9 +340,15 @@ def _parse_variant_rows(request, raw_json, auto_sku):
         rows.append({
             "name": name[:160], "attributes": attributes,
             "sku": sku[:60], "barcode": barcode[:80],
-            "purchase_price": D(item.get("purchase_price")),
-            "sale_price": D(item.get("sale_price")),
-            "opening_stock": D(item.get("opening_stock")),
+            "purchase_price": _variant_decimal(
+                item, "purchase_price", "purchase price", idx, errors,
+            ),
+            "sale_price": _variant_decimal(
+                item, "sale_price", "sale price", idx, errors,
+            ),
+            "opening_stock": _variant_decimal(
+                item, "opening_stock", "opening stock", idx, errors,
+            ),
         })
     return rows, errors
 
@@ -252,7 +369,12 @@ def _create_variants(request, product, rows, warehouse):
         variant = ProductVariant.objects.create(
             business=business, product=product, name=row["name"],
             attributes=row["attributes"], sku=sku, barcode=row["barcode"],
-            purchase_price=row["purchase_price"], sale_price=row["sale_price"],
+            purchase_price=row["purchase_price"],
+            sale_price=(
+                Decimal("0")
+                if product.is_meter_tailoring
+                else row["sale_price"]
+            ),
         )
         if row["opening_stock"] and warehouse and product.is_stocked:
             inventory.set_opening_stock(
@@ -342,21 +464,59 @@ def variant_form(request, product_id, public_id=None):
         if instance.product_id != product.id:
             from django.http import Http404
             raise Http404
-    form = VariantForm(request.business, request.POST or None,
-                       request.FILES or None, instance=instance)
+    form = VariantForm(
+        request.business,
+        request.POST or None,
+        request.FILES or None,
+        instance=instance,
+        product=product,
+    )
     if request.method == "POST" and form.is_valid():
-        variant = form.save(commit=False)
-        variant.business = request.business
-        variant.product = product
-        variant.attributes = form.build_attributes()
-        if not variant.name:
-            variant.name = " / ".join(variant.attributes.values()) or "Variant"
-        variant.save()
-        if product.product_type != Product.Type.VARIANT:
-            product.product_type = Product.Type.VARIANT
-            product.save(update_fields=["product_type"])
-        messages.success(request, "Variant saved.")
-        return redirect("catalog:product_detail", public_id=product.public_id)
+        try:
+            with transaction.atomic():
+                locked_product = (
+                    Product.objects.select_for_update()
+                    .select_related("unit")
+                    .get(pk=product.pk, business=request.business)
+                )
+                if instance is None or locked_product.product_type != Product.Type.VARIANT:
+                    from . import services as catalog_services
+
+                    catalog_services.validate_meter_product_shape(
+                        locked_product,
+                        target_unit=locked_product.unit,
+                        target_type=Product.Type.VARIANT,
+                        target_tailoring=locked_product.is_tailoring_item,
+                    )
+                if instance is not None:
+                    locked_variant = ProductVariant.objects.select_for_update().get(
+                        pk=instance.pk,
+                        business=request.business,
+                        product=locked_product,
+                    )
+                    variant = construct_instance(
+                        form,
+                        locked_variant,
+                        form._meta.fields,
+                        form._meta.exclude,
+                    )
+                    form.instance = variant
+                else:
+                    variant = form.save(commit=False)
+                variant.business = request.business
+                variant.product = locked_product
+                variant.attributes = form.build_attributes()
+                if not variant.name:
+                    variant.name = " / ".join(variant.attributes.values()) or "Variant"
+                variant.save()
+                if locked_product.product_type != Product.Type.VARIANT:
+                    locked_product.product_type = Product.Type.VARIANT
+                    locked_product.save(update_fields=["product_type"])
+        except ValidationError as exc:
+            form.add_error(None, exc)
+        else:
+            messages.success(request, "Variant saved.")
+            return redirect("catalog:product_detail", public_id=product.public_id)
     return render(request, "catalog/variant_form.html",
                   {"form": form, "product": product, "variant": instance,
                    "active_nav": "products"})
@@ -467,7 +627,9 @@ def product_import(request):
         else:
             summary, errors = catalog_services.import_products(
                 business=request.business, rows=rows,
-                match_by=form.cleaned_data["match_by"], user=request.user)
+                match_by=form.cleaned_data["match_by"], user=request.user,
+                allowed_warehouse_ids=_allowed_warehouse_ids(request),
+            )
             request.session["product_import_errors"] = errors
             results = {"summary": summary, "errors": errors, "total": len(rows)}
             audit.log("products.imported", request=request, module="catalog",

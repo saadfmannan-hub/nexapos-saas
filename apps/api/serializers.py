@@ -1,4 +1,6 @@
 """API v1 serializers — read-focused foundation for future integrations."""
+from decimal import Decimal
+
 from rest_framework import serializers
 
 from apps.catalog.models import Category, Product, ProductVariant
@@ -22,12 +24,13 @@ class VariantSerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     variants = VariantSerializer(many=True, read_only=True)
     category = serializers.StringRelatedField()
+    is_meter_tailoring = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Product
         fields = ["public_id", "name", "sku", "barcode", "product_type",
                   "category", "sale_price", "wholesale_price", "track_inventory",
-                  "is_tailoring_item", "estimated_adult_fabric",
+                  "is_tailoring_item", "is_meter_tailoring", "estimated_adult_fabric",
                   "estimated_child_fabric", "is_active", "variants"]
 
 
@@ -40,6 +43,14 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class SaleItemSerializer(serializers.ModelSerializer):
+    fabric_meter_used = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+        min_value=Decimal("0.001"),
+        max_value=Decimal("1000.000"),
+        allow_null=True,
+        required=False,
+    )
     fabric_variance = serializers.DecimalField(
         max_digits=14, decimal_places=3, read_only=True
     )
@@ -49,7 +60,7 @@ class SaleItemSerializer(serializers.ModelSerializer):
         fields = ["product_name", "sku", "quantity", "unit_price",
                   "discount_amount", "tax_amount", "line_total",
                   "garment_classification", "collection_type",
-                  "estimated_fabric",
+                  "fabric_meter_used", "estimated_fabric",
                   "actual_fabric_used", "fabric_variance"]
 
 

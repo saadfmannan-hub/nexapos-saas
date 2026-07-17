@@ -1,4 +1,5 @@
 from django import forms
+from django.db.models import Q
 
 from apps.branches.models import Warehouse
 from apps.catalog.models import Product
@@ -8,12 +9,18 @@ from .models import StockAdjustment, StockTransfer
 
 class WarehouseScopedForm(forms.Form):
     def __init__(self, business, *args, **kwargs):
+        membership = kwargs.pop("membership", None)
         super().__init__(*args, **kwargs)
         self.business = business
+        warehouse_qs = Warehouse.objects.for_business(business).filter(is_active=True)
+        allowed = membership.allowed_branch_ids if membership is not None else None
+        if allowed is not None:
+            warehouse_qs = warehouse_qs.filter(
+                Q(branch_id__in=allowed) | Q(branch__isnull=True)
+            )
+        self.warehouse_queryset = warehouse_qs
         if "warehouse" in self.fields:
-            self.fields["warehouse"].queryset = Warehouse.objects.for_business(
-                business
-            ).filter(is_active=True)
+            self.fields["warehouse"].queryset = warehouse_qs
 
 
 class TransferForm(WarehouseScopedForm):
@@ -28,7 +35,7 @@ class TransferForm(WarehouseScopedForm):
 
     def __init__(self, business, *args, **kwargs):
         super().__init__(business, *args, **kwargs)
-        qs = Warehouse.objects.for_business(business).filter(is_active=True)
+        qs = self.warehouse_queryset
         self.fields["from_warehouse"].queryset = qs
         self.fields["to_warehouse"].queryset = qs
 
@@ -57,7 +64,13 @@ class CountForm(WarehouseScopedForm):
         attrs={"class": "form-control", "rows": 2}))
 
 
-def parse_item_rows(request, business):
+def parse_item_rows(
+    request,
+    business,
+    *,
+    allow_negative=False,
+    allow_parent_meter_repair=False,
+):
     """Parse repeated product_id[]/variant_id[]/quantity[] rows from POST.
     Returns list of dicts; raises forms.ValidationError on bad input."""
     from apps.catalog.models import ProductVariant
@@ -85,6 +98,17 @@ def parse_item_rows(request, business):
         qty = D(quantities[i] if i < len(quantities) else 0)
         if qty == 0:
             continue
+        if qty < 0 and not allow_negative:
+            raise forms.ValidationError("Transfer quantities must be greater than zero.")
+        if (
+            product.is_meter_tailoring
+            and product.has_variants
+            and variant is None
+            and not allow_parent_meter_repair
+        ):
+            raise forms.ValidationError(
+                f"Select a variant/color for {product.name}."
+            )
         rows.append({"product": product, "variant": variant, "quantity": qty})
     if not rows:
         raise forms.ValidationError("Add at least one line with a quantity.")

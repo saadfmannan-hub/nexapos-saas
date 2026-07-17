@@ -372,13 +372,14 @@ class FabricConsumptionPhase1Tests(TenantTestCase):
             ),
             {"actual_fabric_used": "3.500"},
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
 
     def test_sale_detail_and_job_card_show_fabric_values(self):
         sale = self.tailoring_sale([("adult", 1)])
         item = self.record_actual(sale.items.get(), "3.750")
         detail = self.client.get(reverse("sales:detail", args=[sale.public_id]))
-        self.assertContains(detail, "Estimated:")
+        self.assertContains(detail, "Legacy estimate:")
+        self.assertContains(detail, "Legacy workshop actual:")
         self.assertContains(detail, "3.500 m")
         self.assertContains(detail, "3.750 m")
         self.assertContains(detail, "0.250 m")
@@ -408,13 +409,13 @@ class FabricConsumptionPhase1Tests(TenantTestCase):
         self.record_actual(items[0], "3.750")
         self.record_actual(items[1], "2.000")
         data = sales_detailed(self.business_a, {})
-        self.assertIn("Estimated Fabric", data["columns"])
-        self.assertIn("Actual Fabric", data["columns"])
-        self.assertIn("Variance", data["columns"])
+        self.assertIn("Legacy Estimated Fabric", data["columns"])
+        self.assertIn("Legacy Workshop Actual", data["columns"])
+        self.assertIn("Legacy Variance", data["columns"])
         summary = dict(data["summary"])
-        self.assertEqual(summary["Estimated Total"], D("5.750"))
-        self.assertEqual(summary["Actual Total"], D("5.750"))
-        self.assertEqual(summary["Variance Total"], D("0.000"))
+        self.assertEqual(summary["Legacy Estimated Total"], D("5.750"))
+        self.assertEqual(summary["Legacy Workshop Actual Total"], D("5.750"))
+        self.assertEqual(summary["Legacy Variance Total"], D("0.000"))
 
     def test_csv_xlsx_and_pdf_exports_include_fabric_data(self):
         sale = self.tailoring_sale([("adult", 1)])
@@ -423,26 +424,28 @@ class FabricConsumptionPhase1Tests(TenantTestCase):
 
         csv_response = self.client.get(url, {"export": "csv"})
         csv_rows = list(csv.reader(StringIO(csv_response.content.decode("utf-8"))))
-        self.assertIn("Estimated Fabric", csv_rows[0])
-        self.assertIn("Actual Fabric", csv_rows[0])
-        self.assertIn("Variance", csv_rows[0])
-        self.assertIn(["Estimated Total", "3.500"], csv_rows)
-        self.assertIn(["Actual Total", "3.750"], csv_rows)
-        self.assertIn(["Variance Total", "0.250"], csv_rows)
+        self.assertIn("Legacy Estimated Fabric", csv_rows[0])
+        self.assertIn("Legacy Workshop Actual", csv_rows[0])
+        self.assertIn("Legacy Variance", csv_rows[0])
+        self.assertIn(["Legacy Estimated Total", "3.500"], csv_rows)
+        self.assertIn(["Legacy Workshop Actual Total", "3.750"], csv_rows)
+        self.assertIn(["Legacy Variance Total", "0.250"], csv_rows)
 
         xlsx_response = self.client.get(url, {"export": "xlsx"})
         workbook = load_workbook(BytesIO(xlsx_response.content), read_only=True)
         xlsx_rows = list(workbook.active.iter_rows(values_only=True))
-        self.assertIn("Estimated Fabric", xlsx_rows[0])
-        self.assertIn("Actual Fabric", xlsx_rows[0])
-        self.assertIn("Variance", xlsx_rows[0])
+        self.assertIn("Legacy Estimated Fabric", xlsx_rows[0])
+        self.assertIn("Legacy Workshop Actual", xlsx_rows[0])
+        self.assertIn("Legacy Variance", xlsx_rows[0])
 
         with patch("apps.reports.exports.render_pdf", return_value=b"%PDF fake") as render_pdf:
             pdf_response = self.client.get(url, {"export": "pdf"})
         self.assertEqual(pdf_response.status_code, 200)
         pdf_data = render_pdf.call_args.args[1]["data"]
-        self.assertIn("Estimated Fabric", pdf_data["columns"])
-        self.assertEqual(dict(pdf_data["summary"])["Variance Total"], D("0.250"))
+        self.assertIn("Legacy Estimated Fabric", pdf_data["columns"])
+        self.assertEqual(
+            dict(pdf_data["summary"])["Legacy Variance Total"], D("0.250")
+        )
 
     def test_api_exposes_read_only_fabric_snapshots(self):
         sale = self.tailoring_sale([("child", 1)])

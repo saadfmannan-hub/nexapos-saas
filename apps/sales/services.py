@@ -7,11 +7,12 @@ movements, customer balance changes and an invoice number.
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
+from apps.catalog.models import ProductVariant
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
@@ -30,6 +31,8 @@ from .models import (
 )
 
 ZERO = Decimal("0")
+ONE = Decimal("1")
+MAX_POS_FABRIC_METER = Decimal("1000.000")
 TAILORING_FIELDS = {
     "design_type",
     "daraz_details",
@@ -223,6 +226,54 @@ def _clean_actual_fabric(value):
     return amount
 
 
+def _clean_fabric_meter(value, *, field_prefix):
+    """Validate the immutable POS meter quantity without silent rounding."""
+    field = f"{field_prefix}.fabric_meter_used"
+    if value is None or str(value).strip() == "":
+        message = "Enter Meter for every tailoring garment."
+        raise SaleError(message, errors={field: message})
+    try:
+        amount = Decimal(str(value).strip())
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        message = "Enter a valid Meter amount."
+        raise SaleError(message, errors={field: message}) from exc
+    if not amount.is_finite():
+        message = "Enter a valid Meter amount."
+        raise SaleError(message, errors={field: message})
+    if amount <= 0:
+        message = "Meter must be greater than zero."
+        raise SaleError(message, errors={field: message})
+    if amount > MAX_POS_FABRIC_METER:
+        message = "Meter cannot exceed 1000.000."
+        raise SaleError(message, errors={field: message})
+    if amount.as_tuple().exponent < -3:
+        message = "Meter can have at most 3 decimal places."
+        raise SaleError(message, errors={field: message})
+    return qty(amount)
+
+
+def _clean_checkout_token(value):
+    if value is None:
+        return None
+    token = str(value).strip()
+    if not token:
+        return None
+    if len(token) > 64:
+        raise SaleError("Invalid checkout token.")
+    return token
+
+
+def _validate_checkout_replay(existing, *, cashier, branch, customer):
+    """Prevent a token from being reused for a different sale context."""
+    if (
+        existing.cashier_id != cashier.id
+        or existing.branch_id != branch.id
+        or existing.customer_id != customer.id
+    ):
+        raise SaleError("Invalid checkout token.")
+    return existing
+
+
 def _validate_sale_context(
     *, business, branch, warehouse, cashier, customer, membership, register, shift
 ):
@@ -230,6 +281,8 @@ def _validate_sale_context(
         raise SaleError("Invalid branch.")
     if warehouse.business_id != business.id or not warehouse.is_active:
         raise SaleError("Invalid warehouse.")
+    if warehouse.branch_id not in (None, branch.id):
+        raise SaleError("Warehouse does not belong to this branch.")
     if customer.business_id != business.id or not customer.is_active:
         raise SaleError("Invalid customer.")
     if membership is not None:
@@ -281,6 +334,7 @@ def complete_sale(
     salesperson=None,
     delivery_date=None,
     priority=Sale.Priority.NORMAL,
+    checkout_token=None,
     request=None,
 ):
     """Finalize a sale.
@@ -288,9 +342,7 @@ def complete_sale(
     items:    [{product, variant, quantity, unit_price, discount_amount}]
     payments: [{method (PaymentMethod), amount, reference}]
     """
-    subscriptions.require_operational(business)
-    subscriptions.check_limit(business, "monthly_invoices")
-
+    checkout_token = _clean_checkout_token(checkout_token)
     _validate_sale_context(
         business=business,
         branch=branch,
@@ -302,8 +354,49 @@ def complete_sale(
         shift=shift,
     )
 
+    if checkout_token is not None:
+        existing = (
+            Sale.objects.for_business(business)
+            .filter(checkout_token=checkout_token)
+            .first()
+        )
+        if existing is not None:
+            return _validate_checkout_replay(
+                existing,
+                cashier=cashier,
+                branch=branch,
+                customer=customer,
+            )
+
+    subscriptions.require_operational(business)
+    subscriptions.check_limit(business, "monthly_invoices")
+
     if not items:
         raise SaleError("Cannot complete a sale with no items.")
+
+    # Lock every product in a stable order before evaluating its Meter shape.
+    # Product edits use the same row lock, so a checkout cannot race a unit or
+    # Standard/Variant transition and write stock using stale semantics.
+    product_model = items[0]["product"].__class__
+    product_ids = sorted({line["product"].pk for line in items})
+    locked_products = {
+        product.pk: product
+        for product in product_model.objects.select_for_update()
+        .select_related("unit")
+        .filter(pk__in=product_ids, business=business)
+        .order_by("pk")
+    }
+    variant_ids = sorted({
+        line["variant"].pk
+        for line in items
+        if line.get("variant") is not None and line["variant"].pk is not None
+    })
+    locked_variants = {
+        variant.pk: variant
+        for variant in ProductVariant.objects.select_for_update()
+        .filter(pk__in=variant_ids, business=business)
+        .order_by("pk")
+    }
 
     priority = str(priority or Sale.Priority.NORMAL).strip().lower()
     if priority not in dict(Sale.Priority.choices):
@@ -317,35 +410,52 @@ def complete_sale(
     normalized_items = []
     has_tailoring_items = False
     for index, line in enumerate(items):
-        product, variant = line["product"], line.get("variant")
+        product = locked_products.get(line["product"].pk)
+        supplied_variant = line.get("variant")
+        variant = (
+            locked_variants.get(supplied_variant.pk)
+            if supplied_variant is not None and supplied_variant.pk is not None
+            else None
+        )
+        if product is None:
+            raise SaleError("Invalid product in cart.")
         if (
             product.business_id != business.id
             or not product.is_active
             or product.is_archived
         ):
             raise SaleError("Invalid product in cart.")
-        if variant is not None and (
-            variant.business_id != business.id
+        if supplied_variant is not None and (
+            variant is None
+            or variant.business_id != business.id
             or variant.product_id != product.id
             or not variant.is_active
         ):
             raise SaleError("Invalid variant in cart.")
+        is_meter_tailoring = bool(
+            product.is_tailoring_item
+            and product.unit_id is not None
+            and product.unit.is_meter
+        )
         qty = D(line["quantity"])
         if qty <= 0:
             raise SaleError("Quantity must be positive.")
-        unit_price = money(line.get("unit_price", _resolve_price(product, variant)))
+        default_price = ZERO if is_meter_tailoring else _resolve_price(product, variant)
+        unit_price = money(line.get("unit_price", default_price))
         if unit_price < 0:
             raise SaleError("Price cannot be negative.")
         min_price = product.minimum_sale_price or ZERO
-        if min_price > 0 and unit_price < min_price:
+        if not is_meter_tailoring and min_price > 0 and unit_price < min_price:
             if not (membership and membership.has_perm("sales.price_override")):
                 raise SaleError(
                     f"Price for {product.name} is below the minimum sale price."
                 )
         discount = money(line.get("discount_amount", ZERO))
-        if discount > 0 and not product.allow_discount:
+        if discount > 0 and (is_meter_tailoring or not product.allow_discount):
             raise SaleError(f"Discounts are not allowed on {product.name}.")
         field_prefix = f"items.{index}"
+        if product.unit_id is not None and product.unit.business_id != business.id:
+            raise SaleError("Invalid product unit in cart.")
         tailoring_details = _clean_tailoring_details(
             line.get("tailoring_details", {}),
             field_prefix=f"{field_prefix}.tailoring_details",
@@ -356,7 +466,48 @@ def complete_sale(
         raw_collection_type = line.get("collection_type")
         collection_type = str(raw_collection_type or "").strip().lower()
         estimated_fabric = None
-        if product.is_tailoring_item:
+        fabric_meter_used = None
+        meter_key_present = "fabric_meter_used" in line
+        is_legacy_tailoring = bool(
+            product.is_tailoring_item
+            and product.unit_id is None
+            and not meter_key_present
+        )
+
+        if is_meter_tailoring:
+            has_tailoring_items = True
+            if not product.is_stocked:
+                message = f"{product.name} must track inventory before it can be sold."
+                raise SaleError(message, errors={field_prefix: message})
+            if product.has_variants and variant is None:
+                message = f"Select a fabric color for {product.name}."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.variant_id": message},
+                )
+            if qty != ONE:
+                message = "Quantity must be 1 for meter tailoring garments."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.quantity": message},
+                )
+            fabric_meter_used = _clean_fabric_meter(
+                line.get("fabric_meter_used"),
+                field_prefix=field_prefix,
+            )
+            if classification not in dict(SaleItem.GarmentClassification.choices):
+                message = "Select Adult or Child for every garment."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.garment_classification": message},
+                )
+            if collection_type not in dict(SaleItem.CollectionType.choices):
+                message = "Select Normal or Premium for every garment."
+                raise SaleError(
+                    message,
+                    errors={f"{field_prefix}.collection_type": message},
+                )
+        elif is_legacy_tailoring:
             has_tailoring_items = True
             if classification not in dict(SaleItem.GarmentClassification.choices):
                 message = "Select Adult or Child for every garment."
@@ -365,8 +516,6 @@ def complete_sale(
                     errors={f"{field_prefix}.garment_classification": message},
                 )
             # Calls made before collection types existed omitted the key entirely.
-            # Keep those integrations compatible while requiring new POS payloads,
-            # which always include the key, to make an explicit valid selection.
             if raw_collection_type is None:
                 collection_type = SaleItem.CollectionType.NORMAL
             if collection_type not in dict(SaleItem.CollectionType.choices):
@@ -381,6 +530,12 @@ def complete_sale(
                 qty,
                 field_prefix=field_prefix,
             )
+        elif product.is_tailoring_item and product.unit_id is None and meter_key_present:
+            message = f"Select the Meter unit for {product.name} before entering Meter."
+            raise SaleError(
+                message,
+                errors={f"{field_prefix}.fabric_meter_used": message},
+            )
         elif classification or collection_type or tailoring_details:
             message = f"{product.name} is not configured as a tailoring garment."
             raise SaleError(message, errors={field_prefix: message})
@@ -393,6 +548,7 @@ def complete_sale(
             "garment_classification": classification,
             "collection_type": collection_type,
             "estimated_fabric": estimated_fabric,
+            "fabric_meter_used": fabric_meter_used,
             "tailoring_details": tailoring_details,
         })
 
@@ -479,36 +635,62 @@ def complete_sale(
         raise SaleError("An open shift is required before selling.")
 
     # ---- create records ---------------------------------------------------
-    sale = Sale.objects.create(
-        business=business,
-        branch=branch,
-        warehouse=warehouse,
-        register=register,
-        shift=shift,
-        cashier=cashier,
-        salesperson=salesperson,
-        customer=customer,
-        invoice_number=next_invoice_number(business, branch),
-        status=Sale.Status.COMPLETED,
-        priority=priority,
-        sale_date=timezone.now(),
-        subtotal=totals["subtotal"],
-        discount_amount=total_discount,
-        tax_amount=totals["tax_total"],
-        rounding=totals["rounding"],
-        total=precision_total,
-        amount_paid=money(pay_total - change_due - credit_amount),
-        change_due=change_due,
-        notes=notes,
-        delivery_date=delivery_date,
-        delivery_status=(Sale.DeliveryStatus.PENDING if delivery_date else ""),
-    )
+    try:
+        # Keep invoice-sequence mutation and the token-unique insert in one
+        # savepoint. A concurrent replay rolls both back before we return the
+        # already committed sale.
+        with transaction.atomic():
+            sale = Sale.objects.create(
+                business=business,
+                branch=branch,
+                warehouse=warehouse,
+                register=register,
+                shift=shift,
+                cashier=cashier,
+                salesperson=salesperson,
+                customer=customer,
+                invoice_number=next_invoice_number(business, branch),
+                checkout_token=checkout_token,
+                status=Sale.Status.COMPLETED,
+                priority=priority,
+                sale_date=timezone.now(),
+                subtotal=totals["subtotal"],
+                discount_amount=total_discount,
+                tax_amount=totals["tax_total"],
+                rounding=totals["rounding"],
+                total=precision_total,
+                amount_paid=money(pay_total - change_due - credit_amount),
+                change_due=change_due,
+                notes=notes,
+                delivery_date=delivery_date,
+                delivery_status=(Sale.DeliveryStatus.PENDING if delivery_date else ""),
+            )
+    except IntegrityError:
+        if checkout_token is not None:
+            existing = (
+                Sale.objects.for_business(business)
+                .filter(checkout_token=checkout_token)
+                .first()
+            )
+            if existing is not None:
+                return _validate_checkout_replay(
+                    existing,
+                    cashier=cashier,
+                    branch=branch,
+                    customer=customer,
+                )
+        raise
 
     total_cost = ZERO
     for line, parts in totals["lines"]:
         product, variant = line["product"], line.get("variant")
         unit_cost = money(_resolve_cost(product, variant))
-        line_cost = money(unit_cost * parts["quantity"])
+        inventory_quantity = (
+            line["fabric_meter_used"]
+            if line.get("fabric_meter_used") is not None
+            else parts["quantity"]
+        )
+        line_cost = money(unit_cost * inventory_quantity)
         total_cost += line_cost
         SaleItem.objects.create(
             business=business,
@@ -528,6 +710,7 @@ def complete_sale(
             garment_classification=line.get("garment_classification", ""),
             collection_type=line.get("collection_type", ""),
             estimated_fabric=line.get("estimated_fabric"),
+            fabric_meter_used=line.get("fabric_meter_used"),
             tailoring_details=line.get("tailoring_details", {}),
         )
         if product.is_stocked:
@@ -537,7 +720,7 @@ def complete_sale(
                 product=product,
                 variant=variant,
                 movement_type="sale",
-                quantity=-parts["quantity"],
+                quantity=-inventory_quantity,
                 unit_cost=unit_cost,
                 reference_type="Sale",
                 reference_id=sale.invoice_number,
@@ -702,6 +885,11 @@ def update_actual_fabric(
         raise PermissionDenied
     if not item.is_tailoring_line:
         raise SaleError("Actual fabric can only be recorded for tailoring items.")
+    if item.fabric_meter_used is not None:
+        raise SaleError(
+            "Meter was recorded at POS for this garment and cannot be replaced "
+            "by workshop actual fabric."
+        )
 
     amount = _clean_actual_fabric(actual_fabric_used)
     old = item.actual_fabric_used
@@ -726,21 +914,33 @@ def update_actual_fabric(
 
 @transaction.atomic
 def void_sale(*, sale, user, reason, request=None):
+    sale = (
+        Sale.objects.select_for_update()
+        .select_related("business", "customer", "warehouse")
+        .get(pk=sale.pk, business_id=sale.business_id)
+    )
     if sale.status in (Sale.Status.VOIDED,):
         raise SaleError("Sale is already voided.")
     if sale.returns.exists():
         raise SaleError("A sale with returns cannot be voided.")
 
     # Restore stock
-    for item in sale.items.select_related("product", "variant"):
-        if item.product.is_stocked:
+    items = list(
+        SaleItem.objects.select_for_update()
+        .filter(sale=sale, business=sale.business)
+        .select_related("product", "variant")
+        .order_by("pk")
+    )
+    for item in items:
+        deducted_meter = item.fabric_meter_used is not None
+        if deducted_meter or item.product.is_stocked:
             inventory.record_movement(
                 business=sale.business,
                 warehouse=sale.warehouse,
                 product=item.product,
                 variant=item.variant,
                 movement_type="sale_return",
-                quantity=item.quantity,
+                quantity=item.inventory_quantity,
                 unit_cost=item.unit_cost,
                 reference_type="Void",
                 reference_id=sale.invoice_number,
@@ -783,12 +983,51 @@ def process_return(
     """items: [{sale_item, quantity, restock(optional)}]"""
     from apps.customers.models import Customer
 
-    if sale.status == Sale.Status.VOIDED:
-        raise SaleError("Cannot return items from a voided sale.")
+    items = list(items)
     if not items:
         raise SaleError("Select at least one item to return.")
 
+    # Lock Sale first, then SaleItems. Void follows the same lock order so a
+    # return and a void cannot both restore the same inventory.
+    sale = (
+        Sale.objects.select_for_update()
+        .select_related("business", "customer", "branch", "warehouse")
+        .get(pk=sale.pk, business_id=sale.business_id)
+    )
+    if sale.status == Sale.Status.VOIDED:
+        raise SaleError("Cannot return items from a voided sale.")
+
+    if shift is not None and (
+        shift.business_id != sale.business_id
+        or shift.cashier_id != user.id
+        or shift.branch_id != sale.branch_id
+        or shift.status != "open"
+    ):
+        raise SaleError("Invalid open shift for this return.")
+
     business = sale.business
+    requested_ids = []
+    for entry in items:
+        sale_item = entry.get("sale_item") if isinstance(entry, dict) else None
+        if sale_item is None or sale_item.pk is None:
+            raise SaleError("Invalid return item.")
+        requested_ids.append(sale_item.pk)
+    locked_items = {
+        item.pk: item
+        for item in (
+            SaleItem.objects.select_for_update()
+            .filter(
+                business=business,
+                sale=sale,
+                pk__in=requested_ids,
+            )
+            .select_related("product", "variant")
+            .order_by("pk")
+        )
+    }
+    if len(locked_items) != len(set(requested_ids)):
+        raise SaleError("Return item does not belong to this sale.")
+
     settings_obj = business.settings
     if settings_obj.return_window_days:
         deadline = sale.sale_date + timezone.timedelta(
@@ -819,9 +1058,7 @@ def process_return(
 
     refund_total = ZERO
     for entry in items:
-        item = entry["sale_item"]
-        if item.sale_id != sale.id:
-            raise SaleError("Return item does not belong to this sale.")
+        item = locked_items[entry["sale_item"].pk]
         qty = D(entry["quantity"])
         if qty <= 0:
             continue
@@ -834,6 +1071,15 @@ def process_return(
         per_unit = money(item.line_total / item.quantity) if item.quantity else ZERO
         line_refund = money(per_unit * qty)
         do_restock = restock and entry.get("restock", True)
+        if item.fabric_meter_used is not None:
+            if qty != item.quantity:
+                raise SaleError(
+                    "A meter tailoring garment must be fully returned to "
+                    "process its refund safely."
+                )
+        if item.fabric_meter_used is not None and do_restock:
+            if item.return_items.filter(restocked=True).exists():
+                raise SaleError("Fabric stock has already been restored for this garment.")
         SaleReturnItem.objects.create(
             business=business,
             sale_return=sale_return,
@@ -846,14 +1092,16 @@ def process_return(
         item.returned_quantity += qty
         item.save(update_fields=["returned_quantity"])
         refund_total += line_refund
-        if do_restock and item.product.is_stocked:
+        deducted_meter = item.fabric_meter_used is not None
+        if do_restock and (deducted_meter or item.product.is_stocked):
+            restore_quantity = item.fabric_meter_used if deducted_meter else qty
             inventory.record_movement(
                 business=business,
                 warehouse=sale.warehouse,
                 product=item.product,
                 variant=item.variant,
                 movement_type="sale_return",
-                quantity=qty,
+                quantity=restore_quantity,
                 unit_cost=item.unit_cost,
                 reference_type="SaleReturn",
                 reference_id=sale_return.return_number,

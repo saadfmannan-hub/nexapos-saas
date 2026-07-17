@@ -19,7 +19,15 @@
         </div>
         <div class="row">
           <div class="col-6">{% include "components/form_field.html" with field=form.purchase_price %}</div>
+          {% if not product.is_meter_tailoring or not product.unit_id %}
           <div class="col-6">{% include "components/form_field.html" with field=form.sale_price %}</div>
+          {% else %}
+          <div class="col-6 d-flex align-items-end">
+            <div class="alert alert-info py-2 small mb-3 w-100">
+              The garment charge is entered at POS; this color stores purchase cost only.
+            </div>
+          </div>
+          {% endif %}
         </div>
         {% include "components/form_field.html" with field=form.image %}
         <div class="form-check mb-3">{{ form.is_active }}

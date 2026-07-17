@@ -31,8 +31,8 @@
         <td>{{ m.product.name }}{% if m.variant %} <span class="small text-secondary">({{ m.variant.name }})</span>{% endif %}</td>
         <td><span class="badge text-bg-light border">{{ m.get_movement_type_display }}</span></td>
         <td class="small">{{ m.warehouse.name }}</td>
-        <td class="text-end {% if m.quantity < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.quantity }}</td>
-        <td class="text-end">{{ m.balance_after }}</td>
+        <td class="text-end {% if m.quantity < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.quantity }} {{ m.product.unit.abbreviation|default:"" }}</td>
+        <td class="text-end">{{ m.balance_after }} {{ m.product.unit.abbreviation|default:"" }}</td>
         <td class="small">{{ m.reference_type }} {{ m.reference_id }}</td>
         <td class="small">{{ m.user.full_name|default:"—" }}</td>
       </tr>

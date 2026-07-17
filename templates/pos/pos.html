@@ -52,7 +52,7 @@
               <template x-if="p.image"><img :src="p.image" style="width:100%;height:64px;object-fit:contain" class="mb-1"></template>
               <div class="pp-name" x-text="p.name"></div>
               <div class="pp-price"><span x-text="fmt(p.price)"></span> {{ currency }}</div>
-              <div class="pp-stock" x-show="p.stocked && p.stock !== null">Stock: <span x-text="p.stock"></span></div>
+              <div class="pp-stock" x-show="p.stocked && p.stock !== null">Stock: <span x-text="p.stock"></span> <span x-text="p.unit"></span></div>
             </div>
           </template>
         </div>
@@ -129,24 +129,36 @@
               <div class="fw-semibold small" x-text="line.name"></div>
               <div class="d-flex gap-2">
                 <button class="btn btn-sm p-0 text-secondary" title="Add separate garment"
-                        x-show="line.is_tailoring_item" @click="duplicateLine(i)"
+                        x-show="line.is_tailoring_workflow" @click="duplicateLine(i)"
                         aria-label="Add separate garment"><i class="bi bi-files"></i></button>
                 <button class="btn btn-sm p-0 text-danger" @click="removeLine(i)"
                         aria-label="Remove item"><i class="bi bi-x-lg"></i></button>
               </div>
             </div>
             <div class="d-flex gap-2 align-items-center mt-1 pos-line-pricing">
-              <div class="input-group input-group-sm" style="width: 110px">
+              <div class="input-group input-group-sm" style="width: 110px"
+                   x-show="!line.is_meter_tailoring">
                 <button class="btn btn-outline-secondary" @click="line.quantity = Math.max(1, +line.quantity - 1)">−</button>
                 <input type="number" step="any" min="0.001" class="form-control text-center" x-model="line.quantity">
                 <button class="btn btn-outline-secondary" @click="line.quantity = +line.quantity + 1">+</button>
               </div>
+              <div class="badge text-bg-light border text-dark py-2"
+                   x-show="line.is_meter_tailoring" x-cloak>Qty <strong>1</strong></div>
               <div class="input-group input-group-sm" style="width: 110px" title="Unit price">
                 <span class="input-group-text">@</span>
                 <input type="number" step="any" class="form-control" x-model="line.unit_price"
-                       {% if not can_override_price %}readonly{% endif %}>
+                       {% if not can_override_price %}:readonly="!line.is_meter_tailoring"{% endif %}>
               </div>
-              <div class="pos-collection-selector" x-show="line.is_tailoring_item" x-cloak>
+              <div class="input-group input-group-sm pos-meter-control" style="width: 132px"
+                   x-show="line.is_meter_tailoring" x-cloak>
+                <span class="input-group-text">Meter</span>
+                <input type="number" step="0.001" min="0.001" max="1000"
+                       class="form-control" x-model="line.fabric_meter_used"
+                       @input="line.meter_error = ''" :aria-describedby="'meter-error-' + i"
+                       aria-label="Fabric meter used">
+                <span class="input-group-text">M</span>
+              </div>
+              <div class="pos-collection-selector" x-show="line.is_tailoring_workflow" x-cloak>
                 <span class="visually-hidden" :id="'collection-type-label-' + i">Collection</span>
                 <div class="btn-group btn-group-sm collection-type" role="radiogroup"
                      :aria-labelledby="'collection-type-label-' + i">
@@ -164,7 +176,9 @@
             </div>
             <div class="text-danger small mt-1 pos-validation-message" role="alert"
                  x-show="line.collection_error" x-text="line.collection_error"></div>
-            <div class="mt-2" x-show="line.is_tailoring_item" x-cloak>
+            <div class="text-danger small mt-1 pos-validation-message" role="alert"
+                 :id="'meter-error-' + i" x-show="line.meter_error" x-text="line.meter_error"></div>
+            <div class="mt-2" x-show="line.is_tailoring_workflow" x-cloak>
               <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
                 <label class="form-label small mb-0 required-star"
                        :id="'garment-classification-label-' + i">Garment</label>
@@ -376,7 +390,8 @@
         <template x-for="h in heldSales" :key="h.id">
           <div class="d-flex justify-content-between align-items-center border rounded p-2 mb-2">
             <div><strong x-text="h.label"></strong>
-              <span class="small text-secondary" x-text="h.items + ' items · ' + h.created"></span></div>
+              <span class="small text-secondary"
+                    x-text="h.items + ' items · ' + h.created + (h.branch ? ' · ' + h.branch : '')"></span></div>
             <div class="d-flex gap-1">
               <button class="btn btn-sm btn-primary" data-bs-dismiss="modal" @click="resumeHeld(h)">Resume</button>
               <button class="btn btn-sm btn-outline-danger" @click="deleteHeld(h)"><i class="bi bi-trash"></i></button>
@@ -404,9 +419,17 @@ function pos() {
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
     recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
     payments: [], lastSale: {}, heldSales: [], heldCount: {{ held_sales|length }},
-    resumedHeldId: null,
+    resumedHeldId: null, checkoutToken: '',
 
-    init() { this.loadProducts(); this.$refs.barcode.focus(); },
+    init() {
+      this.checkoutToken = this.newCheckoutToken();
+      this.loadProducts();
+      this.$refs.barcode.focus();
+    },
+    newCheckoutToken() {
+      if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+      return 'pos-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+    },
     roundTo(v, scale) {
       return Math.round(((Number(v) || 0) + Number.EPSILON) * scale) / scale;
     },
@@ -425,7 +448,7 @@ function pos() {
       return this.totals.invoiceDiscount > 0 ? '-' + this.fmt(this.totals.invoiceDiscount) : this.fmt(0);
     },
     get requiresDelivery() {
-      return this.cart.some(line => !!line.is_tailoring_item);
+      return this.cart.some(line => !!line.is_tailoring_workflow);
     },
 
     async loadProducts() {
@@ -452,8 +475,12 @@ function pos() {
                            quantity: 1, unit_price: p.price, discount_amount: 0,
                            tax_rate: p.tax_rate, allow_discount: p.allow_discount,
                            is_tailoring_item: !!p.is_tailoring_item,
+                           is_meter_tailoring: !!p.is_meter_tailoring,
+                           is_legacy_tailoring: !!p.is_legacy_tailoring,
+                           is_tailoring_workflow: !!(p.is_meter_tailoring || p.is_legacy_tailoring),
+                           fabric_meter_used: '', meter_error: '',
                            garment_classification: '',
-                           collection_type: p.is_tailoring_item ? 'normal' : '',
+                           collection_type: (p.is_meter_tailoring || p.is_legacy_tailoring) ? 'normal' : '',
                            validation_error: '', collection_error: '',
                            expanded: false, tailoring_details: this.blankTailoringDetails()});
       this.$refs.barcode.focus();
@@ -461,9 +488,13 @@ function pos() {
     canMerge(line, product) {
       if (line.product_id !== product.product_id || line.variant_id !== product.variant_id
           || +line.unit_price !== +product.price
-          || !!line.is_tailoring_item !== !!product.is_tailoring_item) return false;
-      if (!product.is_tailoring_item) return true;
-      return !line.garment_classification && !this.hasTailoringDetails(line);
+          || !!line.is_meter_tailoring !== !!product.is_meter_tailoring
+          || !!line.is_legacy_tailoring !== !!product.is_legacy_tailoring) return false;
+      if (product.is_meter_tailoring) return false;
+      if (product.is_legacy_tailoring) {
+        return !line.garment_classification && !this.hasTailoringDetails(line);
+      }
+      return true;
     },
     blankTailoringDetails() {
       return {
@@ -479,6 +510,8 @@ function pos() {
       this.cart.splice(index + 1, 0, {
         ...source,
         quantity: 1,
+        fabric_meter_used: '',
+        meter_error: '',
         garment_classification: '',
         collection_type: 'normal',
         validation_error: '',
@@ -495,11 +528,22 @@ function pos() {
       this.cart.forEach((line, index) => {
         line.validation_error = '';
         line.collection_error = '';
-        if (line.is_tailoring_item && !['normal', 'premium'].includes(line.collection_type)) {
+        line.meter_error = '';
+        if (line.is_meter_tailoring) {
+          line.quantity = 1;
+          const rawMeter = String(line.fabric_meter_used ?? '').trim();
+          const meter = Number(rawMeter);
+          const decimals = rawMeter.includes('.') ? rawMeter.split('.')[1].length : 0;
+          if (!rawMeter || !Number.isFinite(meter) || meter <= 0 || meter > 1000 || decimals > 3) {
+            line.meter_error = 'Enter Meter greater than 0, using up to 3 decimals.';
+            if (firstInvalid < 0) firstInvalid = index;
+          }
+        }
+        if (line.is_tailoring_workflow && !['normal', 'premium'].includes(line.collection_type)) {
           line.collection_error = 'Select Normal or Premium for this garment.';
           if (firstInvalid < 0) firstInvalid = index;
         }
-        if (line.is_tailoring_item && !['adult', 'child'].includes(line.garment_classification)) {
+        if (line.is_tailoring_workflow && !['adult', 'child'].includes(line.garment_classification)) {
           line.validation_error = 'Select Adult or Child for this garment.';
           if (firstInvalid < 0) firstInvalid = index;
         }
@@ -527,9 +571,12 @@ function pos() {
         quantity: line.quantity,
         unit_price: line.unit_price,
         discount_amount: 0,
-        garment_classification: line.garment_classification || '',
-        collection_type: line.is_tailoring_item ? (line.collection_type || '') : '',
-        tailoring_details: {...this.blankTailoringDetails(), ...(line.tailoring_details || {})},
+        ...(line.is_meter_tailoring ? {fabric_meter_used: line.fabric_meter_used} : {}),
+        garment_classification: line.is_tailoring_workflow ? (line.garment_classification || '') : '',
+        collection_type: line.is_tailoring_workflow ? (line.collection_type || '') : '',
+        tailoring_details: line.is_tailoring_workflow
+          ? {...this.blankTailoringDetails(), ...(line.tailoring_details || {})}
+          : {},
       }));
     },
     lineParts(l, invoiceShare = 0) {
@@ -672,6 +719,7 @@ function pos() {
             delivery_date: this.deliveryDate || null,
             priority: this.priority,
             held_id: this.resumedHeldId,
+            checkout_token: this.checkoutToken,
           }),
         });
         const data = await r.json();
@@ -698,7 +746,13 @@ function pos() {
         if (!match) return;
         const index = Number(match[1]);
         if (!this.cart[index]) return;
-        this.cart[index].validation_error = message;
+        if (field.endsWith('.fabric_meter_used')) {
+          this.cart[index].meter_error = message;
+        } else if (field.endsWith('.collection_type')) {
+          this.cart[index].collection_error = message;
+        } else {
+          this.cart[index].validation_error = message;
+        }
         if (firstInvalid < 0) firstInvalid = index;
       });
       if (firstInvalid >= 0) this.$nextTick(() => this.focusInvalidLine(firstInvalid));
@@ -707,6 +761,7 @@ function pos() {
     newSale() {
       this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
       this.priority = 'normal'; this.deliveryDate = ''; this.resumedHeldId = null;
+      this.checkoutToken = this.newCheckoutToken();
       this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []};
       this.$refs.barcode.focus();
     },
@@ -724,7 +779,8 @@ function pos() {
         body: JSON.stringify({branch_id: {{ branch.id }}, label,
           cart: {items: this.cart, customer: this.customer,
                  invoice_discount: this.invoiceDiscount, notes: this.notes,
-                 priority: this.priority}}),
+                 priority: this.priority, delivery_date: this.deliveryDate,
+                 checkout_token: this.checkoutToken}}),
       });
       const data = await r.json();
       if (data.ok) { this.heldCount++; this.newSale(); } else alert(data.error);
@@ -735,6 +791,10 @@ function pos() {
       this.heldCount = this.heldSales.length;
     },
     resumeHeld(h) {
+      if (h.branch_id && h.branch_id !== {{ branch.id }}) {
+        alert('Resume this held sale from ' + (h.branch || 'its original branch') + '.');
+        return;
+      }
       this.cart = h.cart.items || [];
       const legacyPriorities = this.cart.map(line =>
         String(line.tailoring_details?.priority || '').toLowerCase());
@@ -745,11 +805,23 @@ function pos() {
         const product = this.products.find(p =>
           p.product_id === line.product_id && p.variant_id === (line.variant_id || null));
         line.is_tailoring_item = line.is_tailoring_item ?? !!product?.is_tailoring_item;
+        line.is_meter_tailoring = line.is_meter_tailoring
+          ?? product?.is_meter_tailoring
+          ?? false;
+        line.is_legacy_tailoring = line.is_legacy_tailoring
+          ?? product?.is_legacy_tailoring
+          ?? (!!line.is_tailoring_item && !line.is_meter_tailoring);
+        line.is_tailoring_workflow = !!(
+          line.is_meter_tailoring || line.is_legacy_tailoring
+        );
+        line.quantity = line.is_meter_tailoring ? 1 : line.quantity;
+        line.fabric_meter_used = line.fabric_meter_used ?? '';
+        line.meter_error = '';
         line.discount_amount = 0;
         line.garment_classification = String(line.garment_classification || '').toLowerCase();
         const collectionType = String(line.collection_type || '').toLowerCase();
-        line.collection_type = line.is_tailoring_item && ['normal', 'premium'].includes(collectionType)
-          ? collectionType : (line.is_tailoring_item ? 'normal' : '');
+        line.collection_type = line.is_tailoring_workflow && ['normal', 'premium'].includes(collectionType)
+          ? collectionType : (line.is_tailoring_workflow ? 'normal' : '');
         line.validation_error = '';
         line.collection_error = '';
         line.expanded = !!line.expanded;
@@ -758,10 +830,17 @@ function pos() {
           line.tailoring_details.design_type = 'VIP 3D Design';
         }
         delete line.tailoring_details.priority;
+        if (!line.is_tailoring_workflow) {
+          line.garment_classification = '';
+          line.collection_type = '';
+          line.tailoring_details = this.blankTailoringDetails();
+        }
       });
       if (h.cart.customer) this.customer = h.cart.customer;
       this.invoiceDiscount = h.cart.invoice_discount || 0;
       this.notes = h.cart.notes || '';
+      this.deliveryDate = h.cart.delivery_date || '';
+      this.checkoutToken = h.cart.checkout_token || this.newCheckoutToken();
       this.resumedHeldId = h.id;
     },
     async deleteHeld(h) {

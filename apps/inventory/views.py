@@ -30,10 +30,62 @@ def _qs_without_page(request):
     return f"{encoded}&" if encoded else ""
 
 
+def _warehouse_scoped(request, queryset, *, field="warehouse"):
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return queryset
+    return queryset.filter(
+        Q(**{f"{field}__branch_id__in": allowed})
+        | Q(**{f"{field}__branch__isnull": True})
+    )
+
+
+def _allowed_warehouse_ids(request):
+    """Return None for tenant-wide access, otherwise allowed + central IDs."""
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return None
+    from apps.branches.models import Warehouse
+
+    return list(
+        Warehouse.objects.for_business(request.business)
+        .filter(Q(branch_id__in=allowed) | Q(branch__isnull=True))
+        .values_list("id", flat=True)
+    )
+
+
+def _warehouse_queryset(request):
+    from apps.branches.models import Warehouse
+
+    qs = Warehouse.objects.for_business(request.business).filter(is_active=True)
+    allowed_ids = _allowed_warehouse_ids(request)
+    if allowed_ids is not None:
+        qs = qs.filter(id__in=allowed_ids)
+    return qs
+
+
+def _transfer_scoped(request, queryset):
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return queryset
+    from_allowed = (
+        Q(from_warehouse__branch_id__in=allowed)
+        | Q(from_warehouse__branch__isnull=True)
+    )
+    to_allowed = (
+        Q(to_warehouse__branch_id__in=allowed)
+        | Q(to_warehouse__branch__isnull=True)
+    )
+    return queryset.filter(from_allowed & to_allowed)
+
+
 @require_permission("inventory.view")
 def stock_list(request):
     qs = (
-        StockLevel.objects.for_business(request.business)
+        _warehouse_scoped(
+            request,
+            StockLevel.objects.for_business(request.business),
+        )
         .select_related("product", "variant", "warehouse")
         .filter(product__is_archived=False)
         .order_by("product__name")
@@ -64,10 +116,15 @@ def stock_list(request):
                 target, "purchase_price", 0)
             lvl.stock_value = money_q(lvl.quantity * lvl.unit_cost)
 
-    from apps.branches.models import Warehouse
-
-    warehouses = Warehouse.objects.for_business(request.business).filter(is_active=True)
-    total_value = services.stock_value(request.business) if show_cost else None
+    warehouses = _warehouse_queryset(request)
+    total_value = (
+        services.stock_value(
+            request.business,
+            allowed_warehouse_ids=_allowed_warehouse_ids(request),
+        )
+        if show_cost
+        else None
+    )
     return render(request, "inventory/stock_list.html", {
         "page_obj": page_obj, "q": q, "warehouses": warehouses,
         "active_nav": "inventory", "show_cost": show_cost,
@@ -85,7 +142,11 @@ def inventory_export(request):
         return int(v) if v.isdigit() else None
 
     filters = {"warehouse_id": _int("warehouse"), "branch_id": _int("branch")}
-    data = services.inventory_export_dataset(request.business, filters)
+    data = services.inventory_export_dataset(
+        request.business,
+        filters,
+        allowed_warehouse_ids=_allowed_warehouse_ids(request),
+    )
     audit.log("inventory.exported", request=request, module="inventory",
               description=f"Exported {len(data['rows'])} stock rows "
                           f"({request.GET.get('format', 'csv')}).")
@@ -143,7 +204,9 @@ def inventory_import(request):
             else:
                 summary, errors = services.import_inventory(
                     business=request.business, rows=rows, mode=mode,
-                    user=request.user)
+                    user=request.user,
+                    allowed_warehouse_ids=_allowed_warehouse_ids(request),
+                )
                 request.session["inventory_import_errors"] = errors
                 results = {"summary": summary, "errors": errors,
                            "total": len(rows)}
@@ -167,8 +230,13 @@ def inventory_import(request):
 def movement_list(request):
     qs = (
         StockMovement.objects.for_business(request.business)
-        .select_related("product", "variant", "warehouse", "user")
+        .select_related("product__unit", "variant", "warehouse", "user")
     )
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        qs = qs.filter(
+            Q(warehouse__branch_id__in=allowed) | Q(warehouse__branch__isnull=True)
+        )
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(product__name__icontains=q) | Q(reference_id__icontains=q))
@@ -208,8 +276,22 @@ def item_search(request):
         .prefetch_related("variants")[:15]
     )
     results = []
+    include_parent_meter_repair = request.GET.get("parent_meter_repair") == "1"
     for p in products:
         if p.has_variants:
+            if (
+                include_parent_meter_repair
+                and p.is_meter_tailoring
+                and p.stock_levels.filter(
+                    variant__isnull=True
+                ).exclude(quantity=0).exists()
+            ):
+                results.append({
+                    "product_id": p.id,
+                    "variant_id": None,
+                    "label": f"{p.name} — Legacy parent stock (correct to zero)",
+                    "sku": p.sku,
+                })
             for v in p.variants.filter(is_active=True):
                 results.append({"product_id": p.id, "variant_id": v.id,
                                 "label": str(v), "sku": v.sku or p.sku})
@@ -228,7 +310,10 @@ def transfer_list(request):
         return render(request, "inventory/feature_locked.html",
                       {"feature": "Stock transfers", "active_nav": "inventory"})
     qs = (
-        StockTransfer.objects.for_business(request.business)
+        _transfer_scoped(
+            request,
+            StockTransfer.objects.for_business(request.business),
+        )
         .select_related("from_warehouse", "to_warehouse", "requested_by")
         .prefetch_related("items")
     )
@@ -244,7 +329,11 @@ def transfer_create(request):
     if not subscriptions.has_feature(request.business, "transfers"):
         messages.warning(request, "Stock transfers are not included in your plan.")
         return redirect("inventory:stock_list")
-    form = TransferForm(request.business, request.POST or None)
+    form = TransferForm(
+        request.business,
+        request.POST or None,
+        membership=request.membership,
+    )
     if request.method == "POST" and form.is_valid():
         try:
             subscriptions.require_operational(request.business)
@@ -267,7 +356,11 @@ def transfer_create(request):
 
 @require_permission("inventory.transfer")
 def transfer_action(request, public_id, action):
-    transfer = get_tenant_object(StockTransfer, request.business, public_id=public_id)
+    transfer = get_tenant_object(
+        _transfer_scoped(request, StockTransfer.objects.all()),
+        request.business,
+        public_id=public_id,
+    )
     if request.method != "POST":
         return redirect("inventory:transfer_list")
     try:
@@ -292,7 +385,10 @@ def transfer_action(request, public_id, action):
 @require_permission("inventory.adjust")
 def adjustment_list(request):
     qs = (
-        StockAdjustment.objects.for_business(request.business)
+        _warehouse_scoped(
+            request,
+            StockAdjustment.objects.for_business(request.business),
+        )
         .select_related("warehouse", "created_by", "approved_by")
         .prefetch_related("items__product")
     )
@@ -305,11 +401,20 @@ def adjustment_list(request):
 
 @require_permission("inventory.adjust")
 def adjustment_create(request):
-    form = AdjustmentForm(request.business, request.POST or None)
+    form = AdjustmentForm(
+        request.business,
+        request.POST or None,
+        membership=request.membership,
+    )
     if request.method == "POST" and form.is_valid():
         try:
             subscriptions.require_operational(request.business)
-            rows = parse_item_rows(request, request.business)
+            rows = parse_item_rows(
+                request,
+                request.business,
+                allow_negative=True,
+                allow_parent_meter_repair=True,
+            )
             requires_approval = (
                 request.business.settings.adjustment_requires_approval
                 and not request.membership.has_perm("inventory.adjust_approve")
@@ -332,12 +437,20 @@ def adjustment_create(request):
                 subscriptions.SubscriptionInactive) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "inventory/adjustment_form.html",
-                  {"form": form, "active_nav": "inventory"})
+                  {
+                      "form": form,
+                      "active_nav": "inventory",
+                      "allow_parent_meter_repair": True,
+                  })
 
 
 @require_permission("inventory.adjust_approve")
 def adjustment_action(request, public_id, action):
-    adjustment = get_tenant_object(StockAdjustment, request.business, public_id=public_id)
+    adjustment = get_tenant_object(
+        _warehouse_scoped(request, StockAdjustment.objects.all()),
+        request.business,
+        public_id=public_id,
+    )
     if request.method == "POST":
         try:
             if action == "approve":
@@ -359,10 +472,17 @@ def adjustment_action(request, public_id, action):
 @require_permission("inventory.count")
 def count_list(request):
     qs = (
-        StockCount.objects.for_business(request.business)
+        _warehouse_scoped(
+            request,
+            StockCount.objects.for_business(request.business),
+        )
         .select_related("warehouse", "created_by")
     )
-    form = CountForm(request.business, request.POST or None)
+    form = CountForm(
+        request.business,
+        request.POST or None,
+        membership=request.membership,
+    )
     if request.method == "POST" and form.is_valid():
         try:
             subscriptions.require_operational(request.business)
@@ -385,7 +505,11 @@ def count_list(request):
 
 @require_permission("inventory.count")
 def count_detail(request, public_id):
-    count = get_tenant_object(StockCount, request.business, public_id=public_id)
+    count = get_tenant_object(
+        _warehouse_scoped(request, StockCount.objects.all()),
+        request.business,
+        public_id=public_id,
+    )
     items = count.items.select_related("product", "variant").order_by("product__name")
     if request.method == "POST" and count.status in ("open", "review"):
         action = request.POST.get("action", "save")

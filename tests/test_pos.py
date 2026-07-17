@@ -179,8 +179,14 @@ class PosEndpointTests(TenantTestCase):
     def setUp(self):
         self.allow_no_shift()
         self.client.force_login(self.owner_a)
+        self.checkout_sequence = 0
 
     def checkout(self, payload):
+        self.checkout_sequence += 1
+        payload = dict(payload)
+        payload.setdefault(
+            "checkout_token", f"pos-endpoint-{self.checkout_sequence}"
+        )
         return self.client.post(
             reverse("sales:pos_checkout"), json.dumps(payload),
             content_type="application/json",
@@ -308,7 +314,10 @@ class PosEndpointTests(TenantTestCase):
         self.assertFalse(response.json()["ok"])
 
     def test_hold_and_resume(self):
-        cart = {"items": [{"product_id": self.product_a.id, "quantity": 1}]}
+        cart = {
+            "items": [{"product_id": self.product_a.id, "quantity": 1}],
+            "checkout_token": "pos-hold-resume",
+        }
         response = self.client.post(
             reverse("sales:pos_hold"),
             json.dumps({"branch_id": self.branch_a.id, "label": "Mr X",
@@ -689,7 +698,16 @@ class PosEndpointTests(TenantTestCase):
         self.assertNotIn("Product Photo", html)
 
     def test_workshop_job_card_pdf_downloads(self):
-        sale = self.make_sale(delivery_date=timezone.localdate())
+        self.enable_tailoring_product()
+        sale = self.make_sale(
+            items=[{
+                "product": self.product_a,
+                "quantity": D("1.000"),
+                "unit_price": D("10.000"),
+                "garment_classification": "adult",
+            }],
+            delivery_date=timezone.localdate(),
+        )
         response = self.client.get(
             reverse("sales:workshop_job_card_pdf", args=[sale.public_id]),
             {"priority": "urgent", "copy": "copy"},

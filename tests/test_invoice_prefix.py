@@ -55,12 +55,26 @@ class InvoicePrefixTests(TenantTestCase):
         branch2 = Branch.objects.create(
             business=self.business_a, name="Second", code="HK",
             invoice_prefix="HK")
-        Warehouse.objects.create(business=self.business_a, name="W2",
-                                 code="W2HK", branch=branch2)
+        warehouse2 = Warehouse.objects.create(
+            business=self.business_a,
+            name="W2",
+            code="W2HK",
+            branch=branch2,
+        )
+        from apps.inventory import services as inventory
+
+        inventory.set_opening_stock(
+            business=self.business_a,
+            warehouse=warehouse2,
+            product=self.product_a,
+            quantity=D("1.000"),
+            unit_cost=self.product_a.purchase_price,
+            user=self.owner_a,
+        )
         s1 = self.make_sale()
         s2 = sales.complete_sale(
             business=self.business_a, branch=branch2,
-            warehouse=self.warehouse_a, cashier=self.owner_a,
+            warehouse=warehouse2, cashier=self.owner_a,
             customer=self.walk_in_a,
             items=[{"product": self.product_a, "quantity": D("1"),
                     "unit_price": D("10.000")}],
@@ -79,17 +93,33 @@ class InvoicePrefixTests(TenantTestCase):
                         sale.invoice_number)
 
     def test_per_branch_scheme_numbers_branches_independently(self):
-        from apps.branches.models import Branch
+        from apps.branches.models import Branch, Warehouse
         from apps.sales import services as sales
 
         self._set_prefix("INV", include_branch=True)
         branch2 = Branch.objects.create(
             business=self.business_a, name="Khoud", code="KHD",
             invoice_prefix="KHD")
+        warehouse2 = Warehouse.objects.create(
+            business=self.business_a,
+            name="Khoud Warehouse",
+            code="KHD-WH",
+            branch=branch2,
+        )
+        from apps.inventory import services as inventory
+
+        inventory.set_opening_stock(
+            business=self.business_a,
+            warehouse=warehouse2,
+            product=self.product_a,
+            quantity=D("1.000"),
+            unit_cost=self.product_a.purchase_price,
+            user=self.owner_a,
+        )
         s1 = self.make_sale()  # HO branch
         s2 = sales.complete_sale(
             business=self.business_a, branch=branch2,
-            warehouse=self.warehouse_a, cashier=self.owner_a,
+            warehouse=warehouse2, cashier=self.owner_a,
             customer=self.walk_in_a,
             items=[{"product": self.product_a, "quantity": D("1"),
                     "unit_price": D("10.000")}],

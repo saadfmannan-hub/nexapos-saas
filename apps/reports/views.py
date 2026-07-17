@@ -472,6 +472,7 @@ def _run_report(request, key):
     if not request.membership.has_perm(perm):
         raise PermissionDenied
     filters = _parse_filters(request)
+    filters["allowed_branch_ids"] = request.membership.allowed_branch_ids
     if key in EXPENSE_AWARE_REPORTS:
         try:
             ensure_recurring_expenses_for_range(
@@ -521,6 +522,12 @@ def report_view(request, key):
         return redirect("reports:view", key=key)
     branches = Branch.objects.for_business(request.business)
     warehouses = Warehouse.objects.for_business(request.business)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        branches = branches.filter(id__in=allowed_branch_ids)
+        warehouses = warehouses.filter(
+            Q(branch_id__in=allowed_branch_ids) | Q(branch__isnull=True)
+        )
     if key != "supplier_payments_cheques":
         branches = branches.filter(is_active=True)
         warehouses = warehouses.filter(is_active=True)

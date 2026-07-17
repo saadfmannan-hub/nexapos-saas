@@ -3,6 +3,7 @@
 Every queryset is filtered by the caller's active business membership.
 API access additionally requires the subscription plan feature flag.
 """
+from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
@@ -63,7 +64,9 @@ class ProductViewSet(TenantReadOnlyViewSet):
     def base_queryset(self):
         from apps.catalog.models import Product
 
-        return Product.objects.prefetch_related("variants").select_related("category")
+        return Product.objects.prefetch_related("variants").select_related(
+            "category", "unit"
+        )
 
 
 class CategoryViewSet(TenantReadOnlyViewSet):
@@ -91,6 +94,19 @@ class CustomerViewSet(TenantReadOnlyViewSet):
 class SaleViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.SaleSerializer
     required_perm = "sales.view"
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        allowed = self.request.api_membership.allowed_branch_ids
+        if allowed is None:
+            return qs
+        return qs.filter(
+            branch_id__in=allowed,
+            warehouse__business=self.request.api_business,
+        ).filter(
+            Q(warehouse__branch_id__in=allowed)
+            | Q(warehouse__branch__isnull=True)
+        )
 
     @property
     def base_queryset(self):

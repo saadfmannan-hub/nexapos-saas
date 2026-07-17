@@ -51,6 +51,11 @@ class Unit(TenantModel):
     name = models.CharField(max_length=60)
     abbreviation = models.CharField(max_length=15)
     allow_decimal = models.BooleanField(default=False)
+    # Stable internal semantic used by the locked tailoring workflow.  This
+    # is intentionally not a user-facing mode/toggle: decimal-capable units
+    # such as kg and litre must never be mistaken for fabric meters, and a
+    # renamed canonical Meter unit must retain its meaning.
+    is_meter = models.BooleanField(default=False, editable=False)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -214,6 +219,20 @@ class Product(TenantModel):
         return self.track_inventory and self.product_type in (
             self.Type.STANDARD, self.Type.VARIANT
         )
+
+    @property
+    def is_meter_tailoring(self):
+        """Whether new POS lines use the locked one-garment/meter workflow."""
+        return bool(
+            self.is_tailoring_item
+            and self.unit_id is not None
+            and self.unit.is_meter
+        )
+
+    @property
+    def is_legacy_tailoring(self):
+        """Null-unit tailoring products retained on the pre-Meter workflow."""
+        return bool(self.is_tailoring_item and self.unit_id is None)
 
     def effective_tax_rate(self):
         return self.tax_rate.rate if self.tax_rate and self.tax_rate.is_active else 0

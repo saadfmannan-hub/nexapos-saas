@@ -19,6 +19,9 @@ ZERO = Decimal("0")
 
 INBOUND_AVERAGES_COST = {"opening", "purchase"}
 NEGATIVE_ALLOWED_TYPES = {"count"}  # count corrections may set any value
+METER_PARENT_REPAIR_TYPES = {
+    "adjust_in", "adjust_out", "count", "damage", "wastage", "internal",
+}
 
 
 class InsufficientStock(ValidationError):
@@ -62,8 +65,29 @@ def record_movement(
         raise ValidationError("Stock movement quantity cannot be zero.")
     if warehouse.business_id != business.id or product.business_id != business.id:
         raise ValidationError("Cross-tenant stock movement blocked.")
-    if variant is not None and variant.product_id != product.id:
-        raise ValidationError("Variant does not belong to product.")
+
+    # Coordinate Meter product-shape edits with every stock write.  The
+    # locked/refreshed product prevents a concurrent edit from changing a
+    # Meter parent between caller validation and the ledger write.
+    product = (
+        product.__class__.objects.select_for_update()
+        .select_related("unit")
+        .get(pk=product.pk, business=business)
+    )
+    if variant is not None:
+        try:
+            variant = variant.__class__.objects.select_for_update().get(
+                pk=variant.pk,
+                business=business,
+                product=product,
+            )
+        except variant.__class__.DoesNotExist as exc:
+            raise ValidationError("Variant does not belong to product.") from exc
+    meter_variant_parent = bool(
+        product.is_meter_tailoring
+        and product.has_variants
+        and variant is None
+    )
 
     level, _ = StockLevel.objects.get_or_create(
         business=business, warehouse=warehouse, product=product, variant=variant,
@@ -72,6 +96,16 @@ def record_movement(
     # Lock the row (no-op on SQLite, real lock on PostgreSQL)
     level = StockLevel.objects.select_for_update().get(pk=level.pk)
     new_quantity = level.quantity + quantity
+
+    if meter_variant_parent and not (
+        level.quantity != 0
+        and new_quantity == 0
+        and movement_type in METER_PARENT_REPAIR_TYPES
+    ):
+        raise ValidationError(
+            f"Select a variant/color for {product.name}. A legacy parent balance "
+            "may only be corrected exactly to zero."
+        )
 
     if (
         quantity < 0
@@ -178,7 +212,7 @@ IMPORT_COLUMNS = [
 IMPORT_MODES = {"add", "replace", "opening", "minimum"}
 
 
-def inventory_export_dataset(business, filters):
+def inventory_export_dataset(business, filters, *, allowed_warehouse_ids=None):
     """Build {columns, rows} for inventory export (one row per stock level).
 
     Reserved stock is always 0 (no reservation system in v1), so
@@ -187,9 +221,11 @@ def inventory_export_dataset(business, filters):
     qs = (
         StockLevel.objects.for_business(business)
         .select_related("product", "variant", "warehouse", "warehouse__branch",
-                        "product__category")
+                        "product__category", "product__unit")
         .filter(product__is_archived=False)
     )
+    if allowed_warehouse_ids is not None:
+        qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
     if filters.get("warehouse_id"):
         qs = qs.filter(warehouse_id=filters["warehouse_id"])
     if filters.get("branch_id"):
@@ -197,8 +233,13 @@ def inventory_export_dataset(business, filters):
 
     # Last movement date per (product, warehouse) in one query
     last_moves = {}
+    movement_qs = StockMovement.objects.for_business(business)
+    if allowed_warehouse_ids is not None:
+        movement_qs = movement_qs.filter(
+            warehouse_id__in=allowed_warehouse_ids
+        )
     for row in (
-        StockMovement.objects.for_business(business)
+        movement_qs
         .values("product_id", "warehouse_id")
         .annotate(last=Max("created_at"))
     ):
@@ -219,7 +260,7 @@ def inventory_export_dataset(business, filters):
             level.warehouse.branch.name if level.warehouse.branch else "",
             level.warehouse.name,
             level.quantity, ZERO, level.quantity,
-            level.product.reorder_level,
+            "" if level.product.is_meter_tailoring else level.product.reorder_level,
             money(level.quantity * cost), cost,
             level.product.purchase_price, level.product.sale_price,
             last.strftime("%Y-%m-%d") if last else "",
@@ -229,7 +270,9 @@ def inventory_export_dataset(business, filters):
 
 
 @transaction.atomic
-def import_inventory(*, business, rows, mode, user):
+def import_inventory(
+    *, business, rows, mode, user, allowed_warehouse_ids=None
+):
     """Bulk stock import. mode in {add, replace, opening, minimum}.
 
     Returns (summary, errors). Each stock change flows through
@@ -248,40 +291,107 @@ def import_inventory(*, business, rows, mode, user):
 
     for idx, raw in enumerate(rows, start=2):
         r = normalize_row(raw)
-        sku = r.get("variant sku") or r.get("sku", "")
-        barcode = r.get("variant barcode") or r.get("barcode", "")
+        variant_sku = r.get("variant sku", "")
+        variant_barcode = r.get("variant barcode", "")
+        sku = r.get("sku", "")
+        barcode = r.get("barcode", "")
         wh_name = r.get("warehouse", "")
         branch_name = r.get("branch", "")
 
-        if not sku and not barcode:
+        if not any((sku, barcode, variant_sku, variant_barcode)):
             errors.append((idx, "Provide a SKU or barcode."))
             summary["failed"] += 1
             continue
 
-        # Resolve product / variant
-        variant = None
-        product = None
-        if sku:
-            variant = ProductVariant.objects.for_business(business).filter(sku=sku).first()
-            if variant:
-                product = variant.product
+        # Resolve every supplied identifier independently. Parent identifiers
+        # and color identifiers may coexist, but all must point to the same
+        # product and (when specified) the same exact variant.
+        targets = []
+        resolution_error = ""
+        for label, value, field, variant_only in (
+            ("Variant SKU", variant_sku, "sku", True),
+            ("Variant barcode", variant_barcode, "barcode", True),
+            ("SKU", sku, "sku", False),
+            ("Barcode", barcode, "barcode", False),
+        ):
+            if not value:
+                continue
+            found_variant = ProductVariant.objects.for_business(business).filter(
+                **{field: value}
+            ).first()
+            found_product = None
+            if not variant_only:
+                found_product = Product.objects.for_business(business).filter(
+                    **{field: value}
+                ).first()
+            if found_variant is not None and found_product is not None:
+                resolution_error = f"{label} is ambiguous: {value}"
+                break
+            if found_variant is not None:
+                targets.append((found_variant.product_id, found_variant.id))
+            elif found_product is not None:
+                targets.append((found_product.id, None))
             else:
-                product = Product.objects.for_business(business).filter(sku=sku).first()
-        if product is None and barcode:
-            variant = ProductVariant.objects.for_business(business).filter(
-                barcode=barcode).first()
-            if variant:
-                product = variant.product
-            else:
-                product = Product.objects.for_business(business).filter(
-                    barcode=barcode).first()
-        if product is None:
-            errors.append((idx, f"Product not found (sku={sku!r}, barcode={barcode!r})."))
+                resolution_error = f"{label} was not found: {value}"
+                break
+        product_ids = {product_id for product_id, _variant_id in targets}
+        variant_ids = {
+            variant_id for _product_id, variant_id in targets
+            if variant_id is not None
+        }
+        if len(product_ids) > 1 or len(variant_ids) > 1:
+            resolution_error = "Supplied product/color identifiers do not match."
+        if resolution_error or not product_ids:
+            errors.append((idx, resolution_error or "Product not found."))
+            summary["failed"] += 1
+            continue
+        product = Product.objects.for_business(business).get(pk=product_ids.pop())
+        variant = (
+            ProductVariant.objects.for_business(business).get(pk=variant_ids.pop())
+            if variant_ids
+            else None
+        )
+        # Import is one transaction. Lock and refresh the product before
+        # interpreting its Unit/type, and before a replace-mode stock read.
+        # Every ledger writer takes the same lock, so an absolute replacement
+        # cannot compute its delta from a concurrently changing stock value.
+        product = (
+            Product.objects.select_for_update()
+            .select_related("unit")
+            .get(pk=product.pk, business=business)
+        )
+        if variant is not None and (
+            variant.business_id != business.id
+            or variant.product_id != product.id
+        ):
+            errors.append((idx, "Invalid product variant for this business."))
+            summary["failed"] += 1
+            continue
+        if product.is_meter_tailoring and product.has_variants and variant is None:
+            errors.append((idx, f"Select a variant/color for {product.name}."))
+            summary["failed"] += 1
+            continue
+        is_meter_product = product.is_meter_tailoring
+        if is_meter_product and r.get("minimum stock level", "") != "":
+            errors.append((
+                idx,
+                "Parent/per-variant reorder levels are not supported for Meter "
+                "fabric in the current inventory model.",
+            ))
+            summary["failed"] += 1
+            continue
+        if is_meter_product and variant is None and mode == "opening":
+            errors.append((
+                idx,
+                "Meter parent opening stock must be received through Purchases.",
+            ))
             summary["failed"] += 1
             continue
 
         # Resolve warehouse (by name, optionally within branch)
         wh_qs = Warehouse.objects.for_business(business).filter(is_active=True)
+        if allowed_warehouse_ids is not None:
+            wh_qs = wh_qs.filter(id__in=allowed_warehouse_ids)
         if branch_name:
             wh_qs = wh_qs.filter(branch__name__iexact=branch_name)
             if not wh_qs.exists():
@@ -327,6 +437,10 @@ def import_inventory(*, business, rows, mode, user):
                 errors.append((idx, f"Invalid minimum stock level: {min_raw}"))
                 summary["failed"] += 1
                 continue
+            if not level.is_finite() or level.as_tuple().exponent < -3:
+                errors.append((idx, "Minimum stock level supports up to 3 decimals."))
+                summary["failed"] += 1
+                continue
             if level < 0:
                 errors.append((idx, "Minimum stock level cannot be negative."))
                 summary["failed"] += 1
@@ -352,6 +466,10 @@ def import_inventory(*, business, rows, mode, user):
             errors.append((idx, f"Invalid quantity: {qty_raw}"))
             summary["failed"] += 1
             continue
+        if not quantity.is_finite() or quantity.as_tuple().exponent < -3:
+            errors.append((idx, "Quantity supports up to 3 decimal places."))
+            summary["failed"] += 1
+            continue
         if quantity < 0:
             errors.append((idx, f"Quantity cannot be negative: {qty_raw}"))
             summary["failed"] += 1
@@ -362,6 +480,13 @@ def import_inventory(*, business, rows, mode, user):
                 unit_cost_override = _Dec(str(r["unit cost"]))
             except (_InvOp, ValueError):
                 errors.append((idx, f"Invalid unit cost: {r['unit cost']}"))
+                summary["failed"] += 1
+                continue
+            if (
+                not unit_cost_override.is_finite()
+                or unit_cost_override.as_tuple().exponent < -3
+            ):
+                errors.append((idx, "Unit cost supports up to 3 decimal places."))
                 summary["failed"] += 1
                 continue
             if unit_cost_override < 0:
@@ -420,9 +545,11 @@ def import_inventory(*, business, rows, mode, user):
     return summary, errors
 
 
-def stock_value(business, warehouse=None):
+def stock_value(business, warehouse=None, *, allowed_warehouse_ids=None):
     """Total stock value at average cost."""
     qs = StockLevel.objects.for_business(business).filter(quantity__gt=0)
+    if allowed_warehouse_ids is not None:
+        qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
     if warehouse is not None:
         qs = qs.filter(warehouse=warehouse)
     total = ZERO

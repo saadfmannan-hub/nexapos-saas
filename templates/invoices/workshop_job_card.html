@@ -218,7 +218,7 @@
 </head>
 <body>
 {% for card in job_cards %}
-{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date %}
+{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number job_card_sequence_label=card.job_card_sequence_label workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date %}
 <div class="sheet">
   <table class="header">
     <tr>
@@ -235,6 +235,7 @@
       <td class="doc">
         <div class="label">Workshop</div>
         <h1>JOB CARD</h1>
+        {% if job_card_sequence_label %}<div class="value">Job Card {{ job_card_sequence_label }}</div>{% endif %}
         <div class="priority-badge priority-{{ priority_class|default:'normal' }}">{{ priority_label|default:"Normal" }}</div>
       </td>
       <td class="meta">
@@ -301,7 +302,7 @@
           </td>
           <td>
             <div class="label">Quantity</div>
-            <div class="value">{{ job_item.quantity|floatformat:"-3" }} {{ job_item.product.unit.abbreviation|default:"pc" }}</div>
+            <div class="value">{{ job_item.quantity|floatformat:"-3" }}{% if job_item.fabric_meter_used is not None %} garment{% else %} {{ job_item.product.unit.abbreviation|default:"pc" }}{% endif %}</div>
           </td>
           <td>
             <div class="label">Design Type</div>
@@ -342,18 +343,29 @@
             <div class="value">{{ tailoring.workshop_notes|default:"-" }}</div>
           </td>
         </tr>
-        {% if job_item.is_tailoring_line %}
+        {% if job_item.fabric_meter_used is not None %}
         <tr>
           <td>
-            <div class="label">Fabric Unit</div>
-            <div class="value">Meters</div>
+            <div class="label">Meter</div>
+            <div class="value">{{ job_item.fabric_meter_used|floatformat:"-3" }} m</div>
+          </td>
+          <td colspan="3">
+            <div class="label">Inventory Source</div>
+            <div class="value">POS-entered fabric consumption</div>
+          </td>
+        </tr>
+        {% elif job_item.is_tailoring_line %}
+        <tr>
+          <td>
+            <div class="label">Legacy Fabric Record</div>
+            <div class="value">Historical estimate/workshop values</div>
           </td>
           <td>
-            <div class="label">Estimated Fabric</div>
+            <div class="label">Legacy Estimated Fabric</div>
             <div class="value">{% if job_item.estimated_fabric is not None %}{{ job_item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</div>
           </td>
           <td>
-            <div class="label">Actual Fabric</div>
+            <div class="label">Legacy Actual Fabric</div>
             <div class="value">{% if job_item.actual_fabric_used is not None %}{{ job_item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</div>
           </td>
           <td>

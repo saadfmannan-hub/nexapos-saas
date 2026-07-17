@@ -2,8 +2,9 @@ import json
 
 from django.contrib import messages
 from django.core.paginator import Paginator
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
-from django.http import HttpResponse, JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -40,6 +41,26 @@ def _user_branches(request):
     if allowed is not None:
         qs = qs.filter(id__in=allowed)
     return qs
+
+
+def _sales_for_request(request, queryset=None):
+    """Scope sale reads and mutations to the member's assigned branches."""
+    qs = queryset if queryset is not None else Sale.objects.all()
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return qs
+    return qs.filter(
+        branch_id__in=allowed,
+        warehouse__business=request.business,
+    ).filter(
+        Q(warehouse__branch_id__in=allowed) | Q(warehouse__branch__isnull=True)
+    )
+
+
+def _held_sales_for_request(request):
+    qs = HeldSale.objects.for_business(request.business).filter(cashier=request.user)
+    allowed = request.membership.allowed_branch_ids
+    return qs if allowed is None else qs.filter(branch_id__in=allowed)
 
 
 def _branch_warehouse(branch):
@@ -99,6 +120,17 @@ def _sale_error_response(exc, *, status=400):
     return JsonResponse(body, status=status)
 
 
+def _checkout_success_response(sale):
+    return JsonResponse({"ok": True, "sale": {
+        "public_id": str(sale.public_id),
+        "invoice_number": sale.invoice_number,
+        "total": str(sale.total),
+        "change_due": str(sale.change_due),
+        "receipt_url": f"/sales/{sale.public_id}/receipt/",
+        "invoice_url": f"/sales/{sale.public_id}/invoice/",
+    }})
+
+
 # ---------------------------------------------------------------------------
 # POS screen
 # ---------------------------------------------------------------------------
@@ -125,9 +157,7 @@ def pos_view(request):
     payment_methods = PaymentMethod.objects.for_business(request.business).filter(
         is_active=True
     )
-    held_sales = HeldSale.objects.for_business(request.business).filter(
-        cashier=request.user
-    )[:20]
+    held_sales = _held_sales_for_request(request)[:20]
     walk_in = Customer.objects.for_business(request.business).filter(
         is_walk_in=True
     ).first()
@@ -161,6 +191,7 @@ def pos_view(request):
 @require_permission("sales.create")
 def pos_products(request):
     """JSON product grid/search for the POS screen."""
+    from apps.branches.models import Warehouse
     from apps.catalog.models import Product
 
     q = request.GET.get("q", "").strip()
@@ -168,7 +199,7 @@ def pos_products(request):
     qs = (
         Product.objects.for_business(request.business)
         .filter(is_active=True, is_archived=False)
-        .select_related("tax_rate")
+        .select_related("tax_rate", "unit")
         .prefetch_related("variants")
     )
     if q:
@@ -181,6 +212,19 @@ def pos_products(request):
     warehouse_id = request.GET.get("warehouse_id")
     stock_map = {}
     if warehouse_id and str(warehouse_id).isdigit():
+        warehouse_qs = Warehouse.objects.for_business(request.business).filter(
+            pk=warehouse_id,
+            is_active=True,
+        )
+        allowed = request.membership.allowed_branch_ids
+        if allowed is not None:
+            warehouse_qs = warehouse_qs.filter(
+                Q(branch_id__in=allowed) | Q(branch__isnull=True)
+            )
+        if not warehouse_qs.exists():
+            return JsonResponse(
+                {"items": [], "error": "Invalid warehouse."}, status=403,
+            )
         for row in StockLevel.objects.for_business(request.business).filter(
             warehouse_id=warehouse_id, product__in=[p.pk for p in qs]
         ).values("product_id", "variant_id", "quantity"):
@@ -196,12 +240,19 @@ def pos_products(request):
                 items.append({
                     "product_id": p.id, "variant_id": v.id,
                     "name": f"{p.name} — {v.name}",
-                    "price": str(v.sale_price if v.sale_price > 0 else p.sale_price),
+                    "price": (
+                        "0"
+                        if p.is_meter_tailoring
+                        else str(v.sale_price if v.sale_price > 0 else p.sale_price)
+                    ),
                     "sku": v.sku or p.sku,
                     "tax_rate": str(tax_rate),
                     "stocked": p.is_stocked,
                     "allow_discount": p.allow_discount,
                     "is_tailoring_item": p.is_tailoring_item,
+                    "is_meter_tailoring": p.is_meter_tailoring,
+                    "is_legacy_tailoring": p.is_legacy_tailoring,
+                    "unit": p.unit.abbreviation if p.unit else "",
                     "min_price": str(p.minimum_sale_price),
                     "stock": stock_map.get((p.id, v.id), None),
                     "image": v.image.url if v.image else (p.image.url if p.image else None),
@@ -210,12 +261,15 @@ def pos_products(request):
             items.append({
                 "product_id": p.id, "variant_id": None,
                 "name": p.name,
-                "price": str(p.sale_price),
+                "price": "0" if p.is_meter_tailoring else str(p.sale_price),
                 "sku": p.sku,
                 "tax_rate": str(tax_rate),
                 "stocked": p.is_stocked,
                 "allow_discount": p.allow_discount,
                 "is_tailoring_item": p.is_tailoring_item,
+                "is_meter_tailoring": p.is_meter_tailoring,
+                "is_legacy_tailoring": p.is_legacy_tailoring,
+                "unit": p.unit.abbreviation if p.unit else "",
                 "min_price": str(p.minimum_sale_price),
                 "stock": stock_map.get((p.id, None), None),
                 "image": p.image.url if p.image else None,
@@ -234,7 +288,7 @@ def pos_barcode(request):
     variant = (
         ProductVariant.objects.for_business(request.business)
         .filter(Q(barcode=code) | Q(sku=code), is_active=True)
-        .select_related("product__tax_rate", "product")
+        .select_related("product__tax_rate", "product__unit", "product")
         .first()
     )
     if variant and variant.product.is_active and not variant.product.is_archived:
@@ -243,26 +297,37 @@ def pos_barcode(request):
         return JsonResponse({"found": True, "item": {
             "product_id": p.id, "variant_id": variant.id,
             "name": f"{p.name} — {variant.name}",
-            "price": str(variant.sale_price if variant.sale_price > 0 else p.sale_price),
+            "price": (
+                "0"
+                if p.is_meter_tailoring
+                else str(variant.sale_price if variant.sale_price > 0 else p.sale_price)
+            ),
             "sku": variant.sku or p.sku, "tax_rate": str(tax_rate),
             "stocked": p.is_stocked, "allow_discount": p.allow_discount,
             "is_tailoring_item": p.is_tailoring_item,
+            "is_meter_tailoring": p.is_meter_tailoring,
+            "is_legacy_tailoring": p.is_legacy_tailoring,
+            "unit": p.unit.abbreviation if p.unit else "",
             "min_price": str(p.minimum_sale_price),
         }})
     product = (
         Product.objects.for_business(request.business)
         .filter(Q(barcode=code) | Q(sku=code), is_active=True, is_archived=False)
-        .select_related("tax_rate")
+        .select_related("tax_rate", "unit")
         .first()
     )
     if product and not product.has_variants:
         tax_rate = calculations.resolve_tax_rate(request.business, product)
         return JsonResponse({"found": True, "item": {
             "product_id": product.id, "variant_id": None,
-            "name": product.name, "price": str(product.sale_price),
+            "name": product.name,
+            "price": "0" if product.is_meter_tailoring else str(product.sale_price),
             "sku": product.sku, "tax_rate": str(tax_rate),
             "stocked": product.is_stocked, "allow_discount": product.allow_discount,
             "is_tailoring_item": product.is_tailoring_item,
+            "is_meter_tailoring": product.is_meter_tailoring,
+            "is_legacy_tailoring": product.is_legacy_tailoring,
+            "unit": product.unit.abbreviation if product.unit else "",
             "min_price": str(product.minimum_sale_price),
         }})
     return JsonResponse({"found": False})
@@ -350,6 +415,40 @@ def pos_checkout(request):
     except Customer.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid customer."}, status=400)
 
+    checkout_token = str(payload.get("checkout_token") or "").strip()
+    if not checkout_token or len(checkout_token) > 64:
+        return JsonResponse(
+            {"ok": False, "error": "A valid checkout token is required."},
+            status=400,
+        )
+    existing_sale = Sale.objects.for_business(request.business).filter(
+        checkout_token=checkout_token,
+    ).first()
+    if existing_sale is not None:
+        if (
+            existing_sale.cashier_id != request.user.id
+            or existing_sale.branch_id != branch.id
+            or existing_sale.customer_id != customer.id
+        ):
+            return JsonResponse(
+                {"ok": False, "error": "Invalid checkout token."},
+                status=400,
+            )
+        held_id = payload.get("held_id")
+        if held_id:
+            # Only clean the held cart that originally carried this token. A
+            # replay must never delete another one of the cashier's carts.
+            HeldSale.objects.for_business(request.business).filter(
+                pk=held_id,
+                cashier=request.user,
+                branch=branch,
+                cart__checkout_token=checkout_token,
+            ).delete()
+        return _checkout_success_response(existing_sale)
+
+    held = None
+    held_id = payload.get("held_id")
+
     shift = register_services.get_open_shift(
         request.business, request.user, membership=request.membership
     )
@@ -366,9 +465,9 @@ def pos_checkout(request):
                 "errors": {f"items.{index}": "Invalid cart line."},
             }, status=400)
         try:
-            product = Product.objects.for_business(request.business).get(
-                pk=raw.get("product_id"), is_active=True, is_archived=False
-            )
+            product = Product.objects.for_business(request.business).select_related(
+                "unit"
+            ).get(pk=raw.get("product_id"), is_active=True, is_archived=False)
         except Product.DoesNotExist:
             return JsonResponse({"ok": False, "error": "Invalid product in cart."},
                                 status=400)
@@ -381,7 +480,7 @@ def pos_checkout(request):
             except ProductVariant.DoesNotExist:
                 return JsonResponse({"ok": False, "error": "Invalid variant in cart."},
                                     status=400)
-        items.append({
+        line = {
             "product": product, "variant": variant,
             "quantity": D(raw.get("quantity")),
             "unit_price": D(raw.get("unit_price")),
@@ -391,7 +490,13 @@ def pos_checkout(request):
             "garment_classification": raw.get("garment_classification", ""),
             "collection_type": raw.get("collection_type", ""),
             "tailoring_details": _checkout_tailoring_details(raw),
-        })
+        }
+        # Key presence is significant: legacy service integrations that omit
+        # it keep their historical compatibility path, while POS/held carts
+        # always submit it and therefore must provide an explicit meter.
+        if "fabric_meter_used" in raw:
+            line["fabric_meter_used"] = raw.get("fabric_meter_used")
+        items.append(line)
 
     raw_payments = payload.get("payments", [])
     if not isinstance(raw_payments, list):
@@ -431,44 +536,85 @@ def pos_checkout(request):
             }, status=400)
 
     try:
-        sale = services.complete_sale(
-            business=request.business,
-            branch=branch,
-            warehouse=warehouse,
-            cashier=request.user,
-            customer=customer,
-            items=items,
-            payments=payments,
-            membership=request.membership,
-            register=shift.register if shift else None,
-            shift=shift,
-            invoice_discount=D(payload.get("invoice_discount")),
-            notes=str(payload.get("notes", ""))[:1000],
-            delivery_date=delivery_date,
-            priority=_checkout_priority(payload, raw_items),
-            request=request,
-        )
+        with transaction.atomic():
+            sale = None
+            if held_id:
+                held = (
+                    HeldSale.objects.for_business(request.business)
+                    .select_for_update()
+                    .filter(pk=held_id, cashier=request.user)
+                    .first()
+                )
+                if held is None:
+                    # A concurrent request may have completed and removed the
+                    # held cart while this request waited for its row lock.
+                    sale = Sale.objects.for_business(request.business).filter(
+                        checkout_token=checkout_token,
+                        cashier=request.user,
+                        branch=branch,
+                        customer=customer,
+                    ).first()
+                    if sale is None:
+                        raise SaleError("This held sale is no longer available.")
+                else:
+                    if held.branch_id != branch.id:
+                        raise SaleError(
+                            "Resume this held sale from its original branch."
+                        )
+                    held_token = str(
+                        (held.cart or {}).get("checkout_token") or ""
+                    ).strip()
+                    if held_token and held_token != checkout_token:
+                        raise SaleError("Invalid checkout token for this held sale.")
+            if sale is None:
+                sale = services.complete_sale(
+                    business=request.business,
+                    branch=branch,
+                    warehouse=warehouse,
+                    cashier=request.user,
+                    customer=customer,
+                    items=items,
+                    payments=payments,
+                    membership=request.membership,
+                    register=shift.register if shift else None,
+                    shift=shift,
+                    invoice_discount=D(payload.get("invoice_discount")),
+                    notes=str(payload.get("notes", ""))[:1000],
+                    delivery_date=delivery_date,
+                    priority=_checkout_priority(payload, raw_items),
+                    checkout_token=checkout_token,
+                    request=request,
+                )
+            if held is not None:
+                held.delete()
     except (SaleError, subscriptions.LimitExceeded,
             subscriptions.SubscriptionInactive) as exc:
         return _sale_error_response(exc)
+    except IntegrityError:
+        # A concurrent retry with the same tenant-unique checkout token can
+        # win the race.  The losing atomic transaction has rolled back fully;
+        # return the already-completed sale instead of deducting stock again.
+        sale = (
+            Sale.objects.for_business(request.business)
+            .filter(
+                checkout_token=checkout_token,
+                cashier=request.user,
+                branch=branch,
+                customer=customer,
+            )
+            .first()
+            if checkout_token else None
+        )
+        if sale is None:
+            return JsonResponse(
+                {"ok": False, "error": "The sale could not be completed."},
+                status=400,
+            )
     except Exception as exc:  # ValidationError from inventory etc.
         msg = "; ".join(getattr(exc, "messages", [str(exc)]))
         return JsonResponse({"ok": False, "error": msg}, status=400)
 
-    held_id = payload.get("held_id")
-    if held_id:
-        HeldSale.objects.for_business(request.business).filter(
-            pk=held_id, cashier=request.user
-        ).delete()
-
-    return JsonResponse({"ok": True, "sale": {
-        "public_id": str(sale.public_id),
-        "invoice_number": sale.invoice_number,
-        "total": str(sale.total),
-        "change_due": str(sale.change_due),
-        "receipt_url": f"/sales/{sale.public_id}/receipt/",
-        "invoice_url": f"/sales/{sale.public_id}/invoice/",
-    }})
+    return _checkout_success_response(sale)
 
 
 @require_POST
@@ -481,6 +627,12 @@ def pos_hold(request):
     cart = payload.get("cart") or {}
     if not cart.get("items"):
         return JsonResponse({"ok": False, "error": "Cart is empty."}, status=400)
+    checkout_token = str(cart.get("checkout_token") or "").strip()
+    if not checkout_token or len(checkout_token) > 64:
+        return JsonResponse(
+            {"ok": False, "error": "A valid checkout token is required."},
+            status=400,
+        )
     from apps.branches.models import Branch
 
     try:
@@ -503,23 +655,57 @@ def pos_hold(request):
 
 @require_permission("sales.create")
 def pos_held_list(request):
-    held = HeldSale.objects.for_business(request.business).filter(
-        cashier=request.user
-    ).order_by("-created_at")[:20]
-    return JsonResponse({"held": [
-        {"id": h.pk, "label": h.label or f"Held #{h.pk}",
-         "created": h.created_at.strftime("%H:%M"),
-         "items": len(h.cart.get("items", [])), "cart": h.cart}
+    from apps.catalog.models import Product
+
+    held = list(
+        _held_sales_for_request(request)
+        .select_related("branch")
+        .order_by("-created_at")[:20]
+    )
+    product_ids = {
+        line.get("product_id")
         for h in held
-    ]})
+        for line in ((h.cart or {}).get("items", []) if isinstance(h.cart, dict) else [])
+        if isinstance(line, dict) and line.get("product_id")
+    }
+    products = {
+        product.id: product
+        for product in Product.objects.for_business(request.business).filter(
+            id__in=product_ids
+        ).select_related("unit")
+    }
+    payload = []
+    for h in held:
+        raw_cart = h.cart if isinstance(h.cart, dict) else {}
+        cart = dict(raw_cart)
+        cart_items = []
+        for raw_line in raw_cart.get("items", []):
+            if not isinstance(raw_line, dict):
+                continue
+            line = dict(raw_line)
+            product = products.get(line.get("product_id"))
+            if product is not None:
+                line["is_tailoring_item"] = product.is_tailoring_item
+                line["is_meter_tailoring"] = product.is_meter_tailoring
+                line["is_legacy_tailoring"] = product.is_legacy_tailoring
+            cart_items.append(line)
+        cart["items"] = cart_items
+        payload.append({
+            "id": h.pk,
+            "label": h.label or f"Held #{h.pk}",
+            "created": h.created_at.strftime("%H:%M"),
+            "items": len(cart_items),
+            "branch_id": h.branch_id,
+            "branch": h.branch.name,
+            "cart": cart,
+        })
+    return JsonResponse({"held": payload})
 
 
 @require_POST
 @require_permission("sales.create")
 def pos_held_delete(request, pk):
-    HeldSale.objects.for_business(request.business).filter(
-        pk=pk, cashier=request.user
-    ).delete()
+    _held_sales_for_request(request).filter(pk=pk).delete()
     return JsonResponse({"ok": True})
 
 
@@ -534,7 +720,10 @@ def _qs_without_page(request, date_from, date_to):
 @require_permission("sales.view")
 def sale_list(request):
     qs = (
-        Sale.objects.for_business(request.business)
+        _sales_for_request(
+            request,
+            Sale.objects.for_business(request.business),
+        )
         .exclude(status=Sale.Status.DRAFT)
         .select_related("customer", "branch", "cashier")
     )
@@ -588,10 +777,15 @@ def sale_list(request):
 @require_permission("sales.view")
 def sale_detail(request, public_id):
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "cashier", "register"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "cashier", "register"),
+        ),
         request.business, public_id=public_id,
     )
-    items = _invoice_display_items(list(sale.items.select_related("product", "variant")))
+    items = _invoice_display_items(list(
+        sale.items.select_related("product__unit", "variant")
+    ))
     has_tailoring_jobs = any(item.is_tailoring_line for item in items)
     payments = sale.payments.select_related("method", "received_by")
     returns = _invoice_display_returns(list(sale.returns.prefetch_related("items")))
@@ -624,12 +818,15 @@ def sale_detail(request, public_id):
 @require_permission("workshop.fabric_actual")
 def sale_item_update_fabric(request, public_id, item_id):
     sale = get_tenant_object(
-        Sale.objects.select_related("branch"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("branch"),
+        ),
         request.business,
         public_id=public_id,
     )
     sale_item = get_tenant_object(
-        SaleItem.objects.select_related("sale__branch", "product"),
+        SaleItem.objects.select_related("sale__branch", "product__unit"),
         request.business,
         pk=item_id,
         sale=sale,
@@ -680,14 +877,41 @@ def _invoice_status_label(sale):
     return "Unpaid"
 
 
-def _sale_item_sequence(sale_item):
-    ids = list(
-        sale_item.sale.items.order_by("id").values_list("id", flat=True)
+def _ordered_tailoring_items(sale):
+    return [
+        item
+        for item in sale.items.select_related("product__unit", "variant").order_by("id")
+        if item.is_tailoring_line
+    ]
+
+
+def _sale_item_position(sale_item, tailoring_items=None):
+    tailoring_items = (
+        list(tailoring_items)
+        if tailoring_items is not None
+        else _ordered_tailoring_items(sale_item.sale)
     )
-    return ids.index(sale_item.id) + 1 if sale_item.id in ids else 1
+    ids = [item.id for item in tailoring_items]
+    if sale_item.id not in ids:
+        return 0, len(ids)
+    return ids.index(sale_item.id) + 1, len(ids)
 
 
-def _job_card_data(sale, request, items, sale_item=None):
+def _sale_item_sequence(sale_item):
+    """Backward-compatible ordinal, now correctly tailoring-only."""
+    sequence, _total = _sale_item_position(sale_item)
+    return sequence or 1
+
+
+def _job_card_data(
+    sale,
+    request,
+    items,
+    sale_item=None,
+    *,
+    job_sequence=None,
+    job_total=None,
+):
     items = list(items)
     if sale_item is not None:
         items = [sale_item]
@@ -712,7 +936,10 @@ def _job_card_data(sale, request, items, sale_item=None):
         copy_label = "Reprint"
     else:
         copy_label = "Original"
-    sequence = _sale_item_sequence(sale_item) if sale_item is not None else 1
+    if sale_item is not None and (job_sequence is None or job_total is None):
+        job_sequence, job_total = _sale_item_position(sale_item)
+    sequence = job_sequence or 1
+    total = job_total or (1 if sale_item is not None else 0)
     return {
         "sale": sale,
         "items": items,
@@ -723,6 +950,9 @@ def _job_card_data(sale, request, items, sale_item=None):
             request.business, sale.customer
         ),
         "job_card_number": f"JC-{sale.invoice_number}-{sequence:02d}",
+        "job_card_sequence": sequence,
+        "job_card_total": total,
+        "job_card_sequence_label": f"{sequence}/{total}" if total else "",
         "workshop_copy_number": sale.reprint_count + 1,
         "copy_type": copy_label,
         "priority_label": priority_label,
@@ -731,15 +961,30 @@ def _job_card_data(sale, request, items, sale_item=None):
     }
 
 
-def _job_card_context(sale, request, items, sale_item=None):
-    card = _job_card_data(sale, request, items, sale_item=sale_item)
+def _job_card_context(
+    sale,
+    request,
+    items,
+    sale_item=None,
+    *,
+    job_sequence=None,
+    job_total=None,
+):
+    card = _job_card_data(
+        sale,
+        request,
+        items,
+        sale_item=sale_item,
+        job_sequence=job_sequence,
+        job_total=job_total,
+    )
     return {**card, "job_cards": [card]}
 
 
 def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
                      pdf_mode=False):
     item_source = items if items is not None else sale.items.select_related(
-        "product", "variant"
+        "product__unit", "variant"
     )
     items = _invoice_display_items(list(item_source))
     payments = payments if payments is not None else sale.payments.select_related(
@@ -778,7 +1023,10 @@ def _render_invoice(request, sale, template, mark_reprint=False):
 @require_permission("sales.view")
 def sale_invoice(request, public_id):
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "business"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "business"),
+        ),
         request.business, public_id=public_id,
     )
     return _render_invoice(request, sale, "invoices/invoice_a4.html",
@@ -788,7 +1036,10 @@ def sale_invoice(request, public_id):
 @require_permission("sales.view")
 def sale_receipt(request, public_id):
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "business", "register"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "business", "register"),
+        ),
         request.business, public_id=public_id,
     )
     width = sale.register.receipt_printer if sale.register else "80mm"
@@ -802,11 +1053,14 @@ def sale_invoice_pdf(request, public_id):
     from apps.reports.pdf import render_pdf
 
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "business"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "business"),
+        ),
         request.business, public_id=public_id,
     )
     items = _invoice_display_items(list(
-        sale.items.select_related("product", "variant")
+        sale.items.select_related("product__unit", "variant")
     ))
     payments = sale.payments.select_related("method", "received_by")
     pdf = render_pdf(
@@ -826,19 +1080,28 @@ def sale_workshop_job_card_pdf(request, public_id):
     from apps.reports.pdf import render_pdf
 
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "business"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "business"),
+        ),
         request.business,
         public_id=public_id,
     )
-    items = list(sale.items.select_related("product__unit", "variant").order_by("id"))
-    tailoring_items = [item for item in items if item.is_tailoring_line]
+    tailoring_items = _ordered_tailoring_items(sale)
+    if not tailoring_items:
+        raise Http404("This sale has no tailoring job cards.")
+    total = len(tailoring_items)
     cards = [
-        _job_card_data(sale, request, [item], sale_item=item)
-        for item in tailoring_items
-    ] or [
-        _job_card_data(sale, request, [item], sale_item=item)
-        for item in items
-    ] or [_job_card_data(sale, request, [])]
+        _job_card_data(
+            sale,
+            request,
+            [item],
+            sale_item=item,
+            job_sequence=index,
+            job_total=total,
+        )
+        for index, item in enumerate(tailoring_items, start=1)
+    ]
     pdf = render_pdf(
         "invoices/workshop_job_card.html",
         {"job_cards": cards},
@@ -855,7 +1118,10 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
     from apps.reports.pdf import render_pdf
 
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "branch", "business"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "branch", "business"),
+        ),
         request.business,
         public_id=public_id,
     )
@@ -865,14 +1131,25 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
         pk=item_id,
         sale=sale,
     )
+    tailoring_items = _ordered_tailoring_items(sale)
+    sequence, total = _sale_item_position(sale_item, tailoring_items)
+    if not sequence:
+        raise Http404("This item is not a tailoring job.")
     pdf = render_pdf(
         "invoices/workshop_job_card.html",
-        _job_card_context(sale, request, [sale_item], sale_item=sale_item),
+        _job_card_context(
+            sale,
+            request,
+            [sale_item],
+            sale_item=sale_item,
+            job_sequence=sequence,
+            job_total=total,
+        ),
     )
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
         f'attachment; filename="workshop-job-card-{sale.invoice_number}-'
-        f'{_sale_item_sequence(sale_item):02d}.pdf"'
+        f'{sequence:02d}.pdf"'
     )
     return response
 
@@ -881,7 +1158,9 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
 @require_permission("customers.payments")
 def sale_payment_add(request, public_id):
     """Record a later payment against a credit/partially-paid sale."""
-    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    sale = get_tenant_object(
+        _sales_for_request(request), request.business, public_id=public_id,
+    )
     try:
         subscriptions.require_operational(request.business)
         method = get_tenant_object(PaymentMethod, request.business,
@@ -911,7 +1190,9 @@ def sale_payment_add(request, public_id):
 @require_POST
 @require_permission("sales.delete")
 def sale_delete(request, public_id):
-    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    sale = get_tenant_object(
+        _sales_for_request(request), request.business, public_id=public_id,
+    )
     try:
         services.delete_sale(sale=sale, user=request.user, request=request)
         messages.success(request, "Draft sale deleted.")
@@ -924,7 +1205,9 @@ def sale_delete(request, public_id):
 @require_POST
 @require_permission("sales.create")
 def sale_set_delivery(request, public_id):
-    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    sale = get_tenant_object(
+        _sales_for_request(request), request.business, public_id=public_id,
+    )
     try:
         services.set_delivery_status(
             sale=sale, status=request.POST.get("delivery_status", ""),
@@ -940,7 +1223,9 @@ def sale_set_delivery(request, public_id):
 @require_POST
 @require_permission("sales.void")
 def sale_void(request, public_id):
-    sale = get_tenant_object(Sale, request.business, public_id=public_id)
+    sale = get_tenant_object(
+        _sales_for_request(request), request.business, public_id=public_id,
+    )
     reason = request.POST.get("reason", "").strip()
     if not reason:
         messages.error(request, "A reason is required to void a sale.")
@@ -963,6 +1248,9 @@ def return_list(request):
         SaleReturn.objects.for_business(request.business)
         .select_related("sale", "customer", "processed_by")
     )
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        qs = qs.filter(branch_id__in=allowed)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(return_number__icontains=q) |
@@ -985,7 +1273,10 @@ def return_list(request):
 @require_permission("sales.refund")
 def return_create(request, public_id):
     sale = get_tenant_object(
-        Sale.objects.select_related("customer", "warehouse"),
+        _sales_for_request(
+            request,
+            Sale.objects.select_related("customer", "warehouse"),
+        ),
         request.business, public_id=public_id,
     )
     items = list(sale.items.select_related("product", "variant"))
@@ -1007,7 +1298,13 @@ def return_create(request, public_id):
         else:
             try:
                 subscriptions.require_operational(request.business)
-                shift = register_services.get_open_shift(request.business, request.user)
+                shift = register_services.get_open_shift(
+                    request.business,
+                    request.user,
+                    membership=request.membership,
+                )
+                if shift is not None and shift.branch_id != sale.branch_id:
+                    shift = None
                 sale_return = services.process_return(
                     sale=sale, items=selected, refund_method=refund_method,
                     user=request.user, reason=request.POST.get("reason", ""),

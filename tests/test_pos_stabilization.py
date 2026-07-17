@@ -35,6 +35,7 @@ class TailoringBookingContractTests(TenantTestCase):
         self.product_a.is_tailoring_item = True
         self.product_a.save(update_fields=["is_tailoring_item"])
         self.client.force_login(self.owner_a)
+        self.checkout_token_counter = 0
 
     def checkout(self, payload):
         return self.client.post(
@@ -44,7 +45,9 @@ class TailoringBookingContractTests(TenantTestCase):
         )
 
     def payload(self, **overrides):
+        self.checkout_token_counter += 1
         payload = {
+            "checkout_token": f"booking-{self.checkout_token_counter}",
             "branch_id": self.branch_a.id,
             "customer_id": self.walk_in_a.id,
             "items": [{
@@ -410,9 +413,12 @@ class PosSecurityAndOperationsTests(TenantTestCase):
         self.product_a.is_tailoring_item = True
         self.product_a.save(update_fields=["is_tailoring_item"])
         self.client.force_login(self.owner_a)
+        self.checkout_token_counter = 0
 
     def payload(self, **overrides):
+        self.checkout_token_counter += 1
         payload = {
+            "checkout_token": f"security-{self.checkout_token_counter}",
             "branch_id": self.branch_a.id,
             "customer_id": self.walk_in_a.id,
             "items": [{
@@ -469,7 +475,10 @@ class PosSecurityAndOperationsTests(TenantTestCase):
             reverse("sales:pos_hold"),
             json.dumps({
                 "branch_id": other_branch.id,
-                "cart": {"items": [{"product_id": self.product_a.id}]},
+                "cart": {
+                    "items": [{"product_id": self.product_a.id}],
+                    "checkout_token": "security-hold-other-branch",
+                },
             }),
             content_type="application/json",
         )
@@ -638,7 +647,11 @@ class PosUiAndContractTests(TenantTestCase):
 
     def test_frontend_contract_serializes_new_fields_and_line_errors(self):
         html = self.client.get(reverse("sales:pos")).content.decode()
-        self.assertIn("garment_classification: line.garment_classification", html)
+        self.assertIn(
+            "garment_classification: line.is_tailoring_workflow",
+            html,
+        )
+        self.assertIn("fabric_meter_used: line.fabric_meter_used", html)
         self.assertIn("delivery_date: this.deliveryDate", html)
         self.assertIn("priority: this.priority", html)
         self.assertIn("focusInvalidLine", html)
@@ -682,7 +695,11 @@ class PosUiAndContractTests(TenantTestCase):
             json.dumps({
                 "branch_id": self.branch_a.id,
                 "label": "Large tailoring cart",
-                "cart": {"items": items, "priority": "urgent"},
+                "cart": {
+                    "items": items,
+                    "priority": "urgent",
+                    "checkout_token": "ui-large-tailoring-hold",
+                },
             }),
             content_type="application/json",
         )

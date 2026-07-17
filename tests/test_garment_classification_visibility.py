@@ -89,6 +89,9 @@ class GarmentClassificationVisibilityTests(TenantTestCase):
             "quantity": D("2"),
             "unit_price": self.product_a.sale_price,
         }])
+        item = sale.items.get()
+        item.estimated_fabric = D("7.000")
+        item.save(update_fields=["estimated_fabric"])
         self.product_a.is_tailoring_item = True
         self.product_a.save(update_fields=["is_tailoring_item"])
         return sale

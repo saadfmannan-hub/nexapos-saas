@@ -38,6 +38,41 @@ def _money(value):
     return money(value or ZERO)
 
 
+def _quantity(value):
+    from apps.core.money import qty
+
+    return qty(value or ZERO)
+
+
+def _net_pos_meter(item, *, is_voided=False):
+    """Return the meter quantity still deducted from inventory for one line.
+
+    The persisted POS meter remains the immutable entered value.  Voids restore
+    the full movement, while returns restore stock only when their individual
+    return line was marked as restocked.  Although new meter-tailoring lines are
+    fixed at quantity one, retaining a proportional calculation keeps legacy
+    or manually-created rows safe and predictable.
+    """
+    entered = item.fabric_meter_used
+    if entered is None:
+        return None
+    if is_voided or item.quantity <= 0:
+        return ZERO
+
+    restocked_quantity = sum(
+        (
+            return_item.quantity
+            for return_item in item.return_items.all()
+            if return_item.restocked
+        ),
+        ZERO,
+    )
+    remaining_quantity = max(item.quantity - restocked_quantity, ZERO)
+    if remaining_quantity > item.quantity:
+        remaining_quantity = item.quantity
+    return _quantity(entered * remaining_quantity / item.quantity)
+
+
 def _net_item_values(item):
     net_qty = item.quantity - item.returned_quantity
     if not item.quantity:
@@ -56,7 +91,7 @@ def _net_item_values(item):
         "revenue": _money(item.line_total * ratio),
         "discount": _money(item.discount_amount * ratio),
         "tax": _money(item.tax_amount * ratio),
-        "cost": _money(item.unit_cost * net_qty),
+        "cost": _money(item.unit_cost * item.inventory_quantity * ratio),
         "profit": _money(item.gross_profit * ratio),
     }
 
@@ -125,6 +160,17 @@ def _sales_base(business, f, exclude_voided=True):
         qs = qs.filter(sale_date__date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(
+            branch_id__in=allowed_branch_ids,
+            warehouse__business=business,
+        ).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
+    if f.get("warehouse_id"):
+        qs = qs.filter(warehouse_id=f["warehouse_id"])
     return qs
 
 
@@ -191,7 +237,11 @@ def current_year_financial_summary(
 
     valid_sales = _sales_base(
         business,
-        {"date_from": year_start, "date_to": today},
+        {
+            "date_from": year_start,
+            "date_to": today,
+            "allowed_branch_ids": membership.allowed_branch_ids,
+        },
     )
     valid_sales = _scope_to_membership_branches(
         valid_sales,
@@ -273,6 +323,14 @@ def current_year_financial_summary(
         branch_id=selected_branch_id,
         branch_field="sale__branch_id",
     )
+    allowed_branch_ids = membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        payments = payments.filter(
+            sale__warehouse__business=business,
+        ).filter(
+            Q(sale__warehouse__branch_id__in=allowed_branch_ids)
+            | Q(sale__warehouse__branch__isnull=True)
+        )
     total_income = payments.aggregate(total=Sum("amount"))["total"] or ZERO
 
     expenses = Expense.objects.for_business(business).filter(
@@ -298,6 +356,18 @@ def current_year_financial_summary(
         membership=membership,
         branch_id=selected_branch_id,
     )
+    if allowed_branch_ids is not None:
+        returns = returns.filter(
+            warehouse__business=business,
+            sale__branch_id__in=allowed_branch_ids,
+            sale__warehouse__business=business,
+        ).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        ).filter(
+            Q(sale__warehouse__branch_id__in=allowed_branch_ids)
+            | Q(sale__warehouse__branch__isnull=True)
+        )
     total_returns = returns.aggregate(total=Sum("refund_amount"))["total"] or ZERO
 
     gross_profit = None
@@ -412,8 +482,20 @@ def sales_detailed(business, f):
     qs = (
         SaleItem.objects.for_business(business)
         .filter(sale__in=_sales_base(business, f, exclude_voided=False))
-        .select_related("sale__customer", "sale__branch", "sale__cashier", "product")
-        .prefetch_related("sale__returns", "sale__payments__method")
+        .select_related(
+            "sale__customer",
+            "sale__branch",
+            "sale__warehouse",
+            "sale__cashier",
+            "product__brand",
+            "product__unit",
+            "variant",
+        )
+        .prefetch_related(
+            "return_items",
+            "sale__returns",
+            "sale__payments__method",
+        )
         .order_by("-sale__sale_date", "sale__invoice_number", "id")
     )
     if f.get("product_id"):
@@ -425,6 +507,8 @@ def sales_detailed(business, f):
     pieces = {"adult": ZERO, "child": ZERO, "legacy": ZERO}
     fabric_totals = {"estimated": ZERO, "actual": ZERO, "variance": ZERO}
     has_fabric = {"estimated": False, "actual": False, "variance": False}
+    net_pos_meter_total = ZERO
+    has_pos_meter = False
     for item in qs[:2000]:
         sale = item.sale
         quantity = item.quantity - item.returned_quantity
@@ -438,6 +522,14 @@ def sales_detailed(business, f):
         estimated_fabric = item.estimated_fabric
         actual_fabric = item.actual_fabric_used
         variance = item.fabric_variance
+        pos_meter = item.fabric_meter_used
+        net_pos_meter = _net_pos_meter(
+            item,
+            is_voided=sale.status == Sale.Status.VOIDED,
+        )
+        if pos_meter is not None:
+            has_pos_meter = True
+            net_pos_meter_total += net_pos_meter or ZERO
         for key, value in (
             ("estimated", estimated_fabric),
             ("actual", actual_fabric),
@@ -446,6 +538,26 @@ def sales_detailed(business, f):
             if value is not None:
                 fabric_totals[key] += value
                 has_fabric[key] = True
+        brand = item.product.brand
+        brand_name = (
+            brand.name
+            if brand is not None and brand.business_id == business.id
+            else None
+        )
+        variant_name = (
+            item.variant.name
+            if (
+                item.variant is not None
+                and item.variant.business_id == business.id
+                and item.variant.product_id == item.product_id
+            )
+            else None
+        )
+        warehouse_name = (
+            sale.warehouse.name
+            if sale.warehouse.business_id == business.id
+            else None
+        )
         rows.append([
             sale.invoice_number,
             sale.sale_date.strftime("%Y-%m-%d %H:%M"),
@@ -464,13 +576,20 @@ def sales_detailed(business, f):
             sale.net_amount_paid,
             sale.balance,
             sale.get_status_display(),
+            pos_meter,
+            net_pos_meter,
+            brand_name,
+            variant_name,
+            warehouse_name,
         ])
     return {
         "columns": [
             "Invoice", "Date", "Customer", "Branch", "Cashier", "Product",
-            "Garment Classification", "Collection", "Quantity", "Estimated Fabric",
-            "Actual Fabric", "Variance", "Payment Method", "Total", "Paid",
-            "Balance", "Status",
+            "Garment Classification", "Collection", "Quantity",
+            "Legacy Estimated Fabric", "Legacy Workshop Actual",
+            "Legacy Variance", "Payment Method", "Total", "Paid",
+            "Balance", "Status", "POS Meter", "Net Meter Deducted", "Brand",
+            "Variant / Color", "Warehouse",
         ],
         "rows": rows,
         "totals": None,
@@ -479,18 +598,23 @@ def sales_detailed(business, f):
             ("Total Child Pieces", pieces["child"]),
             ("Total Legacy/Unclassified Pieces", pieces["legacy"]),
             (
-                "Estimated Total",
+                "Net POS Meter Total",
+                net_pos_meter_total if has_pos_meter else None,
+            ),
+            (
+                "Legacy Estimated Total",
                 fabric_totals["estimated"] if has_fabric["estimated"] else None,
             ),
             (
-                "Actual Total",
+                "Legacy Workshop Actual Total",
                 fabric_totals["actual"] if has_fabric["actual"] else None,
             ),
             (
-                "Variance Total",
+                "Legacy Variance Total",
                 fabric_totals["variance"] if has_fabric["variance"] else None,
             ),
         ],
+        "wide_pdf": True,
     }
 
 
@@ -743,7 +867,7 @@ def stock_movements_report(business, f):
 
     qs = (
         StockMovement.objects.for_business(business)
-        .select_related("product", "warehouse", "user")
+        .select_related("product__brand", "product__unit", "variant", "warehouse", "user")
         .order_by("-created_at")
     )
     if f.get("date_from"):
@@ -752,12 +876,49 @@ def stock_movements_report(business, f):
         qs = qs.filter(created_at__date__lte=f["date_to"])
     if f.get("warehouse_id"):
         qs = qs.filter(warehouse_id=f["warehouse_id"])
-    rows = [[m.created_at.strftime("%Y-%m-%d %H:%M"), m.product.name,
-             m.get_movement_type_display(), m.warehouse.name, m.quantity,
-             m.balance_after, f"{m.reference_type} {m.reference_id}".strip(),
-             m.user.full_name if m.user else ""] for m in qs[:2000]]
+    if f.get("branch_id"):
+        qs = qs.filter(warehouse__branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
+    rows = [[
+        m.created_at.strftime("%Y-%m-%d %H:%M"),
+        m.product.name,
+        m.get_movement_type_display(),
+        m.warehouse.name,
+        m.quantity,
+        m.balance_after,
+        f"{m.reference_type} {m.reference_id}".strip(),
+        m.user.full_name if m.user else "",
+        (
+            m.product.brand.name
+            if (
+                m.product.brand is not None
+                and m.product.brand.business_id == business.id
+            )
+            else None
+        ),
+        (
+            m.variant.name
+            if (
+                m.variant is not None
+                and m.variant.business_id == business.id
+                and m.variant.product_id == m.product_id
+            )
+            else None
+        ),
+        (
+            (m.product.unit.abbreviation or m.product.unit.name)
+            if m.product.unit is not None
+            else None
+        ),
+    ] for m in qs[:2000]]
     return {"columns": ["Date", "Product", "Type", "Warehouse", "Qty",
-                        "Balance after", "Reference", "User"],
+                        "Balance after", "Reference", "User", "Brand",
+                        "Variant / Color", "Unit"],
             "rows": rows, "totals": None}
 
 
@@ -775,6 +936,15 @@ def purchases_summary(business, f):
         qs = qs.filter(purchase_date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(
+            branch_id__in=allowed_branch_ids,
+            warehouse__business=business,
+        ).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
     rows = [[p.purchase_number, str(p.purchase_date), p.supplier.name,
              p.total, p.amount_paid, p.cheques_pending, p.remaining_balance,
              p.supplier_balance, p.get_status_display()]
@@ -839,6 +1009,19 @@ def supplier_payments_cheques(business, f):
         payments_qs = payments_qs.filter(purchase__branch_id=f["branch_id"])
     if f.get("warehouse_id"):
         payments_qs = payments_qs.filter(purchase__warehouse_id=f["warehouse_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        payments_qs = payments_qs.filter(
+            Q(purchase__isnull=True)
+            | Q(
+                purchase__branch_id__in=allowed_branch_ids,
+                purchase__warehouse__business=business,
+            )
+            & (
+                Q(purchase__warehouse__branch_id__in=allowed_branch_ids)
+                | Q(purchase__warehouse__branch__isnull=True)
+            )
+        )
 
     method = f.get("payment_method")
     if method in (

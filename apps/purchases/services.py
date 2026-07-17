@@ -39,6 +39,35 @@ def create_purchase(*, business, supplier, branch, warehouse, rows, user,
                     discount=ZERO, shipping=ZERO, other=ZERO, notes="",
                     attachment=None, request=None):
     """rows: [{product, variant, quantity, unit_cost}]"""
+    rows = list(rows)
+    if not rows:
+        raise ValidationError("Enter at least one purchase item.")
+    if (
+        supplier.business_id != business.id
+        or branch.business_id != business.id
+        or warehouse.business_id != business.id
+        or not supplier.is_active
+        or not branch.is_active
+        or not warehouse.is_active
+    ):
+        raise ValidationError(
+            "Purchase supplier and location must be active and belong to this business."
+        )
+    if warehouse.branch_id not in (None, branch.id):
+        raise ValidationError("Purchase warehouse must belong to the selected branch.")
+
+    product_model = rows[0]["product"].__class__
+    product_ids = sorted({row["product"].pk for row in rows})
+    locked_products = {
+        product.pk: product
+        for product in (
+            product_model.objects.select_for_update()
+            .select_related("unit")
+            .filter(pk__in=product_ids, business=business)
+            .order_by("pk")
+        )
+    }
+
     purchase = Purchase.objects.create(
         business=business,
         purchase_number=_next_number(Purchase, business, "purchase_number", "PUR"),
@@ -51,15 +80,28 @@ def create_purchase(*, business, supplier, branch, warehouse, rows, user,
     )
     subtotal = ZERO
     for row in rows:
+        product = locked_products.get(row["product"].pk)
+        variant = row.get("variant")
+        if product is None:
+            raise ValidationError("Invalid product on purchase.")
+        if variant is not None and (
+            variant.business_id != business.id
+            or variant.product_id != product.id
+        ):
+            raise ValidationError("Invalid product variant on purchase.")
         qty, cost = D(row["quantity"]), money(row.get("unit_cost", 0))
         if qty <= 0:
             raise ValidationError("Purchase quantities must be positive.")
+        if product.is_meter_tailoring and product.has_variants and variant is None:
+            raise ValidationError(
+                f"Select a variant/color for {product.name}."
+            )
         line_total = money(qty * cost)
         subtotal += line_total
         PurchaseItem.objects.create(
             business=business, purchase=purchase,
-            product=row["product"], variant=row["variant"],
-            product_name=str(row["variant"] or row["product"])[:240],
+            product=product, variant=variant,
+            product_name=str(variant or product)[:240],
             quantity_ordered=qty, unit_cost=cost, line_total=line_total,
         )
     purchase.subtotal = money(subtotal)
@@ -79,11 +121,22 @@ def create_purchase(*, business, supplier, branch, warehouse, rows, user,
 def receive_purchase(*, purchase, quantities, user, request=None):
     """quantities: {purchase_item_id: qty_to_receive_now}. Partial receiving
     supported; stock and supplier payable increase by the received value."""
+    purchase = (
+        Purchase.objects.select_for_update()
+        .select_related("supplier", "warehouse")
+        .get(pk=purchase.pk, business=purchase.business)
+    )
     if purchase.status == Purchase.Status.CANCELLED:
         raise ValidationError("Cancelled purchases cannot be received.")
     received_value = ZERO
     any_received = False
-    for item in purchase.items.select_related("product", "variant"):
+    locked_items = (
+        PurchaseItem.objects.select_for_update()
+        .select_related("product__unit", "variant")
+        .filter(purchase=purchase, business=purchase.business)
+        .order_by("pk")
+    )
+    for item in locked_items:
         qty = D(quantities.get(item.pk, 0))
         if qty <= 0:
             continue
@@ -91,6 +144,14 @@ def receive_purchase(*, purchase, quantities, user, request=None):
             raise ValidationError(
                 f"Cannot receive {qty} of {item.product_name}; only "
                 f"{item.quantity_pending} pending."
+            )
+        if (
+            item.product.is_meter_tailoring
+            and item.product.has_variants
+            and item.variant is None
+        ):
+            raise ValidationError(
+                f"Select a variant/color for {item.product.name} before receipt."
             )
         if item.product.is_stocked:
             inventory.record_movement(
@@ -399,9 +460,20 @@ def update_cheque_status(*, payment, status, user, request=None):
 def return_purchase(*, purchase, quantities, user, reason="", request=None):
     """quantities: {purchase_item_id: qty_to_return}. Reduces stock and
     supplier payable."""
+    purchase = (
+        Purchase.objects.select_for_update()
+        .select_related("supplier", "warehouse")
+        .get(pk=purchase.pk, business=purchase.business)
+    )
     items = []
     total = ZERO
-    for item in purchase.items.select_related("product", "variant"):
+    locked_items = (
+        PurchaseItem.objects.select_for_update()
+        .select_related("product__unit", "variant")
+        .filter(purchase=purchase, business=purchase.business)
+        .order_by("pk")
+    )
+    for item in locked_items:
         qty = D(quantities.get(item.pk, 0))
         if qty <= 0:
             continue
@@ -450,3 +522,44 @@ def return_purchase(*, purchase, quantities, user, reason="", request=None):
               description=f"Purchase return {purchase_return.return_number} "
                           f"({total}) against {purchase.purchase_number}.")
     return purchase_return
+
+
+@transaction.atomic
+def cancel_purchase(*, purchase, user, request=None):
+    """Cancel an untouched purchase while serialized with receive/payment paths."""
+    locked_purchase = Purchase.objects.select_for_update().get(
+        pk=purchase.pk, business=purchase.business
+    )
+    if locked_purchase.status == Purchase.Status.CANCELLED:
+        raise ValidationError("Purchase is already cancelled.")
+    locked_items = PurchaseItem.objects.select_for_update().filter(
+        purchase=locked_purchase, business=locked_purchase.business
+    )
+    if locked_items.filter(quantity_received__gt=0).exists():
+        raise ValidationError(
+            "Purchases with received goods cannot be cancelled — use a "
+            "purchase return instead."
+        )
+    has_pending_cheque = SupplierPayment.objects.for_business(
+        locked_purchase.business
+    ).filter(
+        purchase=locked_purchase,
+        method=SupplierPayment.Method.CHEQUE,
+        cheque_status=SupplierPayment.ChequeStatus.PENDING,
+    ).exists()
+    if locked_purchase.amount_paid > 0 or has_pending_cheque:
+        raise ValidationError(
+            "Purchases with Paid or Pending Cheques cannot be cancelled."
+        )
+    locked_purchase.status = Purchase.Status.CANCELLED
+    locked_purchase.save(update_fields=["status", "updated_at"])
+    audit.log(
+        "purchase.cancelled",
+        business=locked_purchase.business,
+        user=user,
+        request=request,
+        module="purchases",
+        obj=locked_purchase,
+        description=f"Purchase {locked_purchase.purchase_number} cancelled.",
+    )
+    return locked_purchase

@@ -116,6 +116,9 @@ class Sale(TenantModel):
     )
 
     invoice_number = models.CharField(max_length=40, blank=True)
+    # Client-generated idempotency key for POS checkout retries.  Historical
+    # sales and non-POS integrations remain null.
+    checkout_token = models.CharField(max_length=64, null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     priority = models.CharField(
         max_length=10, choices=Priority.choices, default=Priority.NORMAL, db_index=True
@@ -169,6 +172,11 @@ class Sale(TenantModel):
                 fields=["business", "invoice_number"],
                 condition=~models.Q(invoice_number=""),
                 name="uniq_invoice_number_per_business",
+            ),
+            models.UniqueConstraint(
+                fields=["business", "checkout_token"],
+                condition=models.Q(checkout_token__isnull=False),
+                name="uniq_sale_checkout_token_per_business",
             ),
             models.CheckConstraint(
                 condition=models.Q(priority__in=["normal", "high", "urgent"]),
@@ -317,6 +325,21 @@ class SaleItem(TenantModel):
         ],
         help_text="Workshop-recorded actual fabric consumption in meters.",
     )
+    fabric_meter_used = models.DecimalField(
+        "POS Fabric Meter Used",
+        max_digits=14,
+        decimal_places=3,
+        null=True,
+        blank=True,
+        validators=[
+            MinValueValidator(Decimal("0.001")),
+            MaxValueValidator(MAX_FABRIC_TOTAL),
+        ],
+        help_text=(
+            "Immutable meter quantity entered at POS and used for inventory "
+            "deduction. Null for historical and non-tailoring rows."
+        ),
+    )
     tailoring_details = models.JSONField(default=dict, blank=True)
 
     class Meta:
@@ -343,6 +366,13 @@ class SaleItem(TenantModel):
                 ),
                 name="saleitem_actual_fabric_nonnegative",
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(fabric_meter_used__isnull=True)
+                    | models.Q(fabric_meter_used__gt=0)
+                ),
+                name="saleitem_fabric_meter_positive",
+            ),
         ]
 
     def __str__(self):
@@ -368,9 +398,17 @@ class SaleItem(TenantModel):
     @property
     def is_tailoring_line(self):
         return bool(
-            self.has_tailoring_details
-            or (self.product_id and self.product.is_tailoring_item)
+            self.fabric_meter_used is not None
+            or self.has_tailoring_details
+            or self.estimated_fabric is not None
+            or self.actual_fabric_used is not None
+            or bool(self.collection_type)
         )
+
+    @property
+    def inventory_quantity(self):
+        """Inventory quantity represented by this completed sale line."""
+        return self.fabric_meter_used if self.fabric_meter_used is not None else self.quantity
 
     @property
     def garment_classification_label(self):

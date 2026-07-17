@@ -12,8 +12,6 @@
     {% if has_tailoring_jobs %}
       <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm">
         <i class="bi bi-clipboard-check"></i> Download All Job Cards</a>
-    {% else %}
-      <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-clipboard-check"></i> Workshop Job Card</a>
     {% endif %}
     {% if "sales.refund" in business_perms and sale.status != "voided" %}
       <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
@@ -46,13 +44,17 @@
               {% if item.is_tailoring_line %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
                 <div class="small text-secondary">Collection: <span class="fw-semibold text-body">{{ item.collection_type_label }}</span></div>
-                <div class="small text-secondary">
-                  Estimated: <span class="fw-semibold text-body">{% if item.estimated_fabric is not None %}{{ item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
-                </div>
-                <div class="small text-secondary">
-                  Actual: <span class="fw-semibold text-body">{% if item.actual_fabric_used is not None %}{{ item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
-                  <span class="ms-2">Variance: <span class="fw-semibold text-body">{% if item.fabric_variance is not None %}{{ item.fabric_variance|floatformat:"-3" }} m{% else %}Not available{% endif %}</span></span>
-                </div>
+                {% if item.fabric_meter_used is not None %}
+                  <div class="small text-secondary">Meter: <span class="fw-semibold text-body">{{ item.fabric_meter_used|floatformat:"-3" }} m</span></div>
+                {% else %}
+                  <div class="small text-secondary">
+                    Legacy estimate: <span class="fw-semibold text-body">{% if item.estimated_fabric is not None %}{{ item.estimated_fabric|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
+                  </div>
+                  <div class="small text-secondary">
+                    Legacy workshop actual: <span class="fw-semibold text-body">{% if item.actual_fabric_used is not None %}{{ item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</span>
+                    <span class="ms-2">Variance: <span class="fw-semibold text-body">{% if item.fabric_variance is not None %}{{ item.fabric_variance|floatformat:"-3" }} m{% else %}Not available{% endif %}</span></span>
+                  </div>
+                {% endif %}
               {% endif %}
               <span class="small text-secondary">{{ item.sku }}</span>
             </td>
@@ -67,7 +69,7 @@
               {% if item.is_tailoring_line %}
                 <a href="{% url 'sales:sale_item_workshop_job_card_pdf' sale.public_id item.id %}"
                    class="btn btn-sm btn-outline-primary" target="_blank">Job Card</a>
-                {% if can_edit_actual_fabric %}
+                {% if can_edit_actual_fabric and item.fabric_meter_used is None %}
                 <form method="post" action="{% url 'sales:sale_item_update_fabric' sale.public_id item.id %}"
                       class="d-flex gap-1 mt-2 justify-content-end">
                   {% csrf_token %}

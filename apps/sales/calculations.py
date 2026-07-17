@@ -23,6 +23,11 @@ def resolve_tax_rate(business, product, explicit_rate=None):
     """
     if explicit_rate is not None:
         return D(explicit_rate)
+    if product.is_meter_tailoring:
+        settings_obj = business.settings if business is not None else None
+        if settings_obj and settings_obj.vat_enabled:
+            return D(settings_obj.vat_percentage)
+        return ZERO
     product_rate = D(product.effective_tax_rate())
     if product_rate > 0:
         return product_rate
@@ -33,6 +38,10 @@ def resolve_tax_rate(business, product, explicit_rate=None):
 
 
 def _price_includes_tax(business, product, prices_include_tax=None):
+    if product.is_meter_tailoring:
+        if prices_include_tax is not None:
+            return prices_include_tax
+        return business.settings.prices_include_tax if business is not None else False
     if product.price_includes_tax is not None:
         return product.price_includes_tax
     if prices_include_tax is not None:

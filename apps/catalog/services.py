@@ -8,6 +8,51 @@ from django.db import transaction
 from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
 
 
+def validate_meter_product_shape(
+    product, *, target_unit, target_type, target_tailoring=None
+):
+    """Block unsafe Meter workflow changes once stock or transactions exist."""
+    if not product.pk:
+        return
+    old_meter = bool(product.unit_id and product.unit.is_meter)
+    new_meter = bool(target_unit and target_unit.is_meter)
+    if not old_meter and not new_meter:
+        return
+    type_changed = target_type != product.product_type
+    meter_semantic_changed = old_meter != new_meter
+    old_meter_workflow = old_meter and product.is_tailoring_item
+    new_meter_workflow = new_meter and (
+        product.is_tailoring_item
+        if target_tailoring is None
+        else bool(target_tailoring)
+    )
+    meter_workflow_changed = old_meter_workflow != new_meter_workflow
+
+    has_history = bool(product_history_refs(product)) or (
+        product.stock_levels.exclude(quantity=0).exists()
+    )
+    has_variants = product.variants.exists()
+    if (
+        type_changed or meter_semantic_changed or meter_workflow_changed
+    ) and (has_history or has_variants):
+        raise ValidationError(
+            "The Meter workflow, unit, or product type cannot be changed after "
+            "variants, stock movements, purchases, or sales exist."
+        )
+
+    if new_meter_workflow and target_type == Product.Type.VARIANT:
+        if product.stock_levels.filter(variant__isnull=True).exclude(quantity=0).exists():
+            raise ValidationError(
+                "Move or adjust existing parent stock to zero before using "
+                "Meter color variants."
+            )
+    elif new_meter_workflow and has_variants:
+        raise ValidationError(
+            "Remove unused variants before changing this Meter product to a "
+            "non-variant type."
+        )
+
+
 def sku_prefix_for(business):
     """Per-business auto-SKU prefix: first 3 alphanumeric chars of the
     business name, uppercased. Falls back to 'SKU' when the name has none."""
@@ -139,7 +184,9 @@ def _as_bool(value, default=False):
     return raw in ("1", "true", "yes", "y", "active", "enabled")
 
 
-def _as_decimal(value, *, row_no, field, required=False, minimum=None):
+def _as_decimal(
+    value, *, row_no, field, required=False, minimum=None, decimal_places=3,
+):
     raw = str(value or "").strip()
     if raw == "":
         if required:
@@ -149,8 +196,14 @@ def _as_decimal(value, *, row_no, field, required=False, minimum=None):
         parsed = Decimal(raw)
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"{field} must be numeric.") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{field} must be numeric.")
     if minimum is not None and parsed < minimum:
         raise ValueError(f"{field} cannot be below {minimum}.")
+    if decimal_places is not None and parsed.as_tuple().exponent < -decimal_places:
+        raise ValueError(
+            f"{field} supports up to {decimal_places} decimal places."
+        )
     return parsed
 
 
@@ -173,10 +226,14 @@ def _resolve_tax_rate(business, raw):
     return tax
 
 
-def _resolve_warehouse(business, branch_name, warehouse_name):
+def _resolve_warehouse(
+    business, branch_name, warehouse_name, *, allowed_warehouse_ids=None
+):
     from apps.branches.models import Warehouse
 
     wh_qs = Warehouse.objects.for_business(business).filter(is_active=True)
+    if allowed_warehouse_ids is not None:
+        wh_qs = wh_qs.filter(pk__in=allowed_warehouse_ids)
     if branch_name:
         wh_qs = wh_qs.filter(branch__name__iexact=branch_name)
         if not wh_qs.exists():
@@ -296,7 +353,9 @@ def product_export_dataset(business, filters):
     return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
 
 
-def import_products(*, business, rows, match_by, user):
+def import_products(
+    *, business, rows, match_by, user, allowed_warehouse_ids=None
+):
     """Import products and variants with row-level error reporting.
 
     Matching remains backward compatible with the old form choices:
@@ -331,12 +390,16 @@ def import_products(*, business, rows, match_by, user):
 
             if not name and not r.get("variant parent"):
                 raise ValueError("Product name is required.")
-            for code, seen, label in (
-                (sku, seen_skus, "SKU"),
+            identifiers = [
                 (variant_sku, seen_skus, "Variant SKU"),
-                (barcode, seen_barcodes, "Barcode"),
                 (variant_barcode, seen_barcodes, "Variant barcode"),
-            ):
+            ]
+            if not is_variant_row:
+                identifiers.extend([
+                    (sku, seen_skus, "SKU"),
+                    (barcode, seen_barcodes, "Barcode"),
+                ])
+            for code, seen, label in identifiers:
                 if code and code in seen:
                     raise ValueError(f"{label} is repeated in this file: {code}")
                 if code:
@@ -410,10 +473,10 @@ def import_products(*, business, rows, match_by, user):
                 raise ValueError(f"Plan product limit ({limit}) reached.")
 
             warehouse = _resolve_warehouse(
-                business, r.get("branch", ""), r.get("warehouse", "")
-            )
-            tax_rate = _resolve_tax_rate(
-                business, r.get("tax/vat rate") or r.get("tax rate") or r.get("vat")
+                business,
+                r.get("branch", ""),
+                r.get("warehouse", ""),
+                allowed_warehouse_ids=allowed_warehouse_ids,
             )
             category = None
             if r.get("category"):
@@ -432,10 +495,84 @@ def import_products(*, business, rows, match_by, user):
                 ).first()
                 if unit is None:
                     raise ValueError(f"Unit not found: {r['unit']}")
+            if (
+                is_variant_row
+                and existing is not None
+                and unit is not None
+                and unit.pk != existing.unit_id
+            ):
+                raise ValueError("Variant unit must match its parent product unit.")
+            effective_unit = (
+                existing.unit
+                if is_variant_row and existing is not None
+                else unit or (existing.unit if existing is not None else None)
+            )
+            expected_parent_unit_id = (
+                existing.unit_id
+                if is_variant_row and existing is not None
+                else None
+            )
+            expected_parent_is_meter = bool(
+                is_variant_row
+                and existing is not None
+                and effective_unit
+                and effective_unit.is_meter
+            )
+            expected_parent_meter_workflow = bool(
+                is_variant_row
+                and existing is not None
+                and existing.is_meter_tailoring
+            )
+            is_meter = bool(
+                existing.is_meter_tailoring
+                if is_variant_row and existing is not None
+                else effective_unit and effective_unit.is_meter
+            )
+            tax_rate = None
+            if not is_meter:
+                tax_rate = _resolve_tax_rate(
+                    business,
+                    r.get("tax/vat rate") or r.get("tax rate") or r.get("vat"),
+                )
+            if is_meter:
+                if product_type not in (Product.Type.STANDARD, Product.Type.VARIANT):
+                    raise ValueError("Meter tailoring products must track inventory.")
+                # Customer pricing and parent thresholds are deliberately not
+                # active for fabric inventory.  The garment charge is entered
+                # per locked POS line; purchase price remains the meter cost.
+                sale_price = Decimal("0")
+                reorder_level = Decimal("0")
+                tax_rate = None
+                if not is_variant_row and opening_stock > 0:
+                    raise ValueError(
+                        "Meter opening stock must be entered for a variant/color "
+                        "or received through a purchase."
+                    )
+                if is_variant_row and opening_stock > 0 and warehouse is None:
+                    raise ValueError(
+                        "Select a warehouse for Meter variant opening stock."
+                    )
 
             with transaction.atomic():
                 if is_variant_row:
                     product = existing
+                    if product is not None:
+                        product = (
+                            Product.objects.select_for_update()
+                            .select_related("unit")
+                            .get(pk=product.pk, business=business)
+                        )
+                        if (
+                            product.unit_id != expected_parent_unit_id
+                            or bool(product.unit and product.unit.is_meter)
+                            != expected_parent_is_meter
+                            or product.is_meter_tailoring
+                            != expected_parent_meter_workflow
+                        ):
+                            raise ValueError(
+                                "The parent product unit changed during import. "
+                                "Retry this row."
+                            )
                     if product is None:
                         _duplicate_code_exists(business, sku=sku, barcode=barcode)
                         product = Product.objects.create(
@@ -448,25 +585,45 @@ def import_products(*, business, rows, match_by, user):
                             average_cost=cost_price,
                             tax_rate=tax_rate,
                             price_includes_tax=(
-                                _as_bool(r.get("tax inclusive"))
-                                if r.get("tax inclusive", "") != ""
-                                else None
+                                None
+                                if is_meter
+                                else (
+                                    _as_bool(r.get("tax inclusive"))
+                                    if r.get("tax inclusive", "") != ""
+                                    else None
+                                )
                             ),
                             reorder_level=reorder_level,
-                            track_inventory=_as_bool(r.get("track inventory"), True),
+                            track_inventory=(
+                                True if is_meter
+                                else _as_bool(r.get("track inventory"), True)
+                            ),
+                            allow_discount=not is_meter,
+                            is_tailoring_item=is_meter,
                             is_active=_as_bool(r.get("active"), True),
                             is_archived=_as_bool(r.get("archived"), False),
                         )
                         summary["created"] += 1
                     else:
+                        update_fields = ["product_type", "updated_at"]
+                        if product.unit_id and product.unit.is_meter:
+                            validate_meter_product_shape(
+                                product,
+                                target_unit=product.unit,
+                                target_type=Product.Type.VARIANT,
+                                target_tailoring=product.is_tailoring_item,
+                            )
+                            if product.is_meter_tailoring:
+                                product.is_tailoring_item = True
+                                product.track_inventory = True
+                                update_fields.extend([
+                                    "is_tailoring_item", "track_inventory",
+                                ])
                         product.product_type = Product.Type.VARIANT
-                        product.save(update_fields=["product_type", "updated_at"])
+                        product.save(update_fields=update_fields)
 
-                    variant_sku = variant_sku or sku
-                    variant_barcode = variant_barcode or barcode
                     _duplicate_code_exists(
                         business, sku=variant_sku, barcode=variant_barcode,
-                        exclude_product=product,
                     )
                     attributes = {}
                     if option_name and option_value:
@@ -500,14 +657,22 @@ def import_products(*, business, rows, match_by, user):
                     sale_price=sale_price, average_cost=cost_price,
                     tax_rate=tax_rate,
                     price_includes_tax=(
-                        _as_bool(r.get("tax inclusive"))
-                        if r.get("tax inclusive", "") != "" else None
+                        None
+                        if is_meter
+                        else (
+                            _as_bool(r.get("tax inclusive"))
+                            if r.get("tax inclusive", "") != "" else None
+                        )
                     ),
                     reorder_level=reorder_level,
-                    track_inventory=_as_bool(
-                        r.get("track inventory"),
-                        product_type in (Product.Type.STANDARD, Product.Type.VARIANT),
+                    track_inventory=(
+                        True if is_meter else _as_bool(
+                            r.get("track inventory"),
+                            product_type in (Product.Type.STANDARD, Product.Type.VARIANT),
+                        )
                     ),
+                    allow_discount=not is_meter,
+                    is_tailoring_item=is_meter,
                     is_active=_as_bool(r.get("active"), True),
                     is_archived=_as_bool(r.get("archived"), False),
                 )
@@ -540,7 +705,14 @@ DEFAULT_UNITS = [
 
 def create_default_catalog(business):
     for name, abbr, dec in DEFAULT_UNITS:
-        Unit.objects.get_or_create(
+        unit, _created = Unit.objects.get_or_create(
             business=business, name=name,
-            defaults={"abbreviation": abbr, "allow_decimal": dec},
+            defaults={
+                "abbreviation": abbr,
+                "allow_decimal": dec,
+                "is_meter": name == "Meter",
+            },
         )
+        if name == "Meter" and not unit.is_meter:
+            unit.is_meter = True
+            unit.save(update_fields=["is_meter", "updated_at"])

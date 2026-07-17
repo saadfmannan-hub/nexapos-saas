@@ -28,14 +28,32 @@ from . import services
 from .models import Purchase
 
 
+def _purchases_for_request(request, queryset=None):
+    """Scope purchase reads and mutations to assigned branches."""
+    qs = queryset if queryset is not None else Purchase.objects.all()
+    allowed = request.membership.allowed_branch_ids
+    if allowed is None:
+        return qs
+    return qs.filter(
+        branch_id__in=allowed,
+        warehouse__business=request.business,
+    ).filter(
+        Q(warehouse__branch_id__in=allowed) | Q(warehouse__branch__isnull=True)
+    )
+
+
 @require_permission("purchases.view")
 def purchase_list(request):
     if not subscriptions.has_feature(request.business, "purchases"):
         return render(request, "inventory/feature_locked.html",
                       {"feature": "Purchases", "active_nav": "purchases"})
     qs = services.with_pending_cheques(
-        Purchase.objects.for_business(request.business)
-        .select_related("supplier", "warehouse", "created_by")
+        _purchases_for_request(
+            request,
+            Purchase.objects.for_business(request.business).select_related(
+                "supplier", "warehouse", "created_by"
+            ),
+        )
     )
     q = request.GET.get("q", "").strip()
     if q:
@@ -86,6 +104,8 @@ def _parse_purchase_rows(request):
                     pk=int(vid), product=product)
             except (ProductVariant.DoesNotExist, ValueError):
                 raise ValidationError("Invalid variant in line items.")
+        if product.is_meter_tailoring and product.has_variants and variant is None:
+            raise ValidationError(f"Select a variant/color for {product.name}.")
         qty = D(qtys[i] if i < len(qtys) else 0)
         if qty == 0:
             continue
@@ -106,14 +126,20 @@ def purchase_create(request):
     suppliers = Supplier.objects.for_business(request.business).filter(is_active=True)
     warehouses = Warehouse.objects.for_business(request.business).filter(is_active=True)
     branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        branches = branches.filter(pk__in=allowed)
+        warehouses = warehouses.filter(
+            Q(branch_id__in=allowed) | Q(branch__isnull=True)
+        )
     if request.method == "POST":
         try:
             subscriptions.require_operational(request.business)
             supplier = get_tenant_object(Supplier, request.business,
                                          pk=request.POST.get("supplier_id"))
-            warehouse = get_tenant_object(Warehouse, request.business,
+            warehouse = get_tenant_object(warehouses, request.business,
                                           pk=request.POST.get("warehouse_id"))
-            branch = get_tenant_object(Branch, request.business,
+            branch = get_tenant_object(branches, request.business,
                                        pk=request.POST.get("branch_id"))
             rows = _parse_purchase_rows(request)
             purchase = services.create_purchase(
@@ -172,6 +198,10 @@ def quick_add_product(request):
             product = form.save(commit=False)
             product.business = request.business
             product.product_type = Product.Type.STANDARD
+            if product.unit.is_meter:
+                product.is_tailoring_item = True
+                product.track_inventory = True
+                product.allow_discount = False
             product.is_active = True
             product.save()
     except (subscriptions.LimitExceeded,
@@ -206,7 +236,12 @@ def quick_add_product(request):
 @require_permission("purchases.view")
 def purchase_detail(request, public_id):
     purchase = get_tenant_object(
-        Purchase.objects.select_related("supplier", "warehouse", "branch", "created_by"),
+        _purchases_for_request(
+            request,
+            Purchase.objects.select_related(
+                "supplier", "warehouse", "branch", "created_by"
+            ),
+        ),
         request.business, public_id=public_id,
     )
     items = purchase.items.select_related("product", "variant")
@@ -233,7 +268,11 @@ def _collect_quantities(request, prefix):
 
 @require_permission("purchases.manage")
 def purchase_receive(request, public_id):
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     if request.method == "POST":
         try:
             subscriptions.require_operational(request.business)
@@ -269,7 +308,11 @@ def _parse_payment_rows(request):
 @require_permission("purchases.manage")
 @require_POST
 def purchase_pay(request, public_id):
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     try:
         subscriptions.require_operational(request.business)
         payments = services.record_purchase_payments(
@@ -290,7 +333,11 @@ def purchase_pay(request, public_id):
 @require_permission("purchases.manage")
 @require_POST
 def purchase_cheque_status(request, public_id, payment_public_id):
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     payment = get_tenant_object(
         SupplierPayment.objects.select_related("purchase", "supplier"),
         request.business,
@@ -313,7 +360,11 @@ def purchase_cheque_status(request, public_id, payment_public_id):
 
 @require_permission("purchases.manage")
 def purchase_return(request, public_id):
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     if request.method == "POST":
         try:
             subscriptions.require_operational(request.business)
@@ -349,7 +400,12 @@ def _po_context(purchase, **extra):
 @require_permission("purchases.view")
 def purchase_print(request, public_id):
     purchase = get_tenant_object(
-        Purchase.objects.select_related("supplier", "warehouse", "branch", "business"),
+        _purchases_for_request(
+            request,
+            Purchase.objects.select_related(
+                "supplier", "warehouse", "branch", "business"
+            ),
+        ),
         request.business, public_id=public_id,
     )
     from django.shortcuts import render as _render
@@ -364,7 +420,12 @@ def purchase_pdf(request, public_id):
     from apps.reports.pdf import render_pdf
 
     purchase = get_tenant_object(
-        Purchase.objects.select_related("supplier", "warehouse", "branch", "business"),
+        _purchases_for_request(
+            request,
+            Purchase.objects.select_related(
+                "supplier", "warehouse", "branch", "business"
+            ),
+        ),
         request.business, public_id=public_id,
     )
     pdf = render_pdf("invoices/purchase_order.html",
@@ -384,7 +445,11 @@ def purchase_share(request, public_id):
 
     from apps.audit import services as audit
 
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     token = signing.dumps({"po": str(purchase.public_id)}, salt=PO_SHARE_SALT)
     share_url = request.build_absolute_uri(f"/purchases/shared/{token}/")
     if request.method == "POST":
@@ -429,7 +494,10 @@ def purchase_email(request, public_id):
     from apps.reports.pdf import render_pdf
 
     purchase = get_tenant_object(
-        Purchase.objects.select_related("supplier", "business"),
+        _purchases_for_request(
+            request,
+            Purchase.objects.select_related("supplier", "business"),
+        ),
         request.business, public_id=public_id,
     )
     if request.method != "POST":
@@ -469,26 +537,20 @@ def purchase_email(request, public_id):
 
 @require_permission("purchases.manage")
 def purchase_cancel(request, public_id):
-    purchase = get_tenant_object(Purchase, request.business, public_id=public_id)
+    purchase = get_tenant_object(
+        _purchases_for_request(request),
+        request.business,
+        public_id=public_id,
+    )
     if request.method == "POST":
-        if purchase.items.filter(quantity_received__gt=0).exists():
-            messages.error(request, "Purchases with received goods cannot be "
-                                    "cancelled — use a purchase return instead.")
-        elif purchase.amount_paid > 0 or purchase.payments.filter(
-            method=SupplierPayment.Method.CHEQUE,
-            cheque_status=SupplierPayment.ChequeStatus.PENDING,
-        ).exists():
-            messages.error(
-                request,
-                "Purchases with Paid or Pending Cheques cannot be cancelled.",
+        try:
+            services.cancel_purchase(
+                purchase=purchase,
+                user=request.user,
+                request=request,
             )
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
         else:
-            purchase.status = Purchase.Status.CANCELLED
-            purchase.save(update_fields=["status", "updated_at"])
-            from apps.audit import services as audit
-
-            audit.log("purchase.cancelled", request=request, module="purchases",
-                      obj=purchase,
-                      description=f"Purchase {purchase.purchase_number} cancelled.")
             messages.success(request, "Purchase cancelled.")
     return redirect("purchases:detail", public_id=public_id)

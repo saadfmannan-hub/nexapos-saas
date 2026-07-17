@@ -27,6 +27,11 @@ class PosCollectionTypeTests(TenantTestCase):
         self.product_a.is_tailoring_item = True
         self.product_a.save(update_fields=["is_tailoring_item"])
         self.client.force_login(self.owner_a)
+        self._checkout_token_sequence = 0
+
+    def next_checkout_token(self):
+        self._checkout_token_sequence += 1
+        return f"pos-collection-{self._checkout_token_sequence:04d}"
 
     def payload(self, collection_type="normal", **overrides):
         payload = {
@@ -46,6 +51,7 @@ class PosCollectionTypeTests(TenantTestCase):
             "invoice_discount": "0",
             "delivery_date": str(timezone.localdate()),
             "priority": "normal",
+            "checkout_token": self.next_checkout_token(),
         }
         payload.update(overrides)
         return payload
@@ -78,8 +84,12 @@ class PosCollectionTypeTests(TenantTestCase):
 
     def test_pos_defaults_tailoring_lines_to_normal_and_hides_retail_selector(self):
         html = self.client.get(reverse("sales:pos")).content.decode()
-        self.assertIn("collection_type: p.is_tailoring_item ? 'normal' : ''", html)
-        self.assertIn('x-show="line.is_tailoring_item"', html)
+        self.assertIn(
+            "collection_type: (p.is_meter_tailoring || p.is_legacy_tailoring) "
+            "? 'normal' : ''",
+            html,
+        )
+        self.assertIn('x-show="line.is_tailoring_workflow"', html)
         self.assertIn('value="normal"', html)
         self.assertIn('value="premium"', html)
 
@@ -123,7 +133,12 @@ class PosCollectionTypeTests(TenantTestCase):
         self.assertEqual(sale.items.get().collection_type, "")
 
     def test_held_cart_round_trip_preserves_premium_and_restore_logic(self):
-        cart = {"items": self.payload("premium")["items"], "priority": "normal"}
+        payload = self.payload("premium")
+        cart = {
+            "items": payload["items"],
+            "priority": "normal",
+            "checkout_token": payload["checkout_token"],
+        }
         response = self.client.post(
             reverse("sales:pos_hold"),
             json.dumps({
@@ -138,7 +153,7 @@ class PosCollectionTypeTests(TenantTestCase):
         self.assertEqual(held["cart"]["items"][0]["collection_type"], "premium")
         html = self.client.get(reverse("sales:pos")).content.decode()
         self.assertIn("['normal', 'premium'].includes(collectionType)", html)
-        self.assertIn("line.is_tailoring_item ? 'normal' : ''", html)
+        self.assertIn("line.is_tailoring_workflow ? 'normal' : ''", html)
 
     def test_line_discount_ui_and_pos_workflow_are_removed(self):
         html = self.client.get(reverse("sales:pos")).content.decode()

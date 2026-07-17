@@ -154,6 +154,11 @@
                 <div class="text-danger small mt-1" x-text="message"></div>
               </template>
             </div>
+            <div class="col-12" x-show="quickIsMeterUnit()" x-cloak>
+              <div class="alert alert-info py-2 small mb-0">
+                Meter creates tracked tailoring fabric. Enter its cost here; the garment charge is entered later at POS.
+              </div>
+            </div>
             <div class="col-md-6">
               <label class="form-label required-star" for="{{ quick_product_form.purchase_price.id_for_label }}">{{ quick_product_form.purchase_price.label }}</label>
               {{ quick_product_form.purchase_price }}
@@ -161,28 +166,28 @@
                 <div class="text-danger small mt-1" x-text="message"></div>
               </template>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6" x-show="!quickIsMeterUnit()" x-cloak>
               <label class="form-label required-star" for="{{ quick_product_form.sale_price.id_for_label }}">{{ quick_product_form.sale_price.label }}</label>
               {{ quick_product_form.sale_price }}
               <template x-for="(message, index) in quickFieldErrors('sale_price')" :key="'sale-price-' + index">
                 <div class="text-danger small mt-1" x-text="message"></div>
               </template>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6" x-show="!quickIsMeterUnit()" x-cloak>
               <label class="form-label" for="{{ quick_product_form.tax_rate.id_for_label }}">{{ quick_product_form.tax_rate.label }}</label>
               {{ quick_product_form.tax_rate }}
               <template x-for="(message, index) in quickFieldErrors('tax_rate')" :key="'tax-' + index">
                 <div class="text-danger small mt-1" x-text="message"></div>
               </template>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6" x-show="!quickIsMeterUnit()" x-cloak>
               <label class="form-label" for="{{ quick_product_form.price_includes_tax.id_for_label }}">{{ quick_product_form.price_includes_tax.label }}</label>
               {{ quick_product_form.price_includes_tax }}
               <template x-for="(message, index) in quickFieldErrors('price_includes_tax')" :key="'tax-mode-' + index">
                 <div class="text-danger small mt-1" x-text="message"></div>
               </template>
             </div>
-            <div class="col-12">
+            <div class="col-12" x-show="!quickIsMeterUnit()" x-cloak>
               <div class="form-check">
                 {{ quick_product_form.track_inventory }}
                 <label class="form-check-label" for="{{ quick_product_form.track_inventory.id_for_label }}">Track inventory for this product</label>
@@ -215,6 +220,7 @@
 function purchaseRows() {
   return {
     query: '', results: [], rows: [],
+    quickUnitId: '',
     quickSubmitting: false, quickErrors: {}, quickSuccess: '',
     async search() {
       if (this.query.length < 2) { this.results = []; return; }
@@ -229,6 +235,14 @@ function purchaseRows() {
     },
     quickFieldErrors(field) {
       return this.quickErrors[field] || [];
+    },
+    quickIsMeterUnit() {
+      const select = this.$refs.quickProductUnit;
+      if (!select) return false;
+      const selected = Array.from(select.options).find(
+        option => option.value === String(this.quickUnitId)
+      );
+      return !!selected && selected.dataset.isMeter === 'true';
     },
     openQuickAdd() {
       this.quickErrors = {};
@@ -269,6 +283,7 @@ function purchaseRows() {
         this.add(data.product);
         this.quickSuccess = `${data.product.label} added to this purchase.`;
         form.reset();
+        this.quickUnitId = '';
         const modalElement = this.$refs.quickProductModal;
         modalElement.addEventListener('hidden.bs.modal', () => {
           this.$refs.productSearch?.focus();

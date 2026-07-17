@@ -21,7 +21,7 @@
             <input type="hidden" name="product_id" :value="row.product_id">
             <input type="hidden" name="variant_id" :value="row.variant_id || ''">
           </td>
-          <td><input type="number" step="any" name="quantity" class="form-control form-control-sm" x-model="row.quantity"></td>
+          <td><input type="number" step="any" {% if not allow_parent_meter_repair %}min="0.001"{% endif %} name="quantity" class="form-control form-control-sm" x-model="row.quantity"></td>
           <td><button type="button" class="btn btn-sm btn-outline-danger" @click="rows.splice(i,1)"><i class="bi bi-x"></i></button></td>
         </tr>
       </template>
@@ -35,7 +35,7 @@ function itemRows() {
     query: '', results: [], rows: [],
     async search() {
       if (this.query.length < 2) { this.results = []; return; }
-      const r = await fetch("{% url 'inventory:item_search' %}?q=" + encodeURIComponent(this.query));
+      const r = await fetch("{% url 'inventory:item_search' %}?q=" + encodeURIComponent(this.query){% if allow_parent_meter_repair %} + "&parent_meter_repair=1"{% endif %});
       this.results = (await r.json()).results;
     },
     add(r) {

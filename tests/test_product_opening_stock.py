@@ -88,7 +88,7 @@ class ProductOpeningStockTests(TenantTestCase):
             D("12.000"),
         )
 
-    def test_decimal_meter_stock_preserves_three_decimal_places(self):
+    def test_meter_parent_opening_stock_is_rejected(self):
         response = self.client.post(
             reverse("catalog:product_create"),
             self.payload(
@@ -98,16 +98,14 @@ class ProductOpeningStockTests(TenantTestCase):
                 opening_stock="125.750",
             ),
         )
-        self.assertEqual(response.status_code, 302)
-        product = Product.objects.for_business(self.business_a).get(sku="FABRIC-125")
-        movement = StockMovement.objects.for_business(self.business_a).get(product=product)
-        self.assertEqual(product.unit, self.meter)
-        self.assertEqual(movement.quantity, D("125.750"))
-        self.assertEqual(movement.balance_after, D("125.750"))
-        self.assertEqual(
-            inventory.get_stock(self.business_a, self.warehouse_a, product),
-            D("125.750"),
+        self.assertEqual(response.status_code, 200)
+        self.assertFormError(
+            response.context["form"],
+            "opening_stock",
+            "Parent opening stock is not allowed for Meter products. "
+            "Enter stock for each variant instead.",
         )
+        self.assertFalse(Product.objects.filter(sku="FABRIC-125").exists())
 
     def test_positive_opening_stock_requires_warehouse(self):
         response = self.client.post(

@@ -50,6 +50,7 @@ class DeliveryDateTests(TenantTestCase):
                            "discount_amount": "0"}],
                 "payments": [{"method_id": self.cash_a.id, "amount": "10.50"}],
                 "delivery_date": str(self.future),
+                "checkout_token": "phase-update-delivery-date",
             }),
             content_type="application/json",
         )

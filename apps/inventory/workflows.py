@@ -25,11 +25,64 @@ def _next_number(model, business, field, prefix):
     return f"{prefix}-{n:06d}"
 
 
+def _lock_inventory_rows(business, rows, *, allow_parent_meter_repair=False):
+    """Refresh and lock product shape before creating inventory history."""
+    from apps.catalog.models import Product
+
+    rows = list(rows)
+    if not rows:
+        raise ValidationError("Enter at least one inventory item.")
+    product_ids = sorted({row["product"].pk for row in rows})
+    locked = {
+        product.pk: product
+        for product in (
+            Product.objects.select_for_update()
+            .select_related("unit")
+            .filter(pk__in=product_ids, business=business)
+            .order_by("pk")
+        )
+    }
+    normalised = []
+    for row in rows:
+        product = locked.get(row["product"].pk)
+        variant = row.get("variant")
+        if product is None:
+            raise ValidationError("Invalid product for this business.")
+        if variant is not None and (
+            variant.business_id != business.id
+            or variant.product_id != product.id
+        ):
+            raise ValidationError("Invalid product variant for this business.")
+        if (
+            product.is_meter_tailoring
+            and product.has_variants
+            and variant is None
+            and not allow_parent_meter_repair
+        ):
+            raise ValidationError(f"Select a variant/color for {product.name}.")
+        normalised.append({**row, "product": product, "variant": variant})
+    return normalised
+
+
+def _validate_warehouse(business, warehouse):
+    if warehouse.business_id != business.id or not warehouse.is_active:
+        raise ValidationError(
+            "Inventory warehouse must be active and belong to this business."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Transfers
 # ---------------------------------------------------------------------------
 @transaction.atomic
 def create_transfer(*, business, from_warehouse, to_warehouse, rows, user, notes=""):
+    _validate_warehouse(business, from_warehouse)
+    _validate_warehouse(business, to_warehouse)
+    if from_warehouse.pk == to_warehouse.pk:
+        raise ValidationError("Transfer warehouses must be different.")
+    rows = _lock_inventory_rows(business, rows)
+    if any(D(row.get("quantity")) <= 0 for row in rows):
+        raise ValidationError("Transfer quantities must be greater than zero.")
     transfer = StockTransfer.objects.create(
         business=business,
         transfer_number=_next_number(StockTransfer, business, "transfer_number", "TRF"),
@@ -53,6 +106,9 @@ def create_transfer(*, business, from_warehouse, to_warehouse, rows, user, notes
 
 @transaction.atomic
 def dispatch_transfer(*, transfer, user, request=None):
+    transfer = StockTransfer.objects.select_for_update().get(
+        pk=transfer.pk, business=transfer.business
+    )
     if transfer.status not in (StockTransfer.Status.DRAFT, StockTransfer.Status.APPROVED):
         raise ValidationError("Transfer cannot be dispatched in its current status.")
     for item in transfer.items.select_related("product", "variant"):
@@ -75,6 +131,9 @@ def dispatch_transfer(*, transfer, user, request=None):
 
 @transaction.atomic
 def receive_transfer(*, transfer, user, request=None):
+    transfer = StockTransfer.objects.select_for_update().get(
+        pk=transfer.pk, business=transfer.business
+    )
     if transfer.status != StockTransfer.Status.DISPATCHED:
         raise ValidationError("Only dispatched transfers can be received.")
     for item in transfer.items.select_related("product", "variant"):
@@ -97,6 +156,9 @@ def receive_transfer(*, transfer, user, request=None):
 
 @transaction.atomic
 def cancel_transfer(*, transfer, user, request=None):
+    transfer = StockTransfer.objects.select_for_update().get(
+        pk=transfer.pk, business=transfer.business
+    )
     if transfer.status == StockTransfer.Status.DISPATCHED:
         # Return goods to source
         for item in transfer.items.select_related("product", "variant"):
@@ -109,6 +171,11 @@ def cancel_transfer(*, transfer, user, request=None):
             )
     elif transfer.status == StockTransfer.Status.RECEIVED:
         raise ValidationError("Received transfers cannot be cancelled.")
+    elif transfer.status not in (
+        StockTransfer.Status.DRAFT,
+        StockTransfer.Status.APPROVED,
+    ):
+        raise ValidationError("Transfer cannot be cancelled in its current status.")
     transfer.status = StockTransfer.Status.CANCELLED
     transfer.save(update_fields=["status", "updated_at"])
     audit.log("transfer.cancelled", business=transfer.business, user=user,
@@ -130,6 +197,19 @@ ADJUST_MOVEMENT = {
 @transaction.atomic
 def create_adjustment(*, business, warehouse, reason, rows, user, notes="",
                       requires_approval=False, request=None):
+    _validate_warehouse(business, warehouse)
+    rows = _lock_inventory_rows(
+        business, rows, allow_parent_meter_repair=True
+    )
+    for row in rows:
+        product = row["product"]
+        if product.is_meter_tailoring and product.has_variants and row["variant"] is None:
+            current = services.get_stock(business, warehouse, product, None)
+            if current == 0 or D(row["quantity"]) != -current:
+                raise ValidationError(
+                    f"Legacy parent stock for {product.name} must be corrected "
+                    "exactly to zero."
+                )
     adjustment = StockAdjustment.objects.create(
         business=business,
         adjustment_number=_next_number(StockAdjustment, business,
@@ -181,6 +261,9 @@ def _apply_adjustment(adjustment, user):
 
 @transaction.atomic
 def approve_adjustment(*, adjustment, user, request=None):
+    adjustment = StockAdjustment.objects.select_for_update().get(
+        pk=adjustment.pk, business=adjustment.business
+    )
     if adjustment.status != StockAdjustment.Status.PENDING:
         raise ValidationError("Only pending adjustments can be approved.")
     adjustment.status = StockAdjustment.Status.APPROVED
@@ -195,6 +278,9 @@ def approve_adjustment(*, adjustment, user, request=None):
 
 @transaction.atomic
 def reject_adjustment(*, adjustment, user, request=None):
+    adjustment = StockAdjustment.objects.select_for_update().get(
+        pk=adjustment.pk, business=adjustment.business
+    )
     if adjustment.status != StockAdjustment.Status.PENDING:
         raise ValidationError("Only pending adjustments can be rejected.")
     adjustment.status = StockAdjustment.Status.REJECTED
@@ -212,6 +298,7 @@ def reject_adjustment(*, adjustment, user, request=None):
 @transaction.atomic
 def start_count(*, business, warehouse, user, notes=""):
     """Snapshot expected stock for every stocked product in the warehouse."""
+    _validate_warehouse(business, warehouse)
     count = StockCount.objects.create(
         business=business,
         count_number=_next_number(StockCount, business, "count_number", "CNT"),
@@ -230,6 +317,9 @@ def start_count(*, business, warehouse, user, notes=""):
 
 @transaction.atomic
 def approve_count(*, count, user, request=None):
+    count = StockCount.objects.select_for_update().get(
+        pk=count.pk, business=count.business
+    )
     if count.status not in (StockCount.Status.OPEN, StockCount.Status.REVIEW):
         raise ValidationError("This count is not open.")
     corrections = 0

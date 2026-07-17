@@ -8,7 +8,7 @@ register = template.Library()
 NUMERIC_TOKENS = (
     "amount", "bank", "balance", "card", "cash", "cost", "credit",
     "discount", "fabric", "gross", "margin", "paid", "payable", "profit", "qty",
-    "quantity", "receivable", "refund", "returned", "sales", "taxable",
+    "quantity", "receivable", "refund", "returned", "sales", "taxable", "meter",
     "total", "transactions", "unit price", "variance", "vat", "value",
 )
 TEXT_NUMERIC_EXCLUSIONS = ("customer credit", "credit / receivable", "credit limit")
