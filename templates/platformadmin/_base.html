@@ -48,6 +48,7 @@
     </div>
   </header>
   <main class="np-content">
+    {% include "components/back_navigation.html" %}
     {% if messages %}
       {% for message in messages %}
       <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} py-2">{{ message }}</div>

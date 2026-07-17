@@ -97,6 +97,40 @@ body.app-body {
   position: sticky; top: 0; z-index: 1030;
 }
 .np-content { padding: 1.25rem; flex: 1; }
+.global-back-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem;
+  max-width: 100%;
+  margin-bottom: .75rem;
+}
+.global-back-nav form { margin: 0; }
+.global-back-nav .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  min-width: 78px;
+  min-height: 38px;
+  padding: .3rem .65rem;
+  font-weight: 600;
+}
+.global-back-nav .btn:focus-visible {
+  outline: 3px solid rgba(13, 110, 253, .28);
+  outline-offset: 2px;
+}
+.global-back-nav .btn:disabled {
+  color: #94a3b8;
+  background: #f8fafc;
+  border-color: #dbe3ec;
+  opacity: .8;
+  pointer-events: none;
+}
+.np-content-pos .global-back-nav {
+  flex: 0 0 auto;
+  margin-bottom: .4rem;
+}
 
 @media (max-width: 991.98px) {
   .np-sidebar { transform: translateX(-100%); }
@@ -901,6 +935,15 @@ a { text-decoration: none; }
 
 @media (max-width: 575.98px) {
   .pos-tailoring-fields > .col-6 { width: 100%; }
+  .global-back-nav {
+    gap: .3rem;
+    margin-bottom: .65rem;
+  }
+  .global-back-nav .btn {
+    min-width: 72px;
+    padding-left: .55rem;
+    padding-right: .55rem;
+  }
 }
 
 @media (max-width: 359.98px) {

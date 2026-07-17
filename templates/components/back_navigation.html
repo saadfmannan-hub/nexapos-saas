@@ -1,0 +1,10 @@
+<nav class="global-back-nav no-print" aria-label="Page navigation"
+     data-global-back-navigation>
+  <form method="get"{% if back_enabled %} action="{{ back_url }}"{% endif %}>
+    <button type="submit" class="btn btn-sm btn-outline-secondary"
+            aria-label="Back"{% if not back_enabled %} disabled aria-disabled="true"{% else %} aria-disabled="false"{% endif %}>
+      <i class="bi bi-arrow-left" aria-hidden="true"></i>
+      <span>Back</span>
+    </button>
+  </form>
+</nav>
