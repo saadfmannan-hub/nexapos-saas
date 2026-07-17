@@ -199,12 +199,17 @@ def pos_products(request):
     qs = (
         Product.objects.for_business(request.business)
         .filter(is_active=True, is_archived=False)
-        .select_related("tax_rate", "unit")
+        .select_related("brand", "tax_rate", "unit")
         .prefetch_related("variants")
     )
     if q:
-        qs = qs.filter(Q(name__icontains=q) | Q(sku__icontains=q) |
-                       Q(barcode__icontains=q) | Q(internal_code__icontains=q))
+        qs = qs.filter(
+            Q(name__icontains=q)
+            | Q(brand__business=request.business, brand__name__icontains=q)
+            | Q(sku__icontains=q)
+            | Q(barcode__icontains=q)
+            | Q(internal_code__icontains=q)
+        )
     if category_id.isdigit():
         qs = qs.filter(Q(category_id=category_id) | Q(category__parent_id=category_id))
     qs = qs.order_by("name")[:60]
@@ -233,6 +238,11 @@ def pos_products(request):
     items = []
     for p in qs:
         tax_rate = calculations.resolve_tax_rate(request.business, p)
+        brand_name = (
+            p.brand.name
+            if p.brand_id and p.brand.business_id == request.business.id
+            else ""
+        )
         if p.has_variants:
             for v in p.variants.all():
                 if not v.is_active:
@@ -240,6 +250,7 @@ def pos_products(request):
                 items.append({
                     "product_id": p.id, "variant_id": v.id,
                     "name": f"{p.name} — {v.name}",
+                    "brand": brand_name,
                     "price": (
                         "0"
                         if p.is_meter_tailoring
@@ -261,6 +272,7 @@ def pos_products(request):
             items.append({
                 "product_id": p.id, "variant_id": None,
                 "name": p.name,
+                "brand": brand_name,
                 "price": "0" if p.is_meter_tailoring else str(p.sale_price),
                 "sku": p.sku,
                 "tax_rate": str(tax_rate),

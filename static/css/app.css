@@ -184,6 +184,17 @@ body.app-body {
 .pos-product-card .pp-name { font-size: .8rem; font-weight: 600; line-height: 1.2;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; min-height: 2.4em; }
+.pos-product-card .pp-brand {
+  color: #64748b;
+  font-size: .7rem;
+  line-height: 1.2;
+  margin-top: .1rem;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 .pos-product-card .pp-price { color: var(--np-accent); font-weight: 700; font-size: .85rem; }
 .pos-product-card .pp-stock { font-size: .7rem; color: #64748b; }
 .pos-cart { background: #fff; border: 1px solid var(--np-card-border);
