@@ -71,11 +71,16 @@ def export_xlsx(title, data):
         ws.append([_cell(v) for v in data["totals"]])
         for cell in ws[ws.max_row]:
             cell.font = Font(bold=True)
+    data_end_row = ws.max_row
     if data.get("summary"):
         ws.append([])
         for label, value in data["summary"]:
             ws.append([_cell(label), _cell(value)])
             ws.cell(row=ws.max_row, column=1).font = Font(bold=True)
+    for index, number_format in data.get("column_formats", {}).items():
+        column = int(index) + 1
+        for row in range(2, data_end_row + 1):
+            ws.cell(row=row, column=column).number_format = number_format
     for idx, col in enumerate(data["columns"], start=1):
         width = max(len(str(col)) + 2, 12)
         if idx == 1 and data.get("summary"):

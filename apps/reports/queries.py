@@ -16,6 +16,7 @@ from django.db.models import (
     DecimalField,
     ExpressionWrapper,
     F,
+    IntegerField,
     OuterRef,
     Q,
     Subquery,
@@ -42,6 +43,35 @@ def _quantity(value):
     from apps.core.money import qty
 
     return qty(value or ZERO)
+
+
+def _filter_business_datetime_dates(
+    queryset,
+    business,
+    filters,
+    *,
+    field_name="created_at",
+):
+    """Apply half-open business-local date bounds to a datetime field."""
+    date_from = filters.get("date_from")
+    date_to = filters.get("date_to")
+    if date_from and not isinstance(date_from, date):
+        date_from = parse_date(str(date_from))
+    if date_to and not isinstance(date_to, date):
+        date_to = parse_date(str(date_to))
+
+    local_timezone = business_timezone(business)
+    if date_from:
+        start = datetime.combine(date_from, time.min, tzinfo=local_timezone)
+        queryset = queryset.filter(**{f"{field_name}__gte": start})
+    if date_to:
+        end = datetime.combine(
+            date_to + timedelta(days=1),
+            time.min,
+            tzinfo=local_timezone,
+        )
+        queryset = queryset.filter(**{f"{field_name}__lt": end})
+    return queryset
 
 
 def _net_pos_meter(item, *, is_voided=False):
@@ -922,6 +952,393 @@ def stock_movements_report(business, f):
             "rows": rows, "totals": None}
 
 
+def fabric_history(business, f):
+    """Return authoritative fabric movement grouped by product/variant.
+
+    Brand and color are presentation fields only. Opening stock and purchases
+    come from their distinct inventory-ledger movements, usage comes from the
+    immutable POS meter field, and remaining stock comes from the inventory
+    module's cached balance.
+    """
+    from apps.catalog.models import Product, ProductVariant
+    from apps.inventory.models import StockLevel, StockMovement
+    from apps.sales.models import Sale, SaleItem, SaleReturnItem
+
+    quantity_field = DecimalField(max_digits=14, decimal_places=3)
+    calculation_field = DecimalField(max_digits=38, decimal_places=12)
+    zero_quantity = Value(ZERO, output_field=quantity_field)
+    zero_calculation = Value(ZERO, output_field=calculation_field)
+    zero_count = Value(0, output_field=IntegerField())
+    product_types = (Product.Type.STANDARD, Product.Type.VARIANT)
+
+    def inventory_scope(queryset):
+        queryset = queryset.filter(
+            warehouse__business=business,
+            product__business=business,
+            product__is_tailoring_item=True,
+            product__unit__business=business,
+            product__unit__is_meter=True,
+            product__track_inventory=True,
+            product__product_type__in=product_types,
+            product__is_archived=False,
+        ).filter(
+            Q(variant__isnull=True)
+            | Q(variant__business=business, variant__product_id=F("product_id"))
+        )
+        allowed_branch_ids = f.get("allowed_branch_ids")
+        if allowed_branch_ids is not None:
+            queryset = queryset.filter(
+                Q(warehouse__branch_id__in=allowed_branch_ids)
+                | Q(warehouse__branch__isnull=True)
+            )
+        if f.get("branch_id"):
+            queryset = queryset.filter(warehouse__branch_id=f["branch_id"])
+        if f.get("warehouse_id"):
+            queryset = queryset.filter(warehouse_id=f["warehouse_id"])
+        if f.get("brand_id"):
+            queryset = queryset.filter(
+                product__brand_id=f["brand_id"],
+                product__brand__business=business,
+            )
+        return queryset
+
+    remaining_rows = (
+        inventory_scope(StockLevel.objects.for_business(business))
+        .values("product_id", "variant_id")
+        .annotate(
+            remaining=Coalesce(
+                Sum("quantity"),
+                zero_quantity,
+                output_field=quantity_field,
+            )
+        )
+    )
+
+    opening_rows = (
+        inventory_scope(
+            StockMovement.objects.for_business(business).filter(
+                movement_type=StockMovement.Type.OPENING,
+            )
+        )
+        .values("product_id", "variant_id")
+        .annotate(
+            opening=Coalesce(
+                Sum("quantity"),
+                zero_quantity,
+                output_field=quantity_field,
+            )
+        )
+    )
+
+    purchase_rows = inventory_scope(
+        StockMovement.objects.for_business(business).filter(
+            movement_type__in=(
+                StockMovement.Type.PURCHASE,
+                StockMovement.Type.PURCHASE_RETURN,
+            )
+        )
+    )
+    purchase_rows = (
+        _filter_business_datetime_dates(purchase_rows, business, f)
+        .values("product_id", "variant_id")
+        .annotate(
+            purchased=Coalesce(
+                Sum("quantity"),
+                zero_quantity,
+                output_field=quantity_field,
+            )
+        )
+    )
+
+    restocked_quantity = (
+        SaleReturnItem.objects.for_business(business)
+        .filter(
+            sale_item_id=OuterRef("pk"),
+            sale_item__business=business,
+            sale_return__business=business,
+            sale_return__sale_id=OuterRef("sale_id"),
+            restocked=True,
+        )
+        .values("sale_item_id")
+        .annotate(total=Sum("quantity"))
+        .values("total")[:1]
+    )
+    usage_rows = (
+        SaleItem.objects.for_business(business)
+        .filter(
+            sale__business=business,
+            sale__branch__business=business,
+            sale__warehouse__business=business,
+            product__business=business,
+            product__is_tailoring_item=True,
+            product__unit__business=business,
+            product__unit__is_meter=True,
+            product__track_inventory=True,
+            product__product_type__in=product_types,
+            product__is_archived=False,
+            fabric_meter_used__isnull=False,
+            fabric_meter_used__gt=ZERO,
+        )
+        .exclude(sale__status__in=(Sale.Status.DRAFT, Sale.Status.VOIDED))
+        .filter(
+            Q(variant__isnull=True)
+            | Q(variant__business=business, variant__product_id=F("product_id"))
+        )
+    )
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        usage_rows = usage_rows.filter(
+            sale__branch_id__in=allowed_branch_ids,
+        ).filter(
+            Q(sale__warehouse__branch_id__in=allowed_branch_ids)
+            | Q(sale__warehouse__branch__isnull=True)
+        )
+    if f.get("branch_id"):
+        usage_rows = usage_rows.filter(sale__branch_id=f["branch_id"])
+    if f.get("warehouse_id"):
+        usage_rows = usage_rows.filter(sale__warehouse_id=f["warehouse_id"])
+    if f.get("brand_id"):
+        usage_rows = usage_rows.filter(
+            product__brand_id=f["brand_id"],
+            product__brand__business=business,
+        )
+    usage_rows = _filter_business_datetime_dates(
+        usage_rows,
+        business,
+        f,
+        field_name="sale__sale_date",
+    )
+
+    remaining_line_quantity = Greatest(
+        ExpressionWrapper(
+            F("quantity")
+            - Coalesce(
+                Subquery(restocked_quantity, output_field=quantity_field),
+                zero_quantity,
+                output_field=quantity_field,
+            ),
+            output_field=calculation_field,
+        ),
+        zero_calculation,
+    )
+    proportional_meter = ExpressionWrapper(
+        F("fabric_meter_used") * remaining_line_quantity / F("quantity"),
+        output_field=calculation_field,
+    )
+    rounded_meter = ExpressionWrapper(
+        Round(proportional_meter, precision=3),
+        output_field=quantity_field,
+    )
+    usage_rows = (
+        usage_rows.annotate(_remaining_line_quantity=remaining_line_quantity)
+        .annotate(
+            _net_meter=Case(
+                When(quantity__lte=ZERO, then=zero_quantity),
+                default=rounded_meter,
+                output_field=quantity_field,
+            ),
+            _order_count=Case(
+                When(_remaining_line_quantity__gt=ZERO, then=Value(1)),
+                default=zero_count,
+                output_field=IntegerField(),
+            ),
+        )
+        .values("product_id", "variant_id")
+        .annotate(
+            used=Coalesce(
+                Sum("_net_meter"),
+                zero_quantity,
+                output_field=quantity_field,
+            ),
+            orders=Coalesce(
+                Sum("_order_count"),
+                zero_count,
+                output_field=IntegerField(),
+            ),
+        )
+    )
+
+    opening_by_item = {
+        (row["product_id"], row["variant_id"]): _quantity(row["opening"])
+        for row in opening_rows
+    }
+    purchased_by_item = {
+        (row["product_id"], row["variant_id"]): _quantity(row["purchased"])
+        for row in purchase_rows
+    }
+    used_by_item = {
+        (row["product_id"], row["variant_id"]): (
+            _quantity(row["used"]),
+            int(row["orders"] or 0),
+        )
+        for row in usage_rows
+    }
+    remaining_by_item = {
+        (row["product_id"], row["variant_id"]): _quantity(row["remaining"])
+        for row in remaining_rows
+    }
+    item_keys = (
+        set(opening_by_item)
+        | set(purchased_by_item)
+        | set(used_by_item)
+        | set(remaining_by_item)
+    )
+
+    product_ids = {product_id for product_id, _variant_id in item_keys}
+    variant_ids = {variant_id for _product_id, variant_id in item_keys if variant_id}
+    products = Product.objects.for_business(business).filter(
+        id__in=product_ids,
+        is_tailoring_item=True,
+        unit__business=business,
+        unit__is_meter=True,
+        track_inventory=True,
+        product_type__in=product_types,
+        is_archived=False,
+    ).select_related("brand")
+    products_by_id = {product.id: product for product in products}
+    variants_by_id = ProductVariant.objects.for_business(business).filter(
+        id__in=variant_ids,
+        product_id__in=product_ids,
+    ).in_bulk()
+
+    detail_rows = []
+    for product_id, variant_id in item_keys:
+        product = products_by_id.get(product_id)
+        if product is None:
+            continue
+        variant = variants_by_id.get(variant_id) if variant_id else None
+        if variant_id and (variant is None or variant.product_id != product_id):
+            continue
+
+        opening = opening_by_item.get((product_id, variant_id), ZERO)
+        purchased = purchased_by_item.get((product_id, variant_id), ZERO)
+        used, orders = used_by_item.get((product_id, variant_id), (ZERO, 0))
+        remaining = remaining_by_item.get((product_id, variant_id), ZERO)
+        if not (opening or purchased or used or remaining or orders):
+            continue
+
+        brand = product.brand
+        if brand is not None and brand.business_id == business.id:
+            brand_id = brand.id
+            brand_name = brand.name
+        else:
+            brand_id = None
+            brand_name = "No Brand"
+
+        if variant is not None:
+            color = str((variant.attributes or {}).get("Color") or "").strip()
+            color = color or variant.name or "No Color"
+            item_name = f"{product.name} - {variant.name}"
+        else:
+            color = product.name
+            item_name = product.name
+
+        detail_rows.append({
+            "brand_id": brand_id,
+            "brand": brand_name,
+            "color": color,
+            "item": item_name,
+            "opening": _quantity(opening),
+            "purchased": _quantity(purchased),
+            "used": _quantity(used),
+            "remaining": _quantity(remaining),
+            "orders": orders,
+        })
+
+    detail_rows.sort(
+        key=lambda row: (
+            row["brand"].casefold(),
+            row["brand_id"] or 0,
+            row["color"].casefold(),
+            row["item"].casefold(),
+        )
+    )
+    grouped = {}
+    for row in detail_rows:
+        grouped.setdefault((row["brand_id"], row["brand"]), []).append(row)
+
+    rows = []
+    brand_totals = []
+    for (_brand_id, brand_name), children in grouped.items():
+        rows.extend([
+            [
+                child["brand"],
+                child["color"],
+                child["item"],
+                child["opening"],
+                child["purchased"],
+                child["used"],
+                child["remaining"],
+                child["orders"],
+            ]
+            for child in children
+        ])
+        total = {
+            "brand": brand_name,
+            "opening": _quantity(sum((row["opening"] for row in children), ZERO)),
+            "purchased": _quantity(sum((row["purchased"] for row in children), ZERO)),
+            "used": _quantity(sum((row["used"] for row in children), ZERO)),
+            "remaining": _quantity(sum((row["remaining"] for row in children), ZERO)),
+            "orders": sum(row["orders"] for row in children),
+        }
+        brand_totals.append(total)
+        rows.append([
+            f"Brand Total - {brand_name}",
+            "",
+            "",
+            total["opening"],
+            total["purchased"],
+            total["used"],
+            total["remaining"],
+            total["orders"],
+        ])
+
+    grand_total = {
+        "opening": _quantity(sum((row["opening"] for row in detail_rows), ZERO)),
+        "purchased": _quantity(sum((row["purchased"] for row in detail_rows), ZERO)),
+        "used": _quantity(sum((row["used"] for row in detail_rows), ZERO)),
+        "remaining": _quantity(sum((row["remaining"] for row in detail_rows), ZERO)),
+        "orders": sum(row["orders"] for row in detail_rows),
+    }
+    totals = [
+        "GRAND TOTAL",
+        "",
+        "",
+        grand_total["opening"],
+        grand_total["purchased"],
+        grand_total["used"],
+        grand_total["remaining"],
+        grand_total["orders"],
+    ] if detail_rows else None
+
+    return {
+        "columns": [
+            "Brand",
+            "Color",
+            "Product / Variant",
+            "Opening Stock (Meters)",
+            "Purchased (Meters)",
+            "Used (Meters)",
+            "Remaining (Meters)",
+            "Orders Count",
+        ],
+        "rows": rows,
+        "totals": totals,
+        "brand_totals": brand_totals,
+        "detail_count": len(detail_rows),
+        "summary": [(
+            "Period",
+            f"{f.get('date_from') or ''} to {f.get('date_to') or ''}",
+        )],
+        "column_formats": {
+            3: "0.000",
+            4: "0.000",
+            5: "0.000",
+            6: "0.000",
+        },
+    }
+
+
 def purchases_summary(business, f):
     from apps.purchases import services as purchase_services
     from apps.purchases.models import Purchase
@@ -960,23 +1377,7 @@ def purchases_summary(business, f):
 
 def _filter_payment_record_dates(queryset, business, filters):
     """Apply business-local date boundaries to UTC payment timestamps."""
-    date_from = filters.get("date_from")
-    date_to = filters.get("date_to")
-    if date_from and not isinstance(date_from, date):
-        date_from = parse_date(str(date_from))
-    if date_to and not isinstance(date_to, date):
-        date_to = parse_date(str(date_to))
-
-    local_timezone = business_timezone(business)
-    if date_from:
-        start = datetime.combine(date_from, time.min, tzinfo=local_timezone)
-        queryset = queryset.filter(created_at__gte=start)
-    if date_to:
-        end = datetime.combine(
-            date_to + timedelta(days=1), time.min, tzinfo=local_timezone,
-        )
-        queryset = queryset.filter(created_at__lt=end)
-    return queryset
+    return _filter_business_datetime_dates(queryset, business, filters)
 
 
 def supplier_payments_cheques(business, f):
@@ -1439,6 +1840,7 @@ REPORTS = {
     "current_stock": ("Current stock & valuation", current_stock, "reports.view"),
     "low_stock": ("Low stock / reorder", low_stock, "reports.view"),
     "stock_movements": ("Stock movements", stock_movements_report, "reports.view"),
+    "fabric_history": ("Fabric History Report", fabric_history, "reports.view"),
     "purchases": ("Purchases", purchases_summary, "reports.view"),
     "supplier_balances": ("Outstanding supplier balances", supplier_balances, "reports.financial"),
     "supplier_payments_cheques": (
@@ -1454,7 +1856,7 @@ REPORT_GROUPS = [
     ("Sales", ["sales_summary", "sales_detailed", "product_sales", "category_sales",
                "customer_sales", "cashier_sales", "payment_methods", "voids",
                "returns", "tax"]),
-    ("Inventory", ["current_stock", "low_stock", "stock_movements"]),
+    ("Inventory", ["current_stock", "low_stock", "stock_movements", "fabric_history"]),
     ("Purchasing", ["purchases", "supplier_balances", "supplier_payments_cheques"]),
     ("Customers", ["receivables", "top_customers"]),
     ("Financial", ["profit_loss", "cash_flow", "expense_analysis", "profit",

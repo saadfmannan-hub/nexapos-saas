@@ -52,6 +52,8 @@ def _parse_filters(request):
     f["warehouse_id"] = int(warehouse) if warehouse.isdigit() else None
     product = request.GET.get("product", "")
     f["product_id"] = int(product) if product.isdigit() else None
+    brand = request.GET.get("brand", "")
+    f["brand_id"] = int(brand) if brand.isdigit() else None
     classification = request.GET.get("garment_classification", "").strip().lower()
     f["garment_classification"] = (
         classification if classification in ("adult", "child") else None
@@ -497,7 +499,7 @@ def _run_report(request, key):
 @business_required
 def report_view(request, key):
     from apps.branches.models import Branch, Warehouse
-    from apps.catalog.models import Product
+    from apps.catalog.models import Brand, Product
     from apps.suppliers.models import Supplier, SupplierPayment
 
     try:
@@ -550,6 +552,21 @@ def report_view(request, key):
         "products": (
             Product.objects.for_business(request.business).only("id", "name").order_by("name")
             if key == "sales_detailed" else []
+        ),
+        "brands": (
+            Brand.objects.for_business(request.business)
+            .filter(
+                products__business=request.business,
+                products__is_tailoring_item=True,
+                products__unit__business=request.business,
+                products__unit__is_meter=True,
+                products__track_inventory=True,
+                products__product_type__in=(Product.Type.STANDARD, Product.Type.VARIANT),
+                products__is_archived=False,
+            )
+            .distinct()
+            .order_by("name")
+            if key == "fabric_history" else []
         ),
         "filter_querystring": date_range_querystring(
             request.GET,

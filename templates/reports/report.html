@@ -21,14 +21,15 @@
 <div class="card mb-3 no-print"><div class="card-body py-2">
   <form class="row g-2 align-items-center" method="get">
     <div class="col-auto">
-      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">From Date</label>{% endif %}
+      {% if key == "supplier_payments_cheques" or key == "fabric_history" %}<label class="form-label small mb-1">From Date</label>{% endif %}
       <input type="date" name="from" value="{{ filters.date_from|default:'' }}" class="form-control form-control-sm" aria-label="From Date">
     </div>
     <div class="col-auto">→</div>
     <div class="col-auto">
-      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">To Date</label>{% endif %}
+      {% if key == "supplier_payments_cheques" or key == "fabric_history" %}<label class="form-label small mb-1">To Date</label>{% endif %}
       <input type="date" name="to" value="{{ filters.date_to|default:'' }}" class="form-control form-control-sm" aria-label="To Date">
     </div>
+    {% if key != "fabric_history" %}
     <div class="col-auto">
       {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">Branch</label>{% endif %}
       <select name="branch" class="form-select form-select-sm">
@@ -36,13 +37,23 @@
         {% for b in branches %}<option value="{{ b.id }}" {% if filters.branch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
       </select>
     </div>
+    {% endif %}
     <div class="col-auto">
-      {% if key == "supplier_payments_cheques" %}<label class="form-label small mb-1">Warehouse</label>{% endif %}
+      {% if key == "supplier_payments_cheques" or key == "fabric_history" %}<label class="form-label small mb-1">Warehouse</label>{% endif %}
       <select name="warehouse" class="form-select form-select-sm">
         <option value="">All warehouses</option>
         {% for w in warehouses %}<option value="{{ w.id }}" {% if filters.warehouse_id == w.id %}selected{% endif %}>{{ w.name }}</option>{% endfor %}
       </select>
     </div>
+    {% if key == "fabric_history" %}
+    <div class="col-auto">
+      <label class="form-label small mb-1">Brand</label>
+      <select name="brand" class="form-select form-select-sm">
+        <option value="">All brands</option>
+        {% for brand in brands %}<option value="{{ brand.id }}" {% if filters.brand_id == brand.id %}selected{% endif %}>{{ brand.name }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
     {% if key == "supplier_payments_cheques" %}
     <div class="col-auto">
       <label class="form-label small mb-1">Supplier</label>
@@ -105,7 +116,7 @@
     <thead><tr>{% for col in data.columns %}<th class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ col }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in data.rows %}
-      <tr>{% for v in row %}<td class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ v|report_cell }}</td>{% endfor %}</tr>
+      <tr{% if key == "fabric_history" and row.1 == "" and row.2 == "" %} class="table-light fw-bold border-top"{% endif %}>{% for v in row %}<td class="{{ data.columns|report_cell_class:forloop.counter0 }}">{{ v|report_cell }}</td>{% endfor %}</tr>
       {% empty %}
       <tr><td colspan="{{ data.columns|length }}">
         <div class="empty-state"><i class="bi bi-bar-chart d-block mb-2"></i>No data for the selected filters.</div>
@@ -118,7 +129,11 @@
   </table>
 </div>
 <div class="card-body py-2 small d-flex justify-content-between align-items-center flex-wrap gap-2">
+  {% if key == "fabric_history" %}
+  <span class="text-secondary">{{ data.detail_count }} fabric{{ data.detail_count|pluralize }}</span>
+  {% else %}
   <span class="text-secondary">{{ data.rows|length }} row{{ data.rows|length|pluralize }}</span>
+  {% endif %}
   {% if data.summary %}
   <span class="d-flex flex-wrap gap-3">
     {% for label, value in data.summary %}<span><strong>{{ label }}:</strong> {{ value|report_cell }}</span>{% endfor %}
