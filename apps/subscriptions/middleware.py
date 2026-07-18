@@ -10,6 +10,8 @@ from django.shortcuts import redirect
 from django.urls import resolve
 from django.utils.deprecation import MiddlewareMixin
 
+from .models import Subscription
+
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 # URL namespaces that must keep working in read-only mode
@@ -22,8 +24,18 @@ class SubscriptionMiddleware(MiddlewareMixin):
         request.subscription = None
         business = getattr(request, "business", None)
         if business is None:
+            request._subscription_resolved = True
+            request._subscription_business_id = None
             return
-        request.subscription = getattr(business, "subscription", None)
+        request.subscription = (
+            Subscription.objects.select_related("plan").filter(business_id=business.pk).first()
+        )
+        business_relation = Subscription._meta.get_field("business")
+        business_relation.remote_field.set_cached_value(business, request.subscription)
+        if request.subscription is not None:
+            business_relation.set_cached_value(request.subscription, business)
+        request._subscription_resolved = True
+        request._subscription_business_id = business.pk
 
     def process_view(self, request, view_func, view_args, view_kwargs):
         sub = getattr(request, "subscription", None)

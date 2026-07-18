@@ -115,6 +115,7 @@ TEMPLATES = [
                 "apps.core.context_processors.platform_branding",
                 "apps.core.context_processors.logical_back_navigation",
                 "apps.core.context_processors.business_context",
+                "apps.subscriptions.context_processors.subscription_capabilities",
             ],
         },
     },
