@@ -496,17 +496,15 @@ class ExpiryModeTests(PlatformBaseTest):
         r = self.client.post(reverse("catalog:product_create"), {
             "name": "Blocked", "product_type": "standard",
             "purchase_price": "1", "sale_price": "2"})
-        self.assertEqual(r.status_code, 302)
-        self.assertIn("/subscription/", r.url)
+        self.assertEqual(r.status_code, 403)
 
     def test_suspend_mode_blocks_all_access(self):
         config = PlatformConfig.get_solo()
         config.expiry_mode = PlatformConfig.ExpiryMode.SUSPEND
         config.save()
-        # Even a GET to a business page is redirected
+        # Even a GET to a centrally guarded business page is denied.
         r = self.client.get(reverse("customers:list"))
-        self.assertEqual(r.status_code, 302)
-        self.assertIn("/subscription/", r.url)
+        self.assertEqual(r.status_code, 403)
 
     def test_settings_page_changes_mode_and_audits(self):
         self.client.logout()

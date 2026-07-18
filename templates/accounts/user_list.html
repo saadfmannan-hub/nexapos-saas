@@ -4,8 +4,12 @@
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Users &amp; roles</h1>
   <div class="d-flex gap-2">
+    {% if module_capabilities.pos_core.enabled %}
     <a href="{% url 'accounts:role_list' %}" class="btn btn-outline-secondary btn-sm">Manage roles</a>
+    {% endif %}
+    {% if module_capabilities.pos_core.can_write %}
     <a href="{% url 'accounts:user_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add employee</a>
+    {% endif %}
   </div>
 </div>
 <div class="card">
@@ -26,7 +30,7 @@
             {% for b in m.branches.all %}{{ b.name }}{% if not forloop.last %}, {% endif %}{% empty %}All branches{% endfor %}
           </td>
           <td>{% if m.is_active %}<span class="badge-status bs-active badge">Active</span>{% else %}<span class="badge-status bs-suspended badge">Inactive</span>{% endif %}</td>
-          <td><a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_edit' m.public_id %}"><i class="bi bi-pencil"></i></a></td>
+          <td>{% if module_capabilities.pos_core.can_write %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_edit' m.public_id %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>

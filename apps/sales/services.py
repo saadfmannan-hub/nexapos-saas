@@ -12,15 +12,17 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
-from apps.catalog.models import ProductVariant
+from apps.catalog.models import Product, ProductVariant
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, require_actor_access
 
 from . import calculations
 from .models import (
     MAX_FABRIC_TOTAL,
+    HeldSale,
     InvoiceSequence,
     PaymentMethod,
     Sale,
@@ -63,6 +65,252 @@ class SaleError(Exception):
         self.errors = errors or {}
 
 
+def _require_pos_write(
+    *,
+    business,
+    user,
+    permission_code,
+    membership=None,
+    request=None,
+    branch=None,
+):
+    """Apply the central POS Core guard and existing branch scope."""
+
+    context = require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+    if branch is not None and not context.membership.can_access_branch(branch):
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code=permission_code,
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    return context
+
+
+def _deny_pos_scope(*, business, user, permission_code, membership, request=None):
+    require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+        scope_allowed=False,
+    )
+
+
+def _locked_sale_for_write(
+    *, sale, user, permission_code, membership=None, request=None, related=()
+):
+    """Authorize, tenant-reload, and branch-scope a mutable sale."""
+
+    business = sale.business
+    context = _require_pos_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=membership,
+        request=request,
+    )
+    try:
+        sale = (
+            Sale.objects.select_for_update()
+            .select_related("business", "branch", *related)
+            .get(pk=sale.pk, business=business)
+        )
+    except (Sale.DoesNotExist, TypeError, ValueError):
+        _deny_pos_scope(
+            business=business,
+            user=user,
+            permission_code=permission_code,
+            membership=context.membership,
+            request=request,
+        )
+    _require_pos_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=context.membership,
+        request=request,
+        branch=sale.branch,
+    )
+    return sale, context
+
+
+def _locked_checkout_context(
+    *, business, branch, warehouse, cashier, customer, register, shift,
+    membership=None, request=None,
+):
+    """Reload every tenant-owned checkout object before authorization/use."""
+
+    from apps.branches.models import Branch, Warehouse
+    from apps.customers.models import Customer
+    from apps.registers.models import CashRegister, Shift
+
+    context = _require_pos_write(
+        business=business,
+        user=cashier,
+        permission_code="sales.create",
+        membership=membership,
+        request=request,
+    )
+    branch = Branch.objects.select_for_update().filter(
+        pk=getattr(branch, "pk", None), business=business
+    ).first()
+    if branch is None:
+        _deny_pos_scope(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
+    _require_pos_write(
+        business=business,
+        user=cashier,
+        permission_code="sales.create",
+        membership=context.membership,
+        request=request,
+        branch=branch,
+    )
+
+    warehouse = Warehouse.objects.select_for_update().select_related("branch").filter(
+        pk=getattr(warehouse, "pk", None), business=business
+    ).first()
+    if warehouse is None:
+        _deny_pos_scope(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
+    customer = Customer.objects.select_for_update().filter(
+        pk=getattr(customer, "pk", None), business=business
+    ).first()
+    if customer is None:
+        _deny_pos_scope(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
+
+    if register is not None:
+        register = CashRegister.objects.select_for_update().select_related("branch").filter(
+            pk=getattr(register, "pk", None), business=business
+        ).first()
+        if register is None:
+            _deny_pos_scope(
+                business=business,
+                user=cashier,
+                permission_code="sales.create",
+                membership=context.membership,
+                request=request,
+            )
+    if shift is not None:
+        shift = Shift.objects.select_for_update().select_related("register", "branch").filter(
+            pk=getattr(shift, "pk", None), business=business
+        ).first()
+        if shift is None:
+            _deny_pos_scope(
+                business=business,
+                user=cashier,
+                permission_code="sales.create",
+                membership=context.membership,
+                request=request,
+            )
+
+    _validate_sale_context(
+        business=business,
+        branch=branch,
+        warehouse=warehouse,
+        cashier=cashier,
+        customer=customer,
+        membership=context.membership,
+        register=register,
+        shift=shift,
+    )
+    return context, branch, warehouse, customer, register, shift
+
+
+def _locked_payment_methods(
+    *, business, payments, user, membership, request=None
+):
+    payments = list(payments)
+    method_ids = {
+        getattr(payment.get("method"), "pk", None)
+        for payment in payments
+        if isinstance(payment, dict)
+    }
+    methods = {
+        method.pk: method
+        for method in PaymentMethod.objects.select_for_update().filter(
+            pk__in=method_ids, business=business
+        )
+    }
+    normalized = []
+    for payment in payments:
+        supplied = payment.get("method") if isinstance(payment, dict) else None
+        method = methods.get(getattr(supplied, "pk", None))
+        if method is None:
+            _deny_pos_scope(
+                business=business,
+                user=user,
+                permission_code="sales.create",
+                membership=membership,
+                request=request,
+            )
+        if not method.is_active:
+            raise SaleError("Invalid payment method.")
+        normalized.append({**payment, "method": method})
+    return normalized
+
+
+def _canonical_salesperson(
+    *, business, salesperson, cashier, membership, request=None
+):
+    if salesperson is None:
+        return None
+
+    from apps.accounts.models import Membership
+
+    salesperson_membership = (
+        Membership.objects.select_for_update()
+        .select_related("user")
+        .filter(
+            business=business,
+            user_id=getattr(salesperson, "pk", None),
+            is_active=True,
+            user__is_active=True,
+        )
+        .first()
+    )
+    if salesperson_membership is None:
+        _deny_pos_scope(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=membership,
+            request=request,
+        )
+    return salesperson_membership.user
+
+
 DEFAULT_PAYMENT_METHODS = [
     ("Cash", PaymentMethod.Kind.CASH),
     ("Card", PaymentMethod.Kind.CARD),
@@ -77,6 +325,89 @@ def create_default_payment_methods(business):
         PaymentMethod.objects.get_or_create(
             business=business, name=name, defaults={"kind": kind, "is_system": True}
         )
+
+
+@transaction.atomic
+def hold_sale(
+    *,
+    business,
+    branch,
+    cashier,
+    cart,
+    label="",
+    membership=None,
+    request=None,
+):
+    """Persist a cashier's held cart behind the same POS write boundary."""
+
+    from apps.branches.models import Branch
+
+    context = _require_pos_write(
+        business=business,
+        user=cashier,
+        permission_code="sales.create",
+        membership=membership,
+        request=request,
+    )
+    branch = Branch.objects.select_for_update().filter(
+        pk=getattr(branch, "pk", None), business=business
+    ).first()
+    if branch is None:
+        _deny_pos_scope(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
+    _require_pos_write(
+        business=business,
+        user=cashier,
+        permission_code="sales.create",
+        membership=context.membership,
+        request=request,
+        branch=branch,
+    )
+    if not branch.is_active:
+        raise SaleError("Invalid branch.")
+    if not isinstance(cart, dict):
+        raise SaleError("Invalid cart.")
+    return HeldSale.objects.create(
+        business=business,
+        branch=branch,
+        cashier=cashier,
+        label=str(label or "")[:120],
+        cart=cart,
+    )
+
+
+@transaction.atomic
+def delete_held_sale(
+    *,
+    business,
+    held_id,
+    cashier,
+    membership=None,
+    request=None,
+):
+    """Delete only a held cart within the actor's tenant and branch scope."""
+
+    context = _require_pos_write(
+        business=business,
+        user=cashier,
+        permission_code="sales.create",
+        membership=membership,
+        request=request,
+    )
+    held_sales = HeldSale.objects.for_business(business).filter(
+        pk=held_id,
+        cashier=cashier,
+    )
+    allowed = context.membership.allowed_branch_ids
+    if allowed is not None:
+        held_sales = held_sales.filter(branch_id__in=allowed)
+    deleted, _ = held_sales.delete()
+    return bool(deleted)
 
 
 # Sentinel "year" for the lifetime (non-resetting) invoice counter. The
@@ -342,17 +673,19 @@ def complete_sale(
     items:    [{product, variant, quantity, unit_price, discount_amount}]
     payments: [{method (PaymentMethod), amount, reference}]
     """
-    checkout_token = _clean_checkout_token(checkout_token)
-    _validate_sale_context(
+    access_context, branch, warehouse, customer, register, shift = _locked_checkout_context(
         business=business,
         branch=branch,
         warehouse=warehouse,
         cashier=cashier,
         customer=customer,
-        membership=membership,
         register=register,
         shift=shift,
+        membership=membership,
+        request=request,
     )
+    membership = access_context.membership
+    checkout_token = _clean_checkout_token(checkout_token)
 
     if checkout_token is not None:
         existing = (
@@ -368,20 +701,28 @@ def complete_sale(
                 customer=customer,
             )
 
+    salesperson = _canonical_salesperson(
+        business=business,
+        salesperson=salesperson,
+        cashier=cashier,
+        membership=membership,
+        request=request,
+    )
+
     subscriptions.require_operational(business)
     subscriptions.check_limit(business, "monthly_invoices")
 
+    items = list(items)
     if not items:
         raise SaleError("Cannot complete a sale with no items.")
 
     # Lock every product in a stable order before evaluating its Meter shape.
     # Product edits use the same row lock, so a checkout cannot race a unit or
     # Standard/Variant transition and write stock using stale semantics.
-    product_model = items[0]["product"].__class__
     product_ids = sorted({line["product"].pk for line in items})
     locked_products = {
         product.pk: product
-        for product in product_model.objects.select_for_update()
+        for product in Product.objects.select_for_update()
         .select_related("unit")
         .filter(pk__in=product_ids, business=business)
         .order_by("pk")
@@ -584,6 +925,13 @@ def complete_sale(
                 )
 
     # ---- payments --------------------------------------------------------
+    payments = _locked_payment_methods(
+        business=business,
+        payments=payments,
+        user=cashier,
+        membership=membership,
+        request=request,
+    )
     for p in payments:
         method = p["method"]
         if method.business_id != business.id or not method.is_active:
@@ -764,7 +1112,7 @@ def complete_sale(
 @transaction.atomic
 def add_sale_payment(
     *, sale, amount, method, user, payment_date=None, reference="", notes="",
-    shift=None, request=None,
+    shift=None, membership=None, request=None,
 ):
     """Record a later payment against a credit / partially-paid sale.
 
@@ -772,6 +1120,40 @@ def add_sale_payment(
     portion of a sale sits on the customer's receivable balance) reduces
     the customer balance by the same amount.
     """
+    sale, context = _locked_sale_for_write(
+        sale=sale,
+        user=user,
+        permission_code="customers.payments",
+        membership=membership,
+        request=request,
+    )
+    method = PaymentMethod.objects.select_for_update().filter(
+        pk=getattr(method, "pk", None), business=sale.business
+    ).first()
+    if method is None:
+        _deny_pos_scope(
+            business=sale.business,
+            user=user,
+            permission_code="customers.payments",
+            membership=context.membership,
+            request=request,
+        )
+    if not method.is_active:
+        raise SaleError("Invalid payment method.")
+    if shift is not None:
+        from apps.registers.models import Shift
+
+        shift = Shift.objects.select_for_update().filter(
+            pk=getattr(shift, "pk", None), business=sale.business
+        ).first()
+        if shift is None:
+            _deny_pos_scope(
+                business=sale.business,
+                user=user,
+                permission_code="customers.payments",
+                membership=context.membership,
+                request=request,
+            )
     amount = money(amount)
     if amount <= 0:
         raise SaleError("Payment amount must be positive.")
@@ -779,8 +1161,6 @@ def add_sale_payment(
         raise SaleError("Voided sales cannot receive payments.")
     if sale.status == Sale.Status.DRAFT:
         raise SaleError("Draft sales cannot receive payments.")
-    if method.business_id != sale.business_id:
-        raise SaleError("Invalid payment method.")
     if method.kind in (PaymentMethod.Kind.CUSTOMER_CREDIT,
                        PaymentMethod.Kind.STORE_CREDIT):
         raise SaleError("Use a real payment method to settle a balance.")
@@ -788,6 +1168,13 @@ def add_sale_payment(
         raise SaleError(
             f"Payment {amount} exceeds the outstanding balance {sale.balance}."
         )
+    if shift is not None and (
+        shift.business_id != sale.business_id
+        or shift.cashier_id != user.id
+        or shift.branch_id != sale.branch_id
+        or shift.status != "open"
+    ):
+        raise SaleError("Invalid open shift for this payment.")
 
     payment = SalePayment.objects.create(
         business=sale.business,
@@ -820,11 +1207,19 @@ def add_sale_payment(
 
 
 @transaction.atomic
-def delete_sale(*, sale, user, request=None):
+def delete_sale(*, sale, user, membership=None, request=None):
     """Hard-delete a sale ONLY when it has zero business impact:
     a draft with no payments, no stock movements and no returns.
     Anything else must be voided so the audit trail survives."""
     from apps.inventory.models import StockMovement
+
+    sale, _context = _locked_sale_for_write(
+        sale=sale,
+        user=user,
+        permission_code="sales.delete",
+        membership=membership,
+        request=request,
+    )
 
     if sale.status != Sale.Status.DRAFT:
         raise SaleError(
@@ -846,7 +1241,15 @@ def delete_sale(*, sale, user, request=None):
     sale.delete()
 
 
-def set_delivery_status(*, sale, status, user, request=None):
+@transaction.atomic
+def set_delivery_status(*, sale, status, user, membership=None, request=None):
+    sale, _context = _locked_sale_for_write(
+        sale=sale,
+        user=user,
+        permission_code="sales.create",
+        membership=membership,
+        request=request,
+    )
     if status not in dict(Sale.DeliveryStatus.choices):
         raise SaleError("Invalid delivery status.")
     if sale.status == Sale.Status.VOIDED:
@@ -913,11 +1316,14 @@ def update_actual_fabric(
 
 
 @transaction.atomic
-def void_sale(*, sale, user, reason, request=None):
-    sale = (
-        Sale.objects.select_for_update()
-        .select_related("business", "customer", "warehouse")
-        .get(pk=sale.pk, business_id=sale.business_id)
+def void_sale(*, sale, user, reason, membership=None, request=None):
+    sale, _context = _locked_sale_for_write(
+        sale=sale,
+        user=user,
+        permission_code="sales.void",
+        membership=membership,
+        request=request,
+        related=("customer", "warehouse"),
     )
     if sale.status in (Sale.Status.VOIDED,):
         raise SaleError("Sale is already voided.")
@@ -978,22 +1384,42 @@ def process_return(
     reason="",
     restock=True,
     shift=None,
+    membership=None,
     request=None,
 ):
     """items: [{sale_item, quantity, restock(optional)}]"""
     from apps.customers.models import Customer
 
+    sale, context = _locked_sale_for_write(
+        sale=sale,
+        user=user,
+        permission_code="sales.refund",
+        membership=membership,
+        request=request,
+        related=("customer", "warehouse"),
+    )
+
+    if shift is not None:
+        from apps.registers.models import Shift
+
+        shift = Shift.objects.select_for_update().filter(
+            pk=getattr(shift, "pk", None), business=sale.business
+        ).first()
+        if shift is None:
+            _deny_pos_scope(
+                business=sale.business,
+                user=user,
+                permission_code="sales.refund",
+                membership=context.membership,
+                request=request,
+            )
+
     items = list(items)
     if not items:
         raise SaleError("Select at least one item to return.")
 
-    # Lock Sale first, then SaleItems. Void follows the same lock order so a
+    # Sale is locked before SaleItems. Void follows the same lock order so a
     # return and a void cannot both restore the same inventory.
-    sale = (
-        Sale.objects.select_for_update()
-        .select_related("business", "customer", "branch", "warehouse")
-        .get(pk=sale.pk, business_id=sale.business_id)
-    )
     if sale.status == Sale.Status.VOIDED:
         raise SaleError("Cannot return items from a voided sale.")
 

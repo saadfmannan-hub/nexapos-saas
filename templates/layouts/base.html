@@ -27,23 +27,27 @@
       {% if "dashboard.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}"><i class="bi bi-speedometer2"></i> Dashboard</a>
       {% endif %}
-      {% if "sales.create" in business_perms %}
+      {% if module_capabilities.pos_core.can_write and "sales.create" in business_perms %}
       <a class="nav-link {% if active_nav == 'pos' %}active{% endif %}" href="{% url 'sales:pos' %}"><i class="bi bi-cart3"></i> POS / Sell</a>
       {% endif %}
 
-      {% if "sales.view" in business_perms %}
+      {% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}
       <div class="nav-section">Sales</div>
       <a class="nav-link {% if active_nav == 'sales' %}active{% endif %}" href="{% url 'sales:list' %}"><i class="bi bi-receipt"></i> Sales &amp; Invoices</a>
       {% if "sales.refund" in business_perms %}
       <a class="nav-link {% if active_nav == 'returns' %}active{% endif %}" href="{% url 'sales:return_list' %}"><i class="bi bi-arrow-counterclockwise"></i> Returns</a>
       {% endif %}
       {% endif %}
-      {% if "customers.view" in business_perms %}
+      {% if module_capabilities.pos_core.enabled and "customers.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'customers' %}active{% endif %}" href="{% url 'customers:list' %}"><i class="bi bi-people"></i> Customers</a>
       {% endif %}
 
-      {% if "products.view" in business_perms %}
+      {% if "inventory.view" in business_perms %}
       <div class="nav-section">Catalog &amp; Stock</div>
+      {% elif module_capabilities.pos_core.enabled and "products.view" in business_perms %}
+      <div class="nav-section">Catalog &amp; Stock</div>
+      {% endif %}
+      {% if module_capabilities.pos_core.enabled and "products.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'products' %}active{% endif %}" href="{% url 'catalog:product_list' %}"><i class="bi bi-box-seam"></i> Products</a>
       <a class="nav-link {% if active_nav == 'catalog_setup' %}active{% endif %}" href="{% url 'catalog:category_list' %}"><i class="bi bi-tags"></i> Categories &amp; Setup</a>
       {% endif %}
@@ -61,10 +65,17 @@
       {% endif %}
       {% endif %}
 
-      {% if "expenses.view" in business_perms or "shifts.open" in business_perms or "registers.manage" in business_perms or "reports.view" in business_perms %}
+      {% if "expenses.view" in business_perms or "reports.view" in business_perms %}
       <div class="nav-section">Money &amp; Reports</div>
+      {% elif module_capabilities.pos_core.enabled and "shifts.open" in business_perms %}
+      <div class="nav-section">Money &amp; Reports</div>
+      {% elif module_capabilities.pos_core.enabled and "registers.manage" in business_perms %}
+      <div class="nav-section">Money &amp; Reports</div>
+      {% endif %}
+      {% if module_capabilities.pos_core.enabled %}
       {% if "shifts.open" in business_perms or "registers.manage" in business_perms %}
       <a class="nav-link {% if active_nav == 'registers' %}active{% endif %}" href="{% url 'registers:shift_list' %}"><i class="bi bi-cash-stack"></i> Registers &amp; Shifts</a>
+      {% endif %}
       {% endif %}
       {% if "expenses.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'expenses' %}active{% endif %}" href="{% url 'expenses:list' %}"><i class="bi bi-wallet2"></i> Expenses</a>
@@ -72,14 +83,17 @@
       {% if "reports.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'reports' %}active{% endif %}" href="{% url 'reports:index' %}"><i class="bi bi-graph-up"></i> Reports</a>
       {% endif %}
-      {% endif %}
-
-      {% if "users.manage" in business_perms or "branches.manage" in business_perms or "settings.manage" in business_perms or "audit.view" in business_perms %}
+      {% if "settings.manage" in business_perms or "audit.view" in business_perms %}
       <div class="nav-section">Administration</div>
-      {% if "branches.manage" in business_perms %}
+      {% elif module_capabilities.pos_core.enabled and "users.manage" in business_perms %}
+      <div class="nav-section">Administration</div>
+      {% elif module_capabilities.pos_core.enabled and "branches.manage" in business_perms %}
+      <div class="nav-section">Administration</div>
+      {% endif %}
+      {% if module_capabilities.pos_core.enabled and "branches.manage" in business_perms %}
       <a class="nav-link {% if active_nav == 'branches' %}active{% endif %}" href="{% url 'branches:list' %}"><i class="bi bi-diagram-3"></i> Branches &amp; Warehouses</a>
       {% endif %}
-      {% if "users.manage" in business_perms %}
+      {% if module_capabilities.pos_core.enabled and "users.manage" in business_perms %}
       <a class="nav-link {% if active_nav == 'users' %}active{% endif %}" href="{% url 'accounts:user_list' %}"><i class="bi bi-person-gear"></i> Users &amp; Roles</a>
       {% endif %}
       {% if "settings.manage" in business_perms %}
@@ -88,7 +102,6 @@
       {% endif %}
       {% if "audit.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'audit' %}active{% endif %}" href="{% url 'audit:list' %}"><i class="bi bi-shield-check"></i> Audit Log</a>
-      {% endif %}
       {% endif %}
     </nav>
   </div>

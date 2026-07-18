@@ -30,6 +30,10 @@ def module_permission_required(module_key, permission_code=None, action=None):
             )
             return view_func(request, *args, **kwargs)
 
+        # SubscriptionMiddleware retains legacy redirects for unadopted
+        # routes.  Adopted module views defer to the central guard so unsafe
+        # read-only requests receive the stable structured 403 denial.
+        wrapper._subscription_module_guarded = True
         return wrapper
 
     return decorator

@@ -10,14 +10,14 @@
   </h1>
   <div class="d-flex gap-2 no-print">
     <button onclick="window.print()" class="btn btn-outline-secondary btn-sm"><i class="bi bi-printer"></i> Print</button>
-    {% if shift.status == "open" and "shifts.close" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and shift.status == "open" and "shifts.close" in business_perms %}
       <a href="{% url 'registers:shift_close' shift.public_id %}" class="btn btn-danger btn-sm">Close shift</a>
     {% endif %}
-    {% if shift.status == "closed" and can_approve %}
+    {% if module_capabilities.pos_core.can_write and shift.status == "closed" and can_approve %}
       <form method="post" action="{% url 'registers:shift_approve' shift.public_id %}">{% csrf_token %}
         <button class="btn btn-success btn-sm">Approve closing</button></form>
     {% endif %}
-    {% if shift.status != "open" and can_reopen %}
+    {% if module_capabilities.pos_core.can_write and shift.status != "open" and can_reopen %}
       <form method="post" action="{% url 'registers:shift_reopen' shift.public_id %}"
             onsubmit="return confirm('Reopen this shift? This is audited.')">{% csrf_token %}
         <button class="btn btn-outline-warning btn-sm">Reopen</button></form>

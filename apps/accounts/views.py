@@ -16,6 +16,7 @@ from apps.audit.services import client_ip
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 
 from .forms import (
     EmployeeForm,
@@ -85,7 +86,7 @@ def no_access_view(request):
     if not request.user.is_authenticated:
         return redirect("accounts:login")
     route_name = resolve_user_home_route(
-        request.user, membership=getattr(request, "membership", None)
+        request.user, membership=getattr(request, "membership", None), request=request
     )
     if route_name != "accounts:no_access":
         return redirect(route_name)
@@ -151,7 +152,7 @@ class PasswordResetCompleteView(auth_views.PasswordResetCompleteView):
 # ---------------------------------------------------------------------------
 # Employee / role management (business admin)
 # ---------------------------------------------------------------------------
-@require_permission("users.manage")
+@module_permission_required("pos_core", "users.manage")
 def user_list(request):
     memberships = (
         Membership.objects.for_business(request.business)
@@ -166,7 +167,7 @@ def user_list(request):
     })
 
 
-@require_permission("users.manage")
+@module_permission_required("pos_core", "users.manage")
 def user_create(request):
     from apps.subscriptions.helpers import guard_limit
 
@@ -202,7 +203,7 @@ def user_create(request):
                   {"form": form, "active_nav": "users", "creating": True})
 
 
-@require_permission("users.manage")
+@module_permission_required("pos_core", "users.manage")
 def user_edit(request, public_id):
     membership = get_tenant_object(Membership, request.business, public_id=public_id)
     initial = {

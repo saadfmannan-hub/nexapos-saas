@@ -40,11 +40,12 @@ class WarehouseForm(TenantStyledModelForm):
         model = Warehouse
         fields = ["name", "code", "branch", "address", "is_default", "is_active"]
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, membership=None, **kwargs):
         super().__init__(business, *args, **kwargs)
-        self.fields["branch"].queryset = Branch.objects.for_business(business).filter(
-            is_active=True
-        )
+        branches = Branch.objects.for_business(business).filter(is_active=True)
+        if membership is not None and membership.allowed_branch_ids is not None:
+            branches = branches.filter(pk__in=membership.allowed_branch_ids)
+        self.fields["branch"].queryset = branches
         self.fields["branch"].required = False
 
     def clean_code(self):

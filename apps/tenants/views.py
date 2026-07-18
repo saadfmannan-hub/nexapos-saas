@@ -90,43 +90,52 @@ def onboarding_view(request):
             "label": "Add your business logo & address",
             "done": bool(business.logo or business.address),
             "url": "tenants:profile", "icon": "bi-building",
+            "permission": "settings.manage",
         },
         {
             "label": "Review currency & tax settings",
             "done": TaxRate.objects.for_business(business).exists(),
             "url": "catalog:tax_list", "icon": "bi-percent",
+            "permission": "settings.manage",
         },
         {
             "label": "Create product categories",
             "done": Category.objects.for_business(business).exists(),
             "url": "catalog:category_list", "icon": "bi-tags",
+            "permission": "products.manage",
         },
         {
             "label": "Add your first products",
             "done": Product.objects.for_business(business).exists(),
             "url": "catalog:product_create", "icon": "bi-box-seam",
+            "permission": "products.manage",
         },
         {
             "label": "Add branches (optional)",
             "done": Branch.objects.for_business(business).count() > 1,
             "url": "branches:list", "icon": "bi-diagram-3",
+            "permission": "branches.manage",
         },
         {
             "label": "Add your cashiers and staff",
             "done": business.memberships.count() > 1,
             "url": "accounts:user_create", "icon": "bi-people",
+            "permission": "users.manage",
         },
         {
             "label": "Open a cash register shift",
             "done": Shift.objects.for_business(business).exists(),
             "url": "registers:shift_list", "icon": "bi-cash-stack",
+            "permission": "shifts.open",
         },
         {
             "label": "Make your first sale",
             "done": business.sales_sale_set.exists(),
             "url": "sales:pos", "icon": "bi-cart3",
+            "permission": "sales.create",
         },
     ]
+    steps = [step for step in steps if request.membership.has_perm(step["permission"])]
     done_count = sum(1 for s in steps if s["done"])
     if request.method == "POST":  # "Finish onboarding"
         business.onboarding_completed = True

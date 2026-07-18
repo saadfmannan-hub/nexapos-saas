@@ -5,10 +5,10 @@
   <h1 class="page-title">{{ product.name }}</h1>
   <div class="d-flex gap-2">
     <a href="{% url 'catalog:product_labels' product.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upc"></i> Print labels</a>
-    {% if "products.manage" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
     <a href="{% url 'catalog:product_edit' product.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
     {% endif %}
-    {% if "products.archive" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and "products.archive" in business_perms %}
       {% if product.is_archived %}
       <form method="post" action="{% url 'catalog:product_restore' product.public_id %}">
         {% csrf_token %}<button class="btn btn-success btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Restore</button>
@@ -20,7 +20,7 @@
       </form>
       {% endif %}
     {% endif %}
-    {% if "products.delete" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and "products.delete" in business_perms %}
     <form method="post" action="{% url 'catalog:product_delete' product.public_id %}"
           onsubmit="return confirm('Permanently delete this product? Only possible if it was never used in any transaction.')">
       {% csrf_token %}<button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
@@ -76,7 +76,7 @@
     <div class="card mb-3">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Variants</span>
-        {% if "products.manage" in business_perms %}
+        {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
         <a href="{% url 'catalog:variant_create' product.public_id %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Add variant</a>
         {% endif %}
       </div>
@@ -88,7 +88,7 @@
             <td>{{ v.name }}</td><td class="small">{{ v.sku|default:"—" }}</td>
             <td class="small">{{ v.barcode|default:"—" }}</td>
             {% if not product.is_meter_tailoring or not product.unit_id %}<td class="text-end">{{ v.sale_price }}</td>{% endif %}
-            <td class="w-1">{% if "products.manage" in business_perms %}
+            <td class="w-1">{% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
               <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
           </tr>
           {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No variants yet</td></tr>{% endfor %}

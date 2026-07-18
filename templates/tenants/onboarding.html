@@ -6,14 +6,19 @@
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Set up {{ current_business.name }}</span>
+        {% if module_capabilities.pos_core.can_write %}
         <span class="badge text-bg-primary">{{ done_count }}/{{ total }} complete</span>
+        {% endif %}
       </div>
       <div class="card-body">
+        {% if module_capabilities.pos_core.can_write %}
         <div class="progress mb-4" style="height:8px">
           <div class="progress-bar" style="width:{% widthratio done_count total 100 %}%"></div>
         </div>
+        {% endif %}
         <div class="list-group list-group-flush">
           {% for step in steps %}
+          {% if step.url == "tenants:profile" or module_capabilities.pos_core.can_write %}
           <a href="{% url step.url %}" class="list-group-item list-group-item-action d-flex align-items-center gap-3 py-3">
             {% if step.done %}
               <i class="bi bi-check-circle-fill text-success fs-5"></i>
@@ -23,6 +28,7 @@
             <span class="{% if step.done %}text-decoration-line-through text-secondary{% endif %}">{{ step.label }}</span>
             <i class="bi bi-chevron-right ms-auto text-secondary"></i>
           </a>
+          {% endif %}
           {% endfor %}
         </div>
         <form method="post" class="mt-4 d-flex gap-2">{% csrf_token %}

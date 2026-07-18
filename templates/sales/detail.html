@@ -13,13 +13,13 @@
       <a href="{% url 'sales:workshop_job_card_pdf' sale.public_id %}" class="btn btn-outline-primary btn-sm">
         <i class="bi bi-clipboard-check"></i> Download All Job Cards</a>
     {% endif %}
-    {% if "sales.refund" in business_perms and sale.status != "voided" %}
+    {% if module_capabilities.pos_core.can_write and "sales.refund" in business_perms and sale.status != "voided" %}
       <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
     {% endif %}
-    {% if "sales.void" in business_perms and sale.status != "voided" and not returns %}
+    {% if module_capabilities.pos_core.can_write and "sales.void" in business_perms and sale.status != "voided" and not returns %}
       <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#voidModal"><i class="bi bi-x-octagon"></i> Void</button>
     {% endif %}
-    {% if "sales.delete" in business_perms and sale.status == "draft" %}
+    {% if module_capabilities.pos_core.can_write and "sales.delete" in business_perms and sale.status == "draft" %}
       <form method="post" action="{% url 'sales:delete' sale.public_id %}"
             onsubmit="return confirm('Permanently delete this draft sale?')">{% csrf_token %}
         <button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete draft</button></form>
@@ -160,7 +160,7 @@
           <tr><th>Delivery date</th><td class="fw-bold">{{ sale.delivery_date }}</td></tr>
           <tr><th>Status</th><td><span class="badge badge-status bs-{{ sale.delivery_status }}">{{ sale.get_delivery_status_display }}</span></td></tr>
         </table>
-        {% if "sales.create" in business_perms and sale.status != "voided" %}
+        {% if module_capabilities.pos_core.can_write and "sales.create" in business_perms and sale.status != "voided" %}
         <form method="post" action="{% url 'sales:set_delivery' sale.public_id %}" class="d-flex gap-2">
           {% csrf_token %}
           <select name="delivery_status" class="form-select form-select-sm">
@@ -210,7 +210,7 @@
       </table></div>
     </div>
 
-    {% if "customers.payments" in business_perms and sale.balance > 0 and sale.status != "voided" and sale.status != "draft" %}
+    {% if module_capabilities.pos_core.can_write and "customers.payments" in business_perms and sale.balance > 0 and sale.status != "voided" and sale.status != "draft" %}
     <div class="card mt-3 border-primary"><div class="card-header text-primary">Record payment</div>
       <div class="card-body">
         <form method="post" action="{% url 'sales:payment_add' sale.public_id %}">{% csrf_token %}
@@ -239,6 +239,7 @@
 </div>
 
 <!-- Void modal -->
+{% if module_capabilities.pos_core.can_write %}
 <div class="modal fade" id="voidModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
     <form method="post" action="{% url 'sales:void' sale.public_id %}">{% csrf_token %}
@@ -257,4 +258,5 @@
     </form>
   </div></div>
 </div>
+{% endif %}
 {% endblock %}

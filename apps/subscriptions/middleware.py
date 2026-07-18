@@ -41,6 +41,8 @@ class SubscriptionMiddleware(MiddlewareMixin):
         sub = getattr(request, "subscription", None)
         if sub is None or sub.is_operational:
             return None
+        if getattr(view_func, "_subscription_module_guarded", False):
+            return None
 
         try:
             match = resolve(request.path_info)

@@ -137,8 +137,11 @@ class SaleServiceTests(TenantTestCase):
     def test_discount_permission_enforced(self):
         from apps.accounts.models import Membership, Role
 
-        viewer_role = Role.objects.for_business(self.business_a).get(
-            name="Read-Only Viewer")
+        viewer_role = Role.objects.create(
+            business=self.business_a,
+            name="Seller without discount",
+            permissions=["sales.create"],
+        )
         from apps.accounts.models import User
 
         viewer = User.objects.create_user(email="viewer@example.com",

@@ -10,6 +10,7 @@ from apps.customers.models import Customer
 from apps.inventory import services as inventory
 from apps.registers.models import CashRegister
 from apps.sales.models import PaymentMethod
+from apps.subscriptions.models import Plan, Subscription
 from apps.tenants.services import provision_business
 
 
@@ -35,6 +36,16 @@ class TenantTestCase(TestCase):
             owner=cls.owner_b, name="Beta Trading", currency_code="OMR",
             currency_precision=3,
         )
+
+        # These are controlled test tenants.  Production seed-plan data stays
+        # untouched while legacy POS/catalog/customer/register suites exercise
+        # the explicitly enabled POS Core capability.
+        plan_ids = Subscription.objects.filter(
+            business__in=(cls.business_a, cls.business_b)
+        ).values_list("plan_id", flat=True)
+        Plan.objects.filter(pk__in=plan_ids).update(feature_sales=True)
+        cls.business_a.refresh_from_db()
+        cls.business_b.refresh_from_db()
 
         cls.branch_a = Branch.objects.for_business(cls.business_a).get(code="HO")
         cls.warehouse_a = Warehouse.objects.for_business(cls.business_a).get(code="MAIN")

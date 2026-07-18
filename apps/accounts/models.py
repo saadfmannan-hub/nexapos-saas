@@ -152,6 +152,21 @@ class Membership(TimeStampedModel):
         ids = set(self.branches.values_list("id", flat=True))
         return ids or None
 
+    @cached_property
+    def allowed_warehouse_ids(self):
+        """None means all warehouses; otherwise allowed-branch plus central IDs."""
+        allowed = self.allowed_branch_ids
+        if allowed is None:
+            return None
+
+        from apps.branches.models import Warehouse
+
+        return set(
+            Warehouse.objects.for_business(self.business_id)
+            .filter(models.Q(branch_id__in=allowed) | models.Q(branch__isnull=True))
+            .values_list("id", flat=True)
+        )
+
     def can_access_branch(self, branch) -> bool:
         if branch is None:
             return True

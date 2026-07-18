@@ -9,10 +9,10 @@ from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import business_required, require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 from apps.subscriptions.helpers import guard_limit, limit_blocked_response
 
 from . import services
@@ -35,7 +35,26 @@ def _manageable_register(request, public_id, *, lock=False):
     return register
 
 
-@business_required
+def _shifts_for_request(request, queryset=None):
+    """Scope shift access to the tenant and the member's allowed branches."""
+
+    shifts = Shift.objects.all() if queryset is None else queryset
+    shifts = shifts.for_business(request.business)
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        shifts = shifts.filter(branch_id__in=allowed)
+    return shifts
+
+
+def _shift_for_request(request, public_id, *, queryset=None):
+    return get_tenant_object(
+        _shifts_for_request(request, queryset),
+        request.business,
+        public_id=public_id,
+    )
+
+
+@module_permission_required("pos_core")
 def shift_list(request):
     from apps.branches.models import Branch
     from apps.sales.models import Sale
@@ -72,13 +91,12 @@ def shift_list(request):
     page_obj = None
     date_from, date_to = resolve_date_range(request.GET, request.business)
     if can_open_shifts:
-        shifts = (
-            Shift.objects.for_business(request.business)
-            .select_related("register", "branch", "cashier", "approved_by")
-            .filter(
-                opened_at__date__gte=date_from,
-                opened_at__date__lte=date_to,
-            )
+        shifts = _shifts_for_request(
+            request,
+            Shift.objects.select_related("register", "branch", "cashier", "approved_by"),
+        ).filter(
+            opened_at__date__gte=date_from,
+            opened_at__date__lte=date_to,
         )
         if not request.membership.has_perm("shifts.approve"):
             shifts = shifts.filter(cashier=request.user)
@@ -120,7 +138,7 @@ def shift_list(request):
     })
 
 
-@require_permission("shifts.open")
+@module_permission_required("pos_core", "shifts.open")
 def shift_open(request):
     if request.method != "POST":
         return redirect("registers:shift_list")
@@ -133,9 +151,13 @@ def shift_open(request):
     try:
         subscriptions.require_operational(request.business)
         shift = services.open_shift(
-            business=request.business, register=register, cashier=request.user,
+            business=request.business,
+            register=register,
+            cashier=request.user,
             opening_cash=D(request.POST.get("opening_cash")),
-            notes=request.POST.get("notes", "")[:300], request=request,
+            notes=request.POST.get("notes", "")[:300],
+            membership=request.membership,
+            request=request,
         )
         messages.success(request, f"Shift opened on {shift.register.name}. Good selling!")
         return redirect("sales:pos")
@@ -144,11 +166,12 @@ def shift_open(request):
     return redirect("registers:shift_list")
 
 
-@require_permission("shifts.open")
+@module_permission_required("pos_core", "shifts.open")
 def shift_detail(request, public_id):
-    shift = get_tenant_object(
-        Shift.objects.select_related("register", "branch", "cashier"),
-        request.business, public_id=public_id,
+    shift = _shift_for_request(
+        request,
+        public_id,
+        queryset=Shift.objects.select_related("register", "branch", "cashier"),
     )
     if shift.cashier_id != request.user.id and not request.membership.has_perm(
         "shifts.approve"
@@ -165,9 +188,9 @@ def shift_detail(request, public_id):
     })
 
 
-@require_permission("shifts.close")
+@module_permission_required("pos_core", "shifts.close")
 def shift_close(request, public_id):
-    shift = get_tenant_object(Shift, request.business, public_id=public_id)
+    shift = _shift_for_request(request, public_id)
     if shift.cashier_id != request.user.id and not request.membership.has_perm(
         "shifts.approve"
     ):
@@ -176,8 +199,11 @@ def shift_close(request, public_id):
     if request.method == "POST":
         try:
             services.close_shift(
-                shift=shift, actual_cash=D(request.POST.get("actual_cash")),
-                notes=request.POST.get("notes", "")[:300], user=request.user,
+                shift=shift,
+                actual_cash=D(request.POST.get("actual_cash")),
+                notes=request.POST.get("notes", "")[:300],
+                user=request.user,
+                membership=request.membership,
                 request=request,
             )
             messages.success(
@@ -193,35 +219,41 @@ def shift_close(request, public_id):
                   {"shift": shift, "totals": totals, "active_nav": "registers"})
 
 
-@require_permission("shifts.approve")
+@module_permission_required("pos_core", "shifts.approve")
 def shift_approve(request, public_id):
-    shift = get_tenant_object(Shift, request.business, public_id=public_id)
+    shift = _shift_for_request(request, public_id)
     if request.method == "POST" and shift.status == Shift.Status.CLOSED:
-        shift.status = Shift.Status.APPROVED
-        shift.approved_by = request.user
-        shift.save(update_fields=["status", "approved_by", "updated_at"])
-        from apps.audit import services as audit
-
-        audit.log("shift.approved", request=request, module="registers", obj=shift,
-                  description=f"Shift {shift.pk} approved "
-                              f"(difference {shift.difference}).")
-        messages.success(request, "Shift approved.")
+        try:
+            services.approve_shift(
+                shift=shift,
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
+            messages.success(request, "Shift approved.")
+        except ShiftError as exc:
+            messages.error(request, str(exc))
     return redirect("registers:shift_detail", public_id=shift.public_id)
 
 
-@require_permission("shifts.reopen")
+@module_permission_required("pos_core", "shifts.reopen")
 def shift_reopen(request, public_id):
-    shift = get_tenant_object(Shift, request.business, public_id=public_id)
+    shift = _shift_for_request(request, public_id)
     if request.method == "POST":
         try:
-            services.reopen_shift(shift=shift, user=request.user, request=request)
+            services.reopen_shift(
+                shift=shift,
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
             messages.warning(request, "Shift reopened — this was recorded in the audit log.")
         except ShiftError as exc:
             messages.error(request, str(exc))
     return redirect("registers:shift_detail", public_id=shift.public_id)
 
 
-@require_permission("registers.manage")
+@module_permission_required("pos_core", "registers.manage")
 @transaction.atomic
 def register_form(request, public_id=None):
     register = (
@@ -258,10 +290,15 @@ def register_form(request, public_id=None):
     )
     if request.method == "POST" and form.is_valid():
         saved_register = form.save(commit=False)
-        saved_register.business = request.business
         try:
             with transaction.atomic():
-                saved_register.save()
+                services.save_register(
+                    register=saved_register,
+                    business=request.business,
+                    user=request.user,
+                    membership=request.membership,
+                    request=request,
+                )
         except IntegrityError:
             form.add_error("code", "This register code is already in use.")
         else:
@@ -297,7 +334,7 @@ def register_form(request, public_id=None):
     })
 
 
-@require_permission("registers.manage")
+@module_permission_required("pos_core", "registers.manage")
 def register_archive(request, public_id):
     register = _manageable_register(request, public_id)
     if request.method == "POST":
@@ -305,6 +342,7 @@ def register_archive(request, public_id):
             services.archive_register(
                 register=register,
                 user=request.user,
+                membership=request.membership,
                 request=request,
             )
             messages.success(request, "Register archived. Its history remains available.")
@@ -318,7 +356,7 @@ def register_archive(request, public_id):
     })
 
 
-@require_permission("registers.manage")
+@module_permission_required("pos_core", "registers.manage")
 @require_POST
 def register_reactivate(request, public_id):
     register = _manageable_register(request, public_id)
@@ -326,6 +364,7 @@ def register_reactivate(request, public_id):
         services.reactivate_register(
             register=register,
             user=request.user,
+            membership=request.membership,
             request=request,
         )
         messages.success(request, "Register reactivated.")
@@ -336,7 +375,7 @@ def register_reactivate(request, public_id):
     return redirect("registers:shift_list")
 
 
-@require_permission("registers.manage")
+@module_permission_required("pos_core", "registers.manage")
 def register_delete(request, public_id):
     register = _manageable_register(request, public_id)
     assessment = services.assess_register_deletion(register)
@@ -345,6 +384,7 @@ def register_delete(request, public_id):
             services.delete_register_if_safe(
                 register=register,
                 user=request.user,
+                membership=request.membership,
                 request=request,
             )
             messages.success(request, "Unused register permanently deleted.")

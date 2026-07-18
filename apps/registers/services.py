@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.audit import services as audit
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, require_actor_access
 
 from .models import CashRegister, Shift
 
@@ -42,6 +43,211 @@ class ShiftError(Exception):
 
 class RegisterLifecycleError(Exception):
     pass
+
+
+def _require_register_write(
+    *, business, user, permission_code, membership=None, request=None, branch=None
+):
+    context = require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+    if branch is not None and not context.membership.can_access_branch(branch):
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code=permission_code,
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    return context
+
+
+def _deny_register_scope(
+    *, business, user, permission_code, membership, request=None
+):
+    require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+        scope_allowed=False,
+    )
+
+
+def _locked_register_for_write(
+    *,
+    register,
+    user,
+    permission_code,
+    business=None,
+    membership=None,
+    request=None,
+):
+    """Authorize and reload a mutable register within its tenant."""
+
+    business = business or register.business
+    context = _require_register_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=membership,
+        request=request,
+    )
+    try:
+        register = (
+            CashRegister.objects.select_for_update()
+            .select_related("business", "branch")
+            .get(pk=register.pk, business=business)
+        )
+    except (CashRegister.DoesNotExist, TypeError, ValueError):
+        _deny_register_scope(
+            business=business,
+            user=user,
+            permission_code=permission_code,
+            membership=context.membership,
+            request=request,
+        )
+    _require_register_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=context.membership,
+        request=request,
+        branch=register.branch,
+    )
+    return register, context
+
+
+def _locked_shift_for_write(
+    *, shift, user, permission_code, membership=None, request=None
+):
+    """Authorize and reload a mutable shift within its tenant."""
+
+    business = shift.business
+    context = _require_register_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=membership,
+        request=request,
+    )
+    try:
+        shift = (
+            Shift.objects.select_for_update()
+            .select_related("business", "branch", "register__branch", "cashier")
+            .get(pk=shift.pk, business=business)
+        )
+    except (Shift.DoesNotExist, TypeError, ValueError):
+        _deny_register_scope(
+            business=business,
+            user=user,
+            permission_code=permission_code,
+            membership=context.membership,
+            request=request,
+        )
+    _require_register_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=context.membership,
+        request=request,
+        branch=shift.branch,
+    )
+    return shift, context
+
+
+def save_register(*, register, business, user, membership=None, request=None):
+    """Persist an operational register after module, role, and branch checks."""
+
+    from apps.branches.models import Branch
+
+    context = _require_register_write(
+        business=business,
+        user=user,
+        permission_code="registers.manage",
+        membership=membership,
+        request=request,
+    )
+    if register.business_id not in (None, business.id):
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="registers.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    branch = Branch.objects.select_for_update().filter(
+        pk=register.branch_id, business=business
+    ).first()
+    if branch is None:
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="registers.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    _require_register_write(
+        business=business,
+        user=user,
+        permission_code="registers.manage",
+        membership=context.membership,
+        request=request,
+        branch=branch,
+    )
+
+    if register.pk is None:
+        register.business = business
+        register.branch = branch
+        register.save()
+        return register
+
+    try:
+        saved_register = (
+            CashRegister.objects.select_for_update()
+            .select_related("branch")
+            .get(pk=register.pk, business=business)
+        )
+    except (CashRegister.DoesNotExist, TypeError, ValueError):
+        _deny_register_scope(
+            business=business,
+            user=user,
+            permission_code="registers.manage",
+            membership=context.membership,
+            request=request,
+        )
+    _require_register_write(
+        business=business,
+        user=user,
+        permission_code="registers.manage",
+        membership=context.membership,
+        request=request,
+        branch=saved_register.branch,
+    )
+    saved_register.name = register.name
+    saved_register.code = register.code
+    saved_register.branch = branch
+    saved_register.receipt_printer = register.receipt_printer
+    saved_register.save()
+    return saved_register
 
 
 REGISTER_HISTORY_DELETE_ERROR = (
@@ -118,11 +324,13 @@ def assess_register_deletion(register):
 
 
 @transaction.atomic
-def archive_register(*, register, user, request=None):
-    register = (
-        CashRegister.objects.select_for_update()
-        .select_related("branch", "business")
-        .get(pk=register.pk)
+def archive_register(*, register, user, membership=None, request=None):
+    register, _context = _locked_register_for_write(
+        register=register,
+        user=user,
+        permission_code="registers.manage",
+        membership=membership,
+        request=request,
     )
     if not register.is_active:
         raise RegisterLifecycleError("This register is already archived.")
@@ -147,11 +355,13 @@ def archive_register(*, register, user, request=None):
 
 
 @transaction.atomic
-def reactivate_register(*, register, user, request=None):
-    register = (
-        CashRegister.objects.select_for_update()
-        .select_related("branch", "business")
-        .get(pk=register.pk)
+def reactivate_register(*, register, user, membership=None, request=None):
+    register, _context = _locked_register_for_write(
+        register=register,
+        user=user,
+        permission_code="registers.manage",
+        membership=membership,
+        request=request,
     )
     if register.is_active:
         raise RegisterLifecycleError("This register is already active.")
@@ -184,11 +394,13 @@ def reactivate_register(*, register, user, request=None):
 
 
 @transaction.atomic
-def delete_register_if_safe(*, register, user, request=None):
-    register = (
-        CashRegister.objects.select_for_update()
-        .select_related("branch", "business")
-        .get(pk=register.pk)
+def delete_register_if_safe(*, register, user, membership=None, request=None):
+    register, _context = _locked_register_for_write(
+        register=register,
+        user=user,
+        permission_code="registers.manage",
+        membership=membership,
+        request=request,
     )
     assessment = assess_register_deletion(register)
     if not assessment.can_delete:
@@ -217,15 +429,16 @@ def delete_register_if_safe(*, register, user, request=None):
 
 
 @transaction.atomic
-def open_shift(*, business, register, cashier, opening_cash, notes="", request=None):
-    try:
-        register = (
-            CashRegister.objects.select_for_update()
-            .select_related("branch")
-            .get(pk=register.pk, business=business)
-        )
-    except CashRegister.DoesNotExist as exc:
-        raise ShiftError("This register is not available.") from exc
+def open_shift(*, business, register, cashier, opening_cash, notes="",
+               membership=None, request=None):
+    register, _context = _locked_register_for_write(
+        register=register,
+        business=business,
+        user=cashier,
+        permission_code="shifts.open",
+        membership=membership,
+        request=request,
+    )
     if not register.is_active or not register.branch.is_active:
         raise ShiftError("This register is archived or its branch is inactive.")
     if Shift.objects.for_business(business).filter(
@@ -309,7 +522,17 @@ def shift_totals(shift):
 
 
 @transaction.atomic
-def close_shift(*, shift, actual_cash, notes="", denominations=None, user=None, request=None):
+def close_shift(*, shift, actual_cash, user, notes="", denominations=None,
+                membership=None, request=None):
+    shift, context = _locked_shift_for_write(
+        shift=shift,
+        user=user,
+        permission_code="shifts.close",
+        membership=membership,
+        request=request,
+    )
+    if shift.cashier_id != user.pk and not context.membership.has_perm("shifts.approve"):
+        raise ShiftError("Only the shift's cashier or a manager can close it.")
     if shift.status != Shift.Status.OPEN:
         raise ShiftError("This shift is not open.")
     totals = shift_totals(shift)
@@ -321,7 +544,7 @@ def close_shift(*, shift, actual_cash, notes="", denominations=None, user=None, 
     shift.closed_at = timezone.now()
     shift.status = Shift.Status.CLOSED
     shift.save()
-    audit.log("shift.closed", business=shift.business, user=user or shift.cashier,
+    audit.log("shift.closed", business=shift.business, user=user,
               request=request, module="registers", obj=shift,
               description=(f"Shift closed. Expected {shift.expected_cash}, "
                            f"actual {actual_cash}, difference {shift.difference}."))
@@ -338,11 +561,39 @@ def close_shift(*, shift, actual_cash, notes="", denominations=None, user=None, 
 
 
 @transaction.atomic
-def reopen_shift(*, shift, user, request=None):
-    shift = (
-        Shift.objects.select_for_update()
-        .select_related("register__branch")
-        .get(pk=shift.pk)
+def approve_shift(*, shift, user, membership=None, request=None):
+    shift, _context = _locked_shift_for_write(
+        shift=shift,
+        user=user,
+        permission_code="shifts.approve",
+        membership=membership,
+        request=request,
+    )
+    if shift.status != Shift.Status.CLOSED:
+        raise ShiftError("Only closed shifts can be approved.")
+    shift.status = Shift.Status.APPROVED
+    shift.approved_by = user
+    shift.save(update_fields=["status", "approved_by", "updated_at"])
+    audit.log(
+        "shift.approved",
+        business=shift.business,
+        user=user,
+        request=request,
+        module="registers",
+        obj=shift,
+        description=f"Shift {shift.pk} approved (difference {shift.difference}).",
+    )
+    return shift
+
+
+@transaction.atomic
+def reopen_shift(*, shift, user, membership=None, request=None):
+    shift, _context = _locked_shift_for_write(
+        shift=shift,
+        user=user,
+        permission_code="shifts.reopen",
+        membership=membership,
+        request=request,
     )
     if shift.status not in (Shift.Status.CLOSED, Shift.Status.APPROVED):
         raise ShiftError("Only closed shifts can be reopened.")

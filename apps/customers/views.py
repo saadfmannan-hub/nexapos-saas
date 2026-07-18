@@ -14,6 +14,7 @@ from apps.core.money import money
 from apps.registers import services as register_services
 from apps.reports.pdf import render_pdf
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 
 from . import services
 from .forms import CustomerForm, CustomerPaymentForm
@@ -27,7 +28,7 @@ def _qs_without_page(request):
     return f"{encoded}&" if encoded else ""
 
 
-@require_permission("customers.view")
+@module_permission_required("pos_core", "customers.view")
 def customer_list(request):
     qs = Customer.objects.for_business(request.business).select_related("group")
     q = request.GET.get("q", "").strip()
@@ -53,7 +54,7 @@ def customer_list(request):
     })
 
 
-@require_permission("customers.manage")
+@module_permission_required("pos_core", "customers.manage")
 def customer_form(request, public_id=None):
     instance = None
     if public_id:
@@ -67,12 +68,14 @@ def customer_form(request, public_id=None):
     form = CustomerForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
         customer = form.save(commit=False)
-        customer.business = request.business
         if not customer.code:
             customer.code = services.next_customer_code(request.business)
         if instance is None and customer.opening_balance:
             customer.balance = customer.opening_balance
-        customer.save()
+        customer = services.save_customer(
+            customer=customer, business=request.business, user=request.user,
+            membership=request.membership, request=request,
+        )
         audit.log("customer.saved", request=request, module="customers", obj=customer,
                   description=f"Customer '{customer.full_name}' saved.")
         messages.success(request, "Customer saved.")
@@ -81,7 +84,7 @@ def customer_form(request, public_id=None):
                   {"form": form, "customer": instance, "active_nav": "customers"})
 
 
-@require_permission("customers.view")
+@module_permission_required("pos_core", "customers.view")
 def customer_detail(request, public_id):
     from apps.sales.models import Sale, SaleReturn
 
@@ -237,7 +240,7 @@ def _statement_entries(business, customer, branch_id=None):
     return entries, balance
 
 
-@require_permission("customers.export")
+@module_permission_required("pos_core", "customers.export")
 def customer_export(request):
     """Export the filtered customer list as CSV or Excel."""
     from apps.reports import exports
@@ -253,15 +256,12 @@ def customer_export(request):
     elif flt == "inactive":
         qs = qs.filter(is_active=False)
     data = services.export_dataset(request.business, qs.order_by("full_name"))
-    audit.log("customer.exported", request=request, module="customers",
-              description=f"Exported {len(data['rows'])} customers "
-                          f"({request.GET.get('format', 'csv')}).")
     if request.GET.get("format") == "xlsx":
         return exports.export_xlsx("customers", data)
     return exports.export_csv("customers", data)
 
 
-@require_permission("customers.import")
+@module_permission_required("pos_core", "customers.import")
 def customer_import_template(request):
     from apps.reports import exports
 
@@ -280,7 +280,7 @@ def customer_import_template(request):
     return exports.export_csv("customer_import_template", data)
 
 
-@require_permission("customers.import")
+@module_permission_required("pos_core", "customers.import")
 def customer_import(request):
     from apps.core.imports import error_report_response, parse_tabular_file
 
@@ -310,7 +310,8 @@ def customer_import(request):
             else:
                 summary, errors = services.import_customers(
                     business=request.business, rows=rows, mode=mode,
-                    user=request.user)
+                    user=request.user, membership=request.membership,
+                    request=request)
                 request.session["customer_import_errors"] = errors
                 results = {"summary": summary, "errors": errors,
                            "total": len(rows)}

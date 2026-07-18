@@ -2,21 +2,36 @@ from django.contrib import messages
 from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 from apps.subscriptions.helpers import guard_limit
 
 from .forms import BranchForm, WarehouseForm
 from .models import Branch, Warehouse
 
 
-@require_permission("branches.manage")
+def _allowed_branches(request):
+    branches = Branch.objects.for_business(request.business)
+    allowed_ids = request.membership.allowed_branch_ids
+    if allowed_ids is not None:
+        branches = branches.filter(pk__in=allowed_ids)
+    return branches
+
+
+def _allowed_warehouses(request):
+    warehouses = Warehouse.objects.for_business(request.business)
+    allowed_ids = request.membership.allowed_warehouse_ids
+    if allowed_ids is not None:
+        warehouses = warehouses.filter(pk__in=allowed_ids)
+    return warehouses
+
+
+@module_permission_required("pos_core", "branches.manage")
 def branch_list(request):
-    branches = Branch.objects.for_business(request.business).order_by("name")
+    branches = _allowed_branches(request).order_by("name")
     warehouses = (
-        Warehouse.objects.for_business(request.business)
-        .select_related("branch").order_by("name")
+        _allowed_warehouses(request).select_related("branch").order_by("name")
     )
     b_cur, b_lim, _ = subscriptions.limit_state(request.business, "branches")
     w_cur, w_lim, _ = subscriptions.limit_state(request.business, "warehouses")
@@ -27,11 +42,13 @@ def branch_list(request):
     })
 
 
-@require_permission("branches.manage")
+@module_permission_required("pos_core", "branches.manage")
 def branch_form(request, public_id=None):
     instance = None
     if public_id:
-        instance = get_tenant_object(Branch, request.business, public_id=public_id)
+        instance = get_tenant_object(
+            _allowed_branches(request), request.business, public_id=public_id
+        )
     else:
         blocked = guard_limit(request, "branches")
         if blocked:
@@ -50,25 +67,32 @@ def branch_form(request, public_id=None):
                   {"form": form, "branch": instance, "active_nav": "branches"})
 
 
-@require_permission("branches.manage")
+@module_permission_required("pos_core", "branches.manage")
 def warehouse_form(request, public_id=None):
     instance = None
     if public_id:
-        instance = get_tenant_object(Warehouse, request.business, public_id=public_id)
+        instance = get_tenant_object(
+            _allowed_warehouses(request), request.business, public_id=public_id
+        )
     else:
         blocked = guard_limit(request, "warehouses")
         if blocked:
             return blocked
 
-    form = WarehouseForm(request.business, request.POST or None, instance=instance)
+    form = WarehouseForm(
+        request.business,
+        request.POST or None,
+        instance=instance,
+        membership=request.membership,
+    )
     if request.method == "POST" and form.is_valid():
         warehouse = form.save(commit=False)
         warehouse.business = request.business
         warehouse.save()
         if warehouse.is_default:
-            Warehouse.objects.for_business(request.business).exclude(
-                pk=warehouse.pk
-            ).update(is_default=False)
+            _allowed_warehouses(request).exclude(pk=warehouse.pk).update(
+                is_default=False
+            )
         audit.log("warehouse.saved", request=request, module="branches", obj=warehouse,
                   description=f"Warehouse '{warehouse.name}' saved.")
         messages.success(request, "Warehouse saved.")

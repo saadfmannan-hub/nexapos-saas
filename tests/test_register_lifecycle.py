@@ -246,7 +246,7 @@ class RegisterLifecycleTests(TenantTestCase):
             cashier=self.owner_a,
             opening_cash=Decimal("25"),
         )
-        services.close_shift(shift=shift, actual_cash=Decimal("25"))
+        services.close_shift(shift=shift, actual_cash=Decimal("25"), user=self.owner_a)
         response = self.client.post(self.register_url("register_archive"))
         self.assertRedirects(response, reverse("registers:shift_list"))
         self.register_a.refresh_from_db()
@@ -289,7 +289,7 @@ class RegisterLifecycleTests(TenantTestCase):
             cashier=self.owner_a,
             opening_cash=Decimal("0"),
         )
-        services.close_shift(shift=shift, actual_cash=Decimal("0"))
+        services.close_shift(shift=shift, actual_cash=Decimal("0"), user=self.owner_a)
         services.archive_register(register=self.register_a, user=self.owner_a)
         with self.assertRaisesMessage(services.ShiftError, "Archived registers"):
             services.reopen_shift(shift=shift, user=self.owner_a)
@@ -301,7 +301,7 @@ class RegisterLifecycleTests(TenantTestCase):
             cashier=self.owner_a,
             opening_cash=Decimal("0"),
         )
-        services.close_shift(shift=shift, actual_cash=Decimal("0"))
+        services.close_shift(shift=shift, actual_cash=Decimal("0"), user=self.owner_a)
         services.archive_register(register=self.register_a, user=self.owner_a)
         list_response = self.client.get(reverse("registers:shift_list"))
         detail_response = self.client.get(
@@ -377,7 +377,7 @@ class RegisterLifecycleTests(TenantTestCase):
             cashier=self.owner_a,
             opening_cash=Decimal("0"),
         )
-        services.close_shift(shift=shift, actual_cash=Decimal("0"))
+        services.close_shift(shift=shift, actual_cash=Decimal("0"), user=self.owner_a)
         response = self.client.post(self.register_url("register_delete"), follow=True)
         self.assertContains(
             response,

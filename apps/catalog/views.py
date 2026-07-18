@@ -15,6 +15,7 @@ from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 
 from .forms import (
     BrandForm,
@@ -29,23 +30,14 @@ from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
 
 
 def _allowed_warehouse_ids(request):
-    """Return None for tenant-wide access, otherwise allowed + central IDs."""
-    allowed = request.membership.allowed_branch_ids
-    if allowed is None:
-        return None
-    from apps.branches.models import Warehouse
-
-    return list(
-        Warehouse.objects.for_business(request.business)
-        .filter(Q(branch_id__in=allowed) | Q(branch__isnull=True))
-        .values_list("id", flat=True)
-    )
+    """Return the canonical membership warehouse scope."""
+    return request.membership.allowed_warehouse_ids
 
 
 # ---------------------------------------------------------------------------
 # Products
 # ---------------------------------------------------------------------------
-@require_permission("products.view")
+@module_permission_required("pos_core", "products.view")
 def product_list(request):
     qs = (
         Product.objects.for_business(request.business)
@@ -104,9 +96,10 @@ def _qs_without_page(request):
     return f"{encoded}&" if encoded else ""
 
 
-@require_permission("products.export")
+@module_permission_required("pos_core", "products.export")
 def product_export(request):
     """Export products (CSV/XLSX) honoring catalog + stock filters."""
+    from apps.branches.models import Branch, Warehouse
     from apps.reports import exports
 
     from . import services as catalog_services
@@ -115,23 +108,41 @@ def product_export(request):
         v = request.GET.get(name, "")
         return int(v) if v.isdigit() else None
 
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    allowed_warehouse_ids = request.membership.allowed_warehouse_ids
+    branch_id = _int("branch")
+    warehouse_id = _int("warehouse")
+
+    if branch_id is not None:
+        branches = Branch.objects.for_business(request.business)
+        if allowed_branch_ids is not None:
+            branches = branches.filter(pk__in=allowed_branch_ids)
+        get_tenant_object(branches, request.business, pk=branch_id)
+    if warehouse_id is not None:
+        warehouses = Warehouse.objects.for_business(request.business)
+        if allowed_warehouse_ids is not None:
+            warehouses = warehouses.filter(pk__in=allowed_warehouse_ids)
+        get_tenant_object(warehouses, request.business, pk=warehouse_id)
+
     filters = {
         "category_id": _int("category"),
         "brand_id": _int("brand"),
-        "branch_id": _int("branch"),
-        "warehouse_id": _int("warehouse"),
+        "branch_id": branch_id,
+        "warehouse_id": warehouse_id,
         "status": request.GET.get("status", ""),
     }
-    data = catalog_services.product_export_dataset(request.business, filters)
-    audit.log("product.exported", request=request, module="catalog",
-              description=f"Exported {len(data['rows'])} products "
-                          f"({request.GET.get('format', 'csv')}).")
+    data = catalog_services.product_export_dataset(
+        request.business,
+        filters,
+        allowed_branch_ids=allowed_branch_ids,
+        allowed_warehouse_ids=allowed_warehouse_ids,
+    )
     if request.GET.get("format") == "xlsx":
         return exports.export_xlsx("products", data)
     return exports.export_csv("products", data)
 
 
-@require_permission("products.manage")
+@module_permission_required("pos_core", "products.manage")
 def product_form(request, public_id=None):
     from . import services as catalog_services
 
@@ -216,10 +227,12 @@ def product_form(request, public_id=None):
                 form.instance = product
             else:
                 product = form.save(commit=False)
-            product.business = request.business
             if auto_sku and not product.sku:
                 product.sku = catalog_services.generate_sku(request.business)
-            product.save()
+            product = catalog_services.save_product(
+                product=product, business=request.business, user=request.user,
+                membership=request.membership, request=request,
+            )
 
             opening = form.cleaned_data.get("opening_stock")
             warehouse = form.cleaned_data.get("opening_warehouse")
@@ -366,7 +379,7 @@ def _create_variants(request, product, rows, warehouse):
         if not sku:  # auto-generate (auto-SKU on, or simply left blank)
             sku = catalog_services.generate_sku(business, taken=reserved)
         reserved.add(sku)
-        variant = ProductVariant.objects.create(
+        variant = ProductVariant(
             business=business, product=product, name=row["name"],
             attributes=row["attributes"], sku=sku, barcode=row["barcode"],
             purchase_price=row["purchase_price"],
@@ -375,6 +388,10 @@ def _create_variants(request, product, rows, warehouse):
                 if product.is_meter_tailoring
                 else row["sale_price"]
             ),
+        )
+        variant = catalog_services.save_variant(
+            variant=variant, product=product, user=request.user,
+            membership=request.membership, request=request,
         )
         if row["opening_stock"] and warehouse and product.is_stocked:
             inventory.set_opening_stock(
@@ -386,7 +403,7 @@ def _create_variants(request, product, rows, warehouse):
     return created
 
 
-@require_permission("products.view")
+@module_permission_required("pos_core", "products.view")
 def product_detail(request, public_id):
     product = get_tenant_object(
         Product.objects.select_related("category", "brand", "unit", "tax_rate"),
@@ -408,34 +425,40 @@ def product_detail(request, public_id):
     })
 
 
-@require_permission("products.archive")
+@module_permission_required("pos_core", "products.archive")
 def product_archive(request, public_id):
     product = get_tenant_object(Product, request.business, public_id=public_id)
     if request.method == "POST":
         # Products referenced by invoices are archived, never deleted.
-        product.is_archived = True
-        product.is_active = False
-        product.save(update_fields=["is_archived", "is_active"])
+        from . import services as catalog_services
+
+        product = catalog_services.archive_product(
+            product=product, user=request.user,
+            membership=request.membership, request=request,
+        )
         audit.log("product.archived", request=request, module="catalog", obj=product,
                   description=f"Product '{product.name}' archived.")
         messages.success(request, f"'{product.name}' archived.")
     return redirect("catalog:product_list")
 
 
-@require_permission("products.archive")
+@module_permission_required("pos_core", "products.archive")
 def product_restore(request, public_id):
     from . import services as catalog_services
 
     product = get_tenant_object(Product, request.business, public_id=public_id)
     if request.method == "POST":
-        catalog_services.restore_product(product)
+        product = catalog_services.restore_product(
+            product, user=request.user, membership=request.membership,
+            request=request,
+        )
         audit.log("product.restored", request=request, module="catalog", obj=product,
                   description=f"Product '{product.name}' restored from archive.")
         messages.success(request, f"'{product.name}' restored and active again.")
     return redirect("catalog:product_detail", public_id=public_id)
 
 
-@require_permission("products.delete")
+@module_permission_required("pos_core", "products.delete")
 def product_delete(request, public_id):
     from . import services as catalog_services
 
@@ -443,7 +466,10 @@ def product_delete(request, public_id):
     if request.method == "POST":
         name, ref = product.name, str(product.public_id)
         try:
-            catalog_services.delete_product_if_safe(product)
+            catalog_services.delete_product_if_safe(
+                product, user=request.user, membership=request.membership,
+                request=request,
+            )
         except catalog_services.ProductInUse as exc:
             messages.error(request, str(exc))
             return redirect("catalog:product_detail", public_id=public_id)
@@ -455,7 +481,7 @@ def product_delete(request, public_id):
     return redirect("catalog:product_detail", public_id=public_id)
 
 
-@require_permission("products.manage")
+@module_permission_required("pos_core", "products.manage")
 def variant_form(request, product_id, public_id=None):
     product = get_tenant_object(Product, request.business, public_id=product_id)
     instance = None
@@ -503,12 +529,15 @@ def variant_form(request, product_id, public_id=None):
                     form.instance = variant
                 else:
                     variant = form.save(commit=False)
-                variant.business = request.business
-                variant.product = locked_product
                 variant.attributes = form.build_attributes()
                 if not variant.name:
                     variant.name = " / ".join(variant.attributes.values()) or "Variant"
-                variant.save()
+                from . import services as catalog_services
+
+                variant = catalog_services.save_variant(
+                    variant=variant, product=locked_product, user=request.user,
+                    membership=request.membership, request=request,
+                )
                 if locked_product.product_type != Product.Type.VARIANT:
                     locked_product.product_type = Product.Type.VARIANT
                     locked_product.save(update_fields=["product_type"])
@@ -556,7 +585,7 @@ def product_labels(request, public_id):
 # ---------------------------------------------------------------------------
 def _simple_crud(request, model, form_class, list_template, name, perm="products.manage",
                  extra=None):
-    @require_permission(perm)
+    @module_permission_required("pos_core", perm)
     def handler(request):
         instance = None
         edit_id = request.GET.get("edit")
@@ -583,25 +612,29 @@ def _simple_crud(request, model, form_class, list_template, name, perm="products
     return handler(request)
 
 
+@module_permission_required("pos_core", "products.manage")
 def category_list(request):
     return _simple_crud(request, Category, CategoryForm,
                         "catalog/category_list.html", "Category")
 
 
+@module_permission_required("pos_core", "products.manage")
 def brand_list(request):
     return _simple_crud(request, Brand, BrandForm, "catalog/brand_list.html", "Brand")
 
 
+@module_permission_required("pos_core", "products.manage")
 def unit_list(request):
     return _simple_crud(request, Unit, UnitForm, "catalog/unit_list.html", "Unit")
 
 
+@module_permission_required("pos_core", "settings.manage")
 def tax_list(request):
     return _simple_crud(request, TaxRate, TaxRateForm, "catalog/tax_list.html",
                         "Tax rate", perm="settings.manage")
 
 
-@require_permission("products.import")
+@module_permission_required("pos_core", "products.import")
 def product_import(request):
     from apps.core.imports import error_report_response, parse_tabular_file
 
@@ -629,6 +662,7 @@ def product_import(request):
                 business=request.business, rows=rows,
                 match_by=form.cleaned_data["match_by"], user=request.user,
                 allowed_warehouse_ids=_allowed_warehouse_ids(request),
+                membership=request.membership, request=request,
             )
             request.session["product_import_errors"] = errors
             results = {"summary": summary, "errors": errors, "total": len(rows)}
@@ -643,7 +677,7 @@ def product_import(request):
                    "active_nav": "products"})
 
 
-@require_permission("products.import")
+@module_permission_required("pos_core", "products.import")
 def import_template(request):
     from apps.reports import exports
 

@@ -18,6 +18,7 @@ from apps.customers.models import Customer
 from apps.inventory.models import StockLevel
 from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 
 from . import calculations, services
 from .forms import ActualFabricForm
@@ -134,7 +135,7 @@ def _checkout_success_response(sale):
 # ---------------------------------------------------------------------------
 # POS screen
 # ---------------------------------------------------------------------------
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create", action="write")
 def pos_view(request):
     from apps.accounts.services import post_login_redirect
     from apps.catalog.models import Category
@@ -188,7 +189,7 @@ def pos_view(request):
     })
 
 
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_products(request):
     """JSON product grid/search for the POS screen."""
     from apps.branches.models import Warehouse
@@ -289,7 +290,7 @@ def pos_products(request):
     return JsonResponse({"items": items})
 
 
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_barcode(request):
     """Exact barcode/SKU lookup — used by scanner input."""
     from apps.catalog.models import Product, ProductVariant
@@ -345,7 +346,7 @@ def pos_barcode(request):
     return JsonResponse({"found": False})
 
 
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_customers(request):
     q = request.GET.get("q", "").strip()
     qs = Customer.objects.for_business(request.business).filter(is_active=True)
@@ -362,7 +363,7 @@ def pos_customers(request):
 
 
 @require_POST
-@require_permission("customers.manage")
+@module_permission_required("pos_core", "customers.manage")
 def pos_quick_customer(request):
     """Create a customer from the POS without leaving the screen."""
     from apps.customers.services import next_customer_code
@@ -382,9 +383,17 @@ def pos_quick_customer(request):
             {"ok": False, "error": "A customer with this mobile already exists."},
             status=400,
         )
-    customer = Customer.objects.create(
-        business=request.business, code=next_customer_code(request.business),
-        full_name=name[:160], mobile=mobile[:30],
+    customer = customer_services.save_customer(
+        customer=Customer(
+            business=request.business,
+            code=next_customer_code(request.business),
+            full_name=name[:160],
+            mobile=mobile[:30],
+        ),
+        business=request.business,
+        user=request.user,
+        membership=request.membership,
+        request=request,
     )
     return JsonResponse({"ok": True, "customer": {
         "id": customer.id, "name": customer.full_name, "mobile": customer.mobile,
@@ -394,7 +403,7 @@ def pos_quick_customer(request):
 
 
 @require_POST
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_checkout(request):
     """Finalize the cart. Body: JSON contract from the POS screen."""
     from apps.branches.models import Branch
@@ -630,7 +639,7 @@ def pos_checkout(request):
 
 
 @require_POST
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_hold(request):
     try:
         payload = json.loads(request.body)
@@ -658,14 +667,19 @@ def pos_hold(request):
             {"ok": False, "error": "You cannot hold a sale for this branch."},
             status=403,
         )
-    held = HeldSale.objects.create(
-        business=request.business, branch=branch, cashier=request.user,
-        label=str(payload.get("label", ""))[:80], cart=cart,
+    held = services.hold_sale(
+        business=request.business,
+        branch=branch,
+        cashier=request.user,
+        label=str(payload.get("label", ""))[:80],
+        cart=cart,
+        membership=request.membership,
+        request=request,
     )
     return JsonResponse({"ok": True, "held_id": held.pk})
 
 
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_held_list(request):
     from apps.catalog.models import Product
 
@@ -715,9 +729,15 @@ def pos_held_list(request):
 
 
 @require_POST
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def pos_held_delete(request, pk):
-    _held_sales_for_request(request).filter(pk=pk).delete()
+    services.delete_held_sale(
+        business=request.business,
+        held_id=pk,
+        cashier=request.user,
+        membership=request.membership,
+        request=request,
+    )
     return JsonResponse({"ok": True})
 
 
@@ -729,7 +749,7 @@ def _qs_without_page(request, date_from, date_to):
     return f"{encoded}&" if encoded else ""
 
 
-@require_permission("sales.view")
+@module_permission_required("pos_core", "sales.view")
 def sale_list(request):
     qs = (
         _sales_for_request(
@@ -786,7 +806,7 @@ def sale_list(request):
     })
 
 
-@require_permission("sales.view")
+@module_permission_required("pos_core", "sales.view")
 def sale_detail(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(
@@ -1024,15 +1044,12 @@ def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprin
     }
 
 
-def _render_invoice(request, sale, template, mark_reprint=False):
+def _render_invoice(request, sale, template):
     is_reprint = sale.reprint_count > 0
-    if mark_reprint:
-        sale.reprint_count += 1
-        sale.save(update_fields=["reprint_count"])
     return render(request, template, _invoice_context(sale, is_reprint=is_reprint))
 
 
-@require_permission("sales.view")
+@module_permission_required("pos_core", "sales.view")
 def sale_invoice(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(
@@ -1041,11 +1058,10 @@ def sale_invoice(request, public_id):
         ),
         request.business, public_id=public_id,
     )
-    return _render_invoice(request, sale, "invoices/invoice_a4.html",
-                           mark_reprint=True)
+    return _render_invoice(request, sale, "invoices/invoice_a4.html")
 
 
-@require_permission("sales.view")
+@module_permission_required("pos_core", "sales.view")
 def sale_receipt(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(
@@ -1057,10 +1073,10 @@ def sale_receipt(request, public_id):
     width = sale.register.receipt_printer if sale.register else "80mm"
     template = ("invoices/receipt_58mm.html" if width == "58mm"
                 else "invoices/receipt_80mm.html")
-    return _render_invoice(request, sale, template, mark_reprint=True)
+    return _render_invoice(request, sale, template)
 
 
-@require_permission("sales.view")
+@module_permission_required("pos_core", "sales.view")
 def sale_invoice_pdf(request, public_id):
     from apps.reports.pdf import render_pdf
 
@@ -1167,7 +1183,7 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
 
 
 @require_POST
-@require_permission("customers.payments")
+@module_permission_required("pos_core", "customers.payments")
 def sale_payment_add(request, public_id):
     """Record a later payment against a credit/partially-paid sale."""
     sale = get_tenant_object(
@@ -1183,12 +1199,22 @@ def sale_payment_add(request, public_id):
             import datetime as _dt
 
             payment_date = _dt.date.fromisoformat(raw_date)
-        shift = register_services.get_open_shift(request.business, request.user)
+        shift = register_services.get_open_shift(
+            request.business,
+            request.user,
+            membership=request.membership,
+        )
         payment = services.add_sale_payment(
-            sale=sale, amount=D(request.POST.get("amount")), method=method,
-            user=request.user, payment_date=payment_date,
+            sale=sale,
+            amount=D(request.POST.get("amount")),
+            method=method,
+            user=request.user,
+            payment_date=payment_date,
             reference=request.POST.get("reference", ""),
-            notes=request.POST.get("notes", ""), shift=shift, request=request,
+            notes=request.POST.get("notes", ""),
+            shift=shift,
+            membership=request.membership,
+            request=request,
         )
         messages.success(
             request,
@@ -1200,13 +1226,18 @@ def sale_payment_add(request, public_id):
 
 
 @require_POST
-@require_permission("sales.delete")
+@module_permission_required("pos_core", "sales.delete")
 def sale_delete(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(request), request.business, public_id=public_id,
     )
     try:
-        services.delete_sale(sale=sale, user=request.user, request=request)
+        services.delete_sale(
+            sale=sale,
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
         messages.success(request, "Draft sale deleted.")
         return redirect("sales:list")
     except SaleError as exc:
@@ -1215,15 +1246,18 @@ def sale_delete(request, public_id):
 
 
 @require_POST
-@require_permission("sales.create")
+@module_permission_required("pos_core", "sales.create")
 def sale_set_delivery(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(request), request.business, public_id=public_id,
     )
     try:
-        services.set_delivery_status(
-            sale=sale, status=request.POST.get("delivery_status", ""),
-            user=request.user, request=request,
+        sale = services.set_delivery_status(
+            sale=sale,
+            status=request.POST.get("delivery_status", ""),
+            user=request.user,
+            membership=request.membership,
+            request=request,
         )
         messages.success(request, f"Delivery status updated to "
                                   f"{sale.get_delivery_status_display()}.")
@@ -1233,7 +1267,7 @@ def sale_set_delivery(request, public_id):
 
 
 @require_POST
-@require_permission("sales.void")
+@module_permission_required("pos_core", "sales.void")
 def sale_void(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(request), request.business, public_id=public_id,
@@ -1244,7 +1278,13 @@ def sale_void(request, public_id):
         return redirect("sales:detail", public_id=public_id)
     try:
         subscriptions.require_operational(request.business)
-        services.void_sale(sale=sale, user=request.user, reason=reason, request=request)
+        services.void_sale(
+            sale=sale,
+            user=request.user,
+            reason=reason,
+            membership=request.membership,
+            request=request,
+        )
         messages.success(request, f"Invoice {sale.invoice_number} voided.")
     except (SaleError, subscriptions.SubscriptionInactive) as exc:
         messages.error(request, str(exc))
@@ -1254,7 +1294,7 @@ def sale_void(request, public_id):
 # ---------------------------------------------------------------------------
 # Returns
 # ---------------------------------------------------------------------------
-@require_permission("sales.refund")
+@module_permission_required("pos_core", "sales.refund")
 def return_list(request):
     qs = (
         SaleReturn.objects.for_business(request.business)
@@ -1282,7 +1322,7 @@ def return_list(request):
     })
 
 
-@require_permission("sales.refund")
+@module_permission_required("pos_core", "sales.refund")
 def return_create(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(
@@ -1318,9 +1358,15 @@ def return_create(request, public_id):
                 if shift is not None and shift.branch_id != sale.branch_id:
                     shift = None
                 sale_return = services.process_return(
-                    sale=sale, items=selected, refund_method=refund_method,
-                    user=request.user, reason=request.POST.get("reason", ""),
-                    restock=True, shift=shift, request=request,
+                    sale=sale,
+                    items=selected,
+                    refund_method=refund_method,
+                    user=request.user,
+                    reason=request.POST.get("reason", ""),
+                    restock=True,
+                    shift=shift,
+                    membership=request.membership,
+                    request=request,
                 )
                 messages.success(
                     request,

@@ -1,10 +1,11 @@
 """Production-safe, permission-aware post-login routing tests."""
 from django.urls import reverse
+from django.utils import timezone
 
 from apps.accounts.models import Membership, Role, User
 from apps.branches.models import Branch, Warehouse
 from apps.registers import services as register_services
-from apps.registers.models import CashRegister
+from apps.registers.models import CashRegister, Shift
 
 from .base import TenantTestCase
 
@@ -99,11 +100,15 @@ class PermissionAwareLoginRedirectTests(TenantTestCase):
         user, _membership = self.make_staff(
             ["sales.create", "shifts.open"], branches=[self.branch_a]
         )
-        register_services.open_shift(
+        # Seed an intentionally out-of-scope historical row directly.  The
+        # guarded service now correctly refuses to create this state.
+        Shift.objects.create(
             business=self.business_a,
             register=other_register,
             cashier=user,
+            branch=other_branch,
             opening_cash=0,
+            opened_at=timezone.now(),
         )
 
         response = self.login(user)

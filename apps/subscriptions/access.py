@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Mapping
 
 from django.utils import timezone
@@ -248,6 +248,14 @@ def _subscription_mode(subscription, plan) -> tuple[AccessMode, AccessDenial | N
         Subscription.Status.EXPIRED,
         Subscription.Status.CANCELLED,
     }:
+        from apps.platformadmin.models import PlatformConfig
+
+        platform_config = PlatformConfig.get_solo()
+        if platform_config.expiry_mode == PlatformConfig.ExpiryMode.SUSPEND:
+            return AccessMode.DENIED, _denial(
+                DenialCode.SUBSCRIPTION_INACTIVE,
+                "The subscription is not active.",
+            )
         return AccessMode.READ_ONLY, None
     if effective_status == Subscription.Status.SUSPENDED:
         return AccessMode.DENIED, _denial(
@@ -280,6 +288,16 @@ def _empty_context(
     )
 
 
+def _cache_subscription_on_business(business, subscription):
+    """Keep legacy subscription helpers on the central resolver's query result."""
+
+    business_relation = Subscription._meta.get_field("business")
+    business_relation.remote_field.set_cached_value(business, subscription)
+    if subscription is not None:
+        business_relation.set_cached_value(subscription, business)
+    return subscription
+
+
 def _load_subscription(request, business):
     request_business = getattr(request, "business", None)
     is_request_business = (
@@ -293,10 +311,10 @@ def _load_subscription(request, business):
     candidate = getattr(request, "subscription", None)
     if candidate is not None and candidate.business_id == business.pk:
         if "plan" in candidate._state.fields_cache:
-            return candidate
+            return _cache_subscription_on_business(business, candidate)
         candidate = Subscription.objects.select_related("plan").filter(pk=candidate.pk).first()
     elif getattr(request, "_subscription_resolved", False) and resolved_business_id == business.pk:
-        return None
+        return _cache_subscription_on_business(business, None)
     else:
         candidate = (
             Subscription.objects.select_related("plan").filter(business_id=business.pk).first()
@@ -306,7 +324,7 @@ def _load_subscription(request, business):
         request.subscription = candidate
         request._subscription_resolved = True
         request._subscription_business_id = business.pk
-    return candidate
+    return _cache_subscription_on_business(business, candidate)
 
 
 def _cache_key(request, business, membership):
@@ -492,6 +510,106 @@ def require_access(*args, **kwargs) -> AccessContext:
     """Evaluate access and raise a structured Django 403 on failure."""
 
     decision = evaluate_access(*args, **kwargs)
+    if not decision.allowed:
+        raise ModuleAccessDenied(decision.denial)
+    return decision.context
+
+
+def _resolve_actor_membership(*, user, business, membership=None, request=None):
+    """Resolve only the exact actor/business membership for service access.
+
+    Service entry points cannot rely on browser-session middleware, but they
+    also must never choose a user's first membership.  Reuse the matching
+    request membership when possible; otherwise reload an explicitly supplied
+    membership by its exact business/user identity, or perform the same exact
+    lookup protected by the business/user uniqueness rule.
+    """
+
+    request_membership = getattr(request, "membership", None)
+    if (
+        request_membership is not None
+        and getattr(request_membership, "business_id", None) == getattr(business, "pk", None)
+        and getattr(request_membership, "user_id", None) == getattr(user, "pk", None)
+        and (
+            membership is None
+            or getattr(request_membership, "pk", None) == getattr(membership, "pk", None)
+        )
+    ):
+        return request_membership
+
+    if business is None or user is None or getattr(user, "pk", None) is None:
+        return None
+
+    from apps.accounts.models import Membership
+
+    memberships = Membership.objects.select_related("role").filter(
+        business=business,
+        user=user,
+        is_active=True,
+    )
+    if membership is not None:
+        return memberships.filter(pk=getattr(membership, "pk", None)).first()
+    return memberships.first()
+
+
+def evaluate_actor_access(
+    user,
+    business,
+    module_keys: str | tuple[str, ...],
+    *,
+    permission_code: str | None = None,
+    action: AccessAction | str = AccessAction.WRITE,
+    membership=None,
+    request=None,
+    scope_allowed: bool = True,
+) -> AccessDecision:
+    """Evaluate central access for a non-HTTP service actor.
+
+    ``request`` remains optional and is used only to reuse an existing request
+    cache when the service was reached through a browser view.  Authorization
+    still derives from the explicit actor, business, and exact membership, so
+    omitting a request never becomes a bypass.
+    """
+
+    authorization_request = request
+    request_user = getattr(request, "user", None)
+    if request is not None and getattr(request_user, "pk", None) != getattr(user, "pk", None):
+        # Never authorize an explicit service actor through a different
+        # request actor's cached membership or subscription context.
+        authorization_request = None
+
+    membership = _resolve_actor_membership(
+        user=user,
+        business=business,
+        membership=membership,
+        request=authorization_request,
+    )
+    if authorization_request is None:
+        normalized_action = (
+            action.value if isinstance(action, AccessAction) else str(action).strip().lower()
+        )
+        authorization_request = SimpleNamespace(
+            user=user,
+            business=business,
+            membership=membership,
+            method="GET" if normalized_action in {"read", "safe", "view"} else "POST",
+        )
+
+    return evaluate_access(
+        authorization_request,
+        module_keys,
+        permission_code=permission_code,
+        action=action,
+        business=business,
+        membership=membership,
+        scope_allowed=scope_allowed,
+    )
+
+
+def require_actor_access(*args, **kwargs) -> AccessContext:
+    """Raise the same structured 403 used by browser guards for a service actor."""
+
+    decision = evaluate_actor_access(*args, **kwargs)
     if not decision.allowed:
         raise ModuleAccessDenied(decision.denial)
     return decision.context

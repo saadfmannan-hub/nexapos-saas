@@ -40,10 +40,16 @@ class CustomerExportTests(TenantTestCase):
         self.assertIn("spreadsheetml", r["Content-Type"])
         self.assertTrue(r.content.startswith(b"PK"))
 
-    def test_export_audited(self):
-        self.client.get(reverse("customers:export"))
-        self.assertTrue(AuditLog.objects.filter(
-            business=self.business_a, action="customer.exported").exists())
+    def test_export_get_does_not_write_audit_log(self):
+        logs = AuditLog.objects.filter(
+            business=self.business_a, action="customer.exported"
+        )
+        before = logs.count()
+
+        response = self.client.get(reverse("customers:export"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(logs.count(), before)
 
     def test_export_requires_permission(self):
         self.client.force_login(self.cashier_a)  # no customers.export
@@ -277,10 +283,16 @@ class ProductExportTests(TenantTestCase):
         r = self.client.get(reverse("catalog:product_export"))
         self.assertEqual(r.status_code, 403)
 
-    def test_export_audited(self):
-        self.client.get(reverse("catalog:product_export"))
-        self.assertTrue(AuditLog.objects.filter(
-            business=self.business_a, action="product.exported").exists())
+    def test_export_get_does_not_write_audit_log(self):
+        logs = AuditLog.objects.filter(
+            business=self.business_a, action="product.exported"
+        )
+        before = logs.count()
+
+        response = self.client.get(reverse("catalog:product_export"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(logs.count(), before)
 
 
 class ProductImportTests(TenantTestCase):

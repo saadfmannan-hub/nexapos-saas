@@ -4,7 +4,7 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
   <h1 class="page-title mb-0">Registers &amp; shifts</h1>
-  {% if can_manage_registers %}
+  {% if module_capabilities.pos_core.can_write and can_manage_registers %}
   <div class="btn-group">
     <a href="{% url 'registers:register_create' %}" class="btn btn-primary btn-sm">
       <i class="bi bi-plus-lg me-1"></i> Add register
@@ -54,6 +54,7 @@
             {% endif %}
           </td>
           <td class="text-end text-nowrap">
+            {% if module_capabilities.pos_core.can_write %}
             <a href="{% url 'registers:register_edit' register.public_id %}"
                class="btn btn-sm btn-outline-secondary" title="Edit register"
                aria-label="Edit register">
@@ -81,6 +82,7 @@
               <i class="bi bi-trash"></i>
             </a>
             {% endif %}
+            {% endif %}
           </td>
         </tr>
         {% empty %}
@@ -105,14 +107,16 @@
           <tr><th>Opened</th><td>{{ my_shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
           <tr><th>Opening cash</th><td>{{ my_shift.opening_cash }}</td></tr>
         </table>
+        {% if module_capabilities.pos_core.can_write %}
         <a href="{% url 'sales:pos' %}" class="btn btn-primary btn-sm"><i class="bi bi-cart3"></i> Go to POS</a>
+        {% endif %}
         <a href="{% url 'registers:shift_detail' my_shift.public_id %}" class="btn btn-outline-secondary btn-sm">X report</a>
-        {% if "shifts.close" in business_perms %}
+        {% if module_capabilities.pos_core.can_write and "shifts.close" in business_perms %}
         <a href="{% url 'registers:shift_close' my_shift.public_id %}" class="btn btn-outline-danger btn-sm">Close shift</a>
         {% endif %}
       </div>
     </div>
-    {% else %}
+    {% elif module_capabilities.pos_core.can_write %}
     <div class="card">
       <div class="card-header">Open a shift</div>
       <div class="card-body">

@@ -7,7 +7,7 @@
   <div class="d-flex gap-2 align-items-center">
     <span class="badge text-bg-light border">Outstanding receivables:
       <strong>{% money receivables symbol=1 %}</strong></span>
-    {% if "customers.export" in business_perms %}
+    {% if module_capabilities.pos_core.enabled and "customers.export" in business_perms %}
     <div class="btn-group btn-group-sm">
       <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
         <i class="bi bi-download"></i> Export</button>
@@ -17,10 +17,10 @@
       </ul>
     </div>
     {% endif %}
-    {% if "customers.import" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and "customers.import" in business_perms %}
     <a href="{% url 'customers:import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
     {% endif %}
-    {% if "customers.manage" in business_perms %}
+    {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms %}
     <a href="{% url 'customers:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
     {% endif %}
   </div>
@@ -60,7 +60,7 @@
         <td class="text-end text-secondary">{% money c.credit_limit %}</td>
         <td>{% if c.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
         <td class="text-nowrap">
-          {% if "customers.manage" in business_perms and not c.is_walk_in %}
+          {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms and not c.is_walk_in %}
           <a class="btn btn-sm btn-outline-secondary" href="{% url 'customers:edit' c.public_id %}"><i class="bi bi-pencil"></i></a>
           {% endif %}
         </td>

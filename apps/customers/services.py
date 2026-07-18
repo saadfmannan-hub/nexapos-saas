@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import F
 
 from apps.core.money import D
+from apps.subscriptions.access import AccessAction, require_actor_access
 
 from .models import Customer, CustomerGroup
 
@@ -111,6 +112,77 @@ def next_customer_code(business):
     return f"CUST-{n:05d}"
 
 
+CUSTOMER_FORM_FIELDS = (
+    "full_name", "code", "mobile", "whatsapp", "email", "address", "city",
+    "country", "group", "tax_number", "credit_limit", "notes", "is_active",
+    "more_options",
+)
+
+
+@transaction.atomic
+def save_customer(*, customer, business, user, membership=None, request=None):
+    """Persist a basic customer behind POS Core and customer-role access."""
+    require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code="customers.manage",
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+    if customer.business_id not in (None, business.id):
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="customers.manage",
+            action=AccessAction.WRITE,
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    if customer.group_id is not None:
+        canonical_group = CustomerGroup.objects.filter(
+            pk=customer.group_id, business=business
+        ).first()
+        if canonical_group is None:
+            require_actor_access(
+                user,
+                business,
+                "pos_core",
+                permission_code="customers.manage",
+                action=AccessAction.WRITE,
+                membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        customer.group = canonical_group
+    if customer.pk:
+        canonical_customer = (
+            Customer.objects.select_for_update()
+            .filter(pk=customer.pk, business=business)
+            .first()
+        )
+        if canonical_customer is None:
+            require_actor_access(
+                user,
+                business,
+                "pos_core",
+                permission_code="customers.manage",
+                action=AccessAction.WRITE,
+                membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        for field_name in CUSTOMER_FORM_FIELDS:
+            setattr(canonical_customer, field_name, getattr(customer, field_name))
+        customer = canonical_customer
+    customer.business = business
+    customer.save()
+    return customer
+
+
 @transaction.atomic
 def apply_balance_change(customer_id, delta: Decimal):
     """Atomically shift a customer's receivable balance."""
@@ -143,7 +215,7 @@ def export_dataset(business, queryset):
 
 
 @transaction.atomic
-def import_customers(*, business, rows, mode, user):
+def import_customers(*, business, rows, mode, user, membership=None, request=None):
     """Import customer rows. mode: 'skip' | 'update'.
 
     Returns (summary, errors) where summary has imported/updated/skipped/
@@ -151,6 +223,16 @@ def import_customers(*, business, rows, mode, user):
     Matching is by customer code, then mobile. Decimal-safe.
     """
     from apps.core.imports import normalize_row
+
+    require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code="customers.import",
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
 
     summary = {"imported": 0, "updated": 0, "skipped": 0, "failed": 0}
     errors = []

@@ -22,6 +22,7 @@ from apps.subscriptions.access import (
     AccessMode,
     calculate_effective_modules,
     evaluate_access,
+    evaluate_actor_access,
     get_access_context,
 )
 from apps.subscriptions.api_permissions import HasSubscriptionModuleAccess
@@ -491,6 +492,35 @@ class DecoratorAndMixinTests(AccessFoundationTestCase):
         with self.assertNumQueries(0):
             second = get_access_context(request)
         self.assertIs(first, second)
+
+    def test_context_resolution_primes_legacy_subscription_relation_cache(self):
+        self.set_features(feature_sales=True)
+        fresh_business = self.business_a.__class__.objects.get(pk=self.business_a.pk)
+        request = self.request(business=fresh_business)
+
+        with self.assertNumQueries(1):
+            context = get_access_context(request)
+        with self.assertNumQueries(0):
+            self.assertIs(fresh_business.subscription, context.subscription)
+            subscription_services.require_operational(fresh_business)
+
+    def test_actor_access_reloads_an_explicit_membership_identity(self):
+        self.set_features(feature_sales=True)
+        forged_membership = self.business_b.memberships.get(user=self.owner_b)
+        forged_membership.business = self.business_a
+        forged_membership.user = self.owner_a
+        forged_membership.role = self.membership.role
+
+        decision = evaluate_actor_access(
+            self.owner_a,
+            self.business_a,
+            "pos_core",
+            action="read",
+            membership=forged_membership,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.denial.code, DenialCode.MEMBERSHIP_REQUIRED)
 
     def test_tenant_mismatch_remains_404(self):
         self.set_features(feature_sales=True)

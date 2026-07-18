@@ -5,6 +5,8 @@ from decimal import Decimal, InvalidOperation
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
+from apps.subscriptions.access import AccessAction, require_actor_access
+
 from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
 
 
@@ -98,6 +100,160 @@ class ProductInUse(Exception):
     """Raised when a hard delete is attempted on a product with history."""
 
 
+PRODUCT_FORM_FIELDS = (
+    "name", "product_type", "category", "brand", "unit", "internal_code",
+    "sku", "barcode", "purchase_price", "sale_price", "wholesale_price",
+    "minimum_sale_price", "tax_rate", "price_includes_tax", "reorder_level",
+    "track_inventory", "allow_discount", "is_tailoring_item",
+    "estimated_adult_fabric", "estimated_child_fabric", "image", "description",
+    "preferred_supplier", "is_active",
+)
+VARIANT_FORM_FIELDS = (
+    "name", "sku", "barcode", "purchase_price", "sale_price", "image",
+    "is_active", "attributes",
+)
+
+
+def _require_product_write(*, business, user, permission_code,
+                           membership=None, request=None, scope_allowed=True):
+    return require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+        scope_allowed=scope_allowed,
+    )
+
+
+@transaction.atomic
+def save_product(*, product, business, user, membership=None, request=None):
+    """Persist a basic product only after central POS Core authorization."""
+    _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.manage",
+        membership=membership,
+        request=request,
+    )
+    if product.business_id not in (None, business.id):
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.manage",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    for field_name in (
+        "category", "brand", "unit", "tax_rate", "preferred_supplier"
+    ):
+        relation_id = getattr(product, f"{field_name}_id")
+        if relation_id is None:
+            continue
+        relation_model = Product._meta.get_field(field_name).remote_field.model
+        canonical_relation = relation_model.objects.filter(
+            pk=relation_id, business=business
+        ).first()
+        if canonical_relation is None:
+            _require_product_write(
+                business=business,
+                user=user,
+                permission_code="products.manage",
+                membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        setattr(product, field_name, canonical_relation)
+    if product.pk:
+        canonical_product = (
+            Product.objects.select_for_update()
+            .filter(pk=product.pk, business=business)
+            .first()
+        )
+        if canonical_product is None:
+            _require_product_write(
+                business=business,
+                user=user,
+                permission_code="products.manage",
+                membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        for field_name in PRODUCT_FORM_FIELDS:
+            setattr(canonical_product, field_name, getattr(product, field_name))
+        product = canonical_product
+    product.business = business
+    product.save()
+    return product
+
+
+@transaction.atomic
+def save_variant(*, variant, product, user, membership=None, request=None):
+    """Persist a product variant within its authorized product tenant."""
+    business = product.business
+    _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.manage",
+        membership=membership,
+        request=request,
+    )
+    canonical_product = (
+        Product.objects.select_for_update()
+        .filter(pk=product.pk, business=business)
+        .first()
+    )
+    if canonical_product is None:
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.manage",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    if variant.business_id not in (None, business.id) or variant.product_id not in (
+        None, canonical_product.id
+    ):
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.manage",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    if variant.pk:
+        canonical_variant = (
+            ProductVariant.objects.select_for_update()
+            .filter(
+                pk=variant.pk,
+                business=business,
+                product=canonical_product,
+            )
+            .first()
+        )
+        if canonical_variant is None:
+            _require_product_write(
+                business=business,
+                user=user,
+                permission_code="products.manage",
+                membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        for field_name in VARIANT_FORM_FIELDS:
+            setattr(canonical_variant, field_name, getattr(variant, field_name))
+        variant = canonical_variant
+    variant.business = business
+    variant.product = canonical_product
+    variant.save()
+    return variant
+
+
 def product_history_refs(product):
     """Names of transaction types referencing this product (empty = safe
     to hard-delete). Checks sales, purchases, stock ledger, transfers,
@@ -128,25 +284,104 @@ def product_history_refs(product):
 
 
 @transaction.atomic
-def delete_product_if_safe(product):
+def delete_product_if_safe(product, *, user, membership=None, request=None):
     """Hard-delete a product that has NEVER been used in any transaction.
     Products with history must be archived instead (they stay on old
     invoices and reports)."""
-    refs = product_history_refs(product)
+    business = product.business
+    _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.delete",
+        membership=membership,
+        request=request,
+    )
+    canonical_product = (
+        Product.objects.select_for_update()
+        .filter(pk=product.pk, business=business)
+        .first()
+    )
+    if canonical_product is None:
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.delete",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    refs = product_history_refs(canonical_product)
     if refs:
         raise ProductInUse(
             "This product appears in " + ", ".join(refs) +
             " and cannot be deleted. Archive it instead — it stays on "
             "historical invoices and reports."
         )
-    product.delete()
+    canonical_product.delete()
 
 
-def restore_product(product):
-    product.is_archived = False
-    product.is_active = True
-    product.save(update_fields=["is_archived", "is_active", "updated_at"])
-    return product
+@transaction.atomic
+def archive_product(*, product, user, membership=None, request=None):
+    business = product.business
+    _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.archive",
+        membership=membership,
+        request=request,
+    )
+    canonical_product = (
+        Product.objects.select_for_update()
+        .filter(pk=product.pk, business=business)
+        .first()
+    )
+    if canonical_product is None:
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.archive",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    canonical_product.is_archived = True
+    canonical_product.is_active = False
+    canonical_product.save(
+        update_fields=["is_archived", "is_active", "updated_at"]
+    )
+    return canonical_product
+
+
+@transaction.atomic
+def restore_product(product, *, user, membership=None, request=None):
+    business = product.business
+    _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.archive",
+        membership=membership,
+        request=request,
+    )
+    canonical_product = (
+        Product.objects.select_for_update()
+        .filter(pk=product.pk, business=business)
+        .first()
+    )
+    if canonical_product is None:
+        _require_product_write(
+            business=business,
+            user=user,
+            permission_code="products.archive",
+            membership=membership,
+            request=request,
+            scope_allowed=False,
+        )
+    canonical_product.is_archived = False
+    canonical_product.is_active = True
+    canonical_product.save(
+        update_fields=["is_archived", "is_active", "updated_at"]
+    )
+    return canonical_product
 
 
 EXPORT_COLUMNS = [
@@ -261,15 +496,60 @@ def _duplicate_code_exists(business, *, sku="", barcode="", exclude_product=None
         raise ValueError(f"Duplicate barcode within this business: {barcode}")
 
 
-def product_export_dataset(business, filters):
+def product_export_dataset(
+    business, filters, *, allowed_branch_ids, allowed_warehouse_ids
+):
     """Build {columns, rows} for product export.
 
     Scales to large catalogs: stock is fetched in a single aggregated
     query and joined in memory rather than per-row.
     """
-    from django.db.models import Sum
+    from django.db.models import Q, Sum
 
+    from apps.branches.models import Branch, Warehouse
     from apps.inventory.models import StockLevel
+
+    allowed_branch_ids = (
+        None if allowed_branch_ids is None else set(allowed_branch_ids)
+    )
+    allowed_warehouse_ids = (
+        None if allowed_warehouse_ids is None else set(allowed_warehouse_ids)
+    )
+    branch_id = filters.get("branch_id")
+    warehouse_id = filters.get("warehouse_id")
+
+    if (
+        branch_id is not None
+        and allowed_branch_ids is not None
+        and branch_id not in allowed_branch_ids
+    ) or (
+        warehouse_id is not None
+        and allowed_warehouse_ids is not None
+        and warehouse_id not in allowed_warehouse_ids
+    ):
+        return {"columns": EXPORT_COLUMNS, "rows": [], "totals": None}
+
+    branch = None
+    if branch_id is not None:
+        branch_qs = Branch.objects.for_business(business)
+        if allowed_branch_ids is not None:
+            branch_qs = branch_qs.filter(pk__in=allowed_branch_ids)
+        branch = branch_qs.filter(pk=branch_id).first()
+        if branch is None:
+            return {"columns": EXPORT_COLUMNS, "rows": [], "totals": None}
+
+    warehouse = None
+    if warehouse_id is not None:
+        warehouse_qs = Warehouse.objects.for_business(business).select_related("branch")
+        if allowed_warehouse_ids is not None:
+            warehouse_qs = warehouse_qs.filter(pk__in=allowed_warehouse_ids)
+        if allowed_branch_ids is not None:
+            warehouse_qs = warehouse_qs.filter(
+                Q(branch_id__in=allowed_branch_ids) | Q(branch__isnull=True)
+            )
+        warehouse = warehouse_qs.filter(pk=warehouse_id).first()
+        if warehouse is None:
+            return {"columns": EXPORT_COLUMNS, "rows": [], "totals": None}
 
     qs = Product.objects.for_business(business).select_related(
         "category", "brand", "unit")
@@ -286,25 +566,29 @@ def product_export_dataset(business, filters):
     else:
         qs = qs.filter(is_archived=False)
 
-    # Stock map, optionally scoped to a warehouse/branch
+    # Stock is always intersected with the canonical membership scope before
+    # applying optional request filters.
     level_qs = StockLevel.objects.for_business(business)
-    warehouse = None
-    branch_name = ""
-    if filters.get("warehouse_id"):
-        level_qs = level_qs.filter(warehouse_id=filters["warehouse_id"])
-    if filters.get("branch_id"):
-        level_qs = level_qs.filter(warehouse__branch_id=filters["branch_id"])
+    if allowed_warehouse_ids is not None:
+        level_qs = level_qs.filter(warehouse_id__in=allowed_warehouse_ids)
+    if allowed_branch_ids is not None:
+        level_qs = level_qs.filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
+    if warehouse is not None:
+        level_qs = level_qs.filter(warehouse=warehouse)
+    if branch is not None:
+        level_qs = level_qs.filter(warehouse__branch=branch)
     stock_map = {
         row["product_id"]: row["q"]
         for row in level_qs.values("product_id").annotate(q=Sum("quantity"))
     }
-    if filters.get("warehouse_id"):
-        from apps.branches.models import Warehouse
-
-        warehouse = Warehouse.objects.for_business(business).filter(
-            id=filters["warehouse_id"]).select_related("branch").first()
-        if warehouse:
-            branch_name = warehouse.branch.name if warehouse.branch else ""
+    branch_name = ""
+    if warehouse is not None and warehouse.branch is not None:
+        branch_name = warehouse.branch.name
+    elif branch is not None:
+        branch_name = branch.name
 
     rows = []
     for p in qs.prefetch_related("variants").order_by("name"):
@@ -354,7 +638,8 @@ def product_export_dataset(business, filters):
 
 
 def import_products(
-    *, business, rows, match_by, user, allowed_warehouse_ids=None
+    *, business, rows, match_by, user, allowed_warehouse_ids=None,
+    membership=None, request=None,
 ):
     """Import products and variants with row-level error reporting.
 
@@ -364,6 +649,27 @@ def import_products(
     from apps.core.imports import normalize_row
     from apps.inventory import services as inventory
     from apps.subscriptions import services as subscriptions
+
+    context = _require_product_write(
+        business=business,
+        user=user,
+        permission_code="products.import",
+        membership=membership,
+        request=request,
+    )
+
+    canonical_warehouse_ids = context.membership.allowed_warehouse_ids
+    explicit_warehouse_ids = (
+        None if allowed_warehouse_ids is None else set(allowed_warehouse_ids)
+    )
+    if canonical_warehouse_ids is None:
+        effective_warehouse_ids = explicit_warehouse_ids
+    elif explicit_warehouse_ids is None:
+        effective_warehouse_ids = canonical_warehouse_ids
+    else:
+        effective_warehouse_ids = (
+            set(canonical_warehouse_ids) & explicit_warehouse_ids
+        )
 
     if match_by not in ("sku", "barcode", "name"):
         raise ValidationError("Unknown product match field.")
@@ -476,7 +782,7 @@ def import_products(
                 business,
                 r.get("branch", ""),
                 r.get("warehouse", ""),
-                allowed_warehouse_ids=allowed_warehouse_ids,
+                allowed_warehouse_ids=effective_warehouse_ids,
             )
             category = None
             if r.get("category"):

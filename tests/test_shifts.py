@@ -23,7 +23,7 @@ class ShiftTests(TenantTestCase):
         totals = registers.shift_totals(shift)
         self.assertEqual(totals["cash_sales"], D("21.000"))
         self.assertEqual(totals["expected_cash"], D("71.000"))
-        registers.close_shift(shift=shift, actual_cash=D("70.000"))
+        registers.close_shift(shift=shift, actual_cash=D("70.000"), user=self.owner_a)
         shift.refresh_from_db()
         self.assertEqual(shift.expected_cash, D("71.000"))
         self.assertEqual(shift.difference, D("-1.000"))
@@ -54,7 +54,7 @@ class ShiftTests(TenantTestCase):
         shift = self.open_shift()
         with self.assertRaises(ShiftError):
             registers.reopen_shift(shift=shift, user=self.owner_a)
-        registers.close_shift(shift=shift, actual_cash=D("50.000"))
+        registers.close_shift(shift=shift, actual_cash=D("50.000"), user=self.owner_a)
         registers.reopen_shift(shift=shift, user=self.owner_a)
         shift.refresh_from_db()
         self.assertEqual(shift.status, "open")
@@ -64,7 +64,7 @@ class ShiftTests(TenantTestCase):
         from django.urls import reverse
 
         shift = self.open_shift(cashier=self.cashier_a)
-        registers.close_shift(shift=shift, actual_cash=D("50.000"))
+        registers.close_shift(shift=shift, actual_cash=D("50.000"), user=self.cashier_a)
         self.client.force_login(self.cashier_a)
         response = self.client.post(
             reverse("registers:shift_reopen", args=[shift.public_id])

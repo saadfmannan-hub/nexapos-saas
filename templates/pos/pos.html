@@ -5,7 +5,9 @@
 <div class="alert alert-warning d-flex justify-content-between align-items-center">
   <div><i class="bi bi-exclamation-triangle me-2"></i>
     You need an open cash register shift before selling.</div>
+  {% if module_capabilities.pos_core.can_write %}
   <a href="{% url 'registers:shift_list' %}" class="btn btn-sm btn-primary">Open a shift</a>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -95,7 +97,7 @@
                 <span x-text="c.name"></span> <span class="text-secondary" x-text="c.mobile"></span>
               </button>
             </template>
-            {% if "customers.manage" in business_perms %}
+            {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms %}
             <hr class="my-1">
             <div class="px-1" @click.stop>
               <div class="small fw-bold mb-1">Quick add</div>

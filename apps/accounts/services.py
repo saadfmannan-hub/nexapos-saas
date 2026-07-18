@@ -1,4 +1,6 @@
 """Permission-aware destinations for authenticated users."""
+
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 from django.contrib.auth import logout as auth_logout
@@ -8,53 +10,54 @@ from django.urls import Resolver404, resolve, reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from apps.core.middleware import SESSION_BUSINESS_KEY
+from apps.subscriptions.access import AccessAction, AccessMode, evaluate_actor_access
 
 SAFE_NEXT_ROUTES = {
-    "dashboard": "dashboard.view",
-    "sales:pos": "sales.create",
+    "dashboard": ("dashboard.view", None, AccessAction.READ),
+    "sales:pos": ("sales.create", "pos_core", AccessAction.WRITE),
     # This route supports either shift operations or register administration.
-    "registers:shift_list": None,
-    "sales:list": "sales.view",
-    "customers:list": "customers.view",
-    "catalog:product_list": "products.view",
-    "inventory:stock_list": "inventory.view",
-    "purchases:list": "purchases.view",
-    "suppliers:list": "suppliers.view",
-    "expenses:list": "expenses.view",
-    "reports:index": "reports.view",
-    "tenants:settings": "settings.manage",
-    "branches:list": "branches.manage",
-    "accounts:user_list": "users.manage",
-    "audit:list": "audit.view",
-    "notifications:list": "notifications.view",
-    "subscriptions:status": "settings.manage",
-    "accounts:profile": None,
-    "accounts:change_password": None,
+    "registers:shift_list": (None, "pos_core", AccessAction.READ),
+    "sales:list": ("sales.view", "pos_core", AccessAction.READ),
+    "customers:list": ("customers.view", "pos_core", AccessAction.READ),
+    "catalog:product_list": ("products.view", "pos_core", AccessAction.READ),
+    "inventory:stock_list": ("inventory.view", None, AccessAction.READ),
+    "purchases:list": ("purchases.view", None, AccessAction.READ),
+    "suppliers:list": ("suppliers.view", None, AccessAction.READ),
+    "expenses:list": ("expenses.view", None, AccessAction.READ),
+    "reports:index": ("reports.view", None, AccessAction.READ),
+    "tenants:settings": ("settings.manage", None, AccessAction.READ),
+    "branches:list": ("branches.manage", "pos_core", AccessAction.READ),
+    "accounts:user_list": ("users.manage", "pos_core", AccessAction.READ),
+    "audit:list": ("audit.view", None, AccessAction.READ),
+    "notifications:list": ("notifications.view", None, AccessAction.READ),
+    "subscriptions:status": ("settings.manage", None, AccessAction.READ),
+    "accounts:profile": (None, None, AccessAction.READ),
+    "accounts:change_password": (None, None, AccessAction.READ),
 }
 
 MODULE_ROUTE_PRIORITY = (
-    ("sales:list", "sales.view"),
-    ("customers:list", "customers.view"),
-    ("customers:create", "customers.manage"),
-    ("catalog:product_list", "products.view"),
-    ("catalog:product_create", "products.manage"),
-    ("inventory:stock_list", "inventory.view"),
-    ("inventory:import", "inventory.import"),
-    ("inventory:transfer_list", "inventory.transfer"),
-    ("inventory:adjustment_list", "inventory.adjust"),
-    ("inventory:count_list", "inventory.count"),
-    ("purchases:list", "purchases.view"),
-    ("purchases:create", "purchases.manage"),
-    ("suppliers:list", "suppliers.view"),
-    ("suppliers:create", "suppliers.manage"),
-    ("expenses:list", "expenses.view"),
-    ("expenses:create", "expenses.manage"),
-    ("reports:index", "reports.view"),
-    ("tenants:settings", "settings.manage"),
-    ("accounts:user_list", "users.manage"),
-    ("branches:list", "branches.manage"),
-    ("audit:list", "audit.view"),
-    ("notifications:list", "notifications.view"),
+    ("sales:list", "sales.view", "pos_core", AccessAction.READ),
+    ("customers:list", "customers.view", "pos_core", AccessAction.READ),
+    ("customers:create", "customers.manage", "pos_core", AccessAction.WRITE),
+    ("catalog:product_list", "products.view", "pos_core", AccessAction.READ),
+    ("catalog:product_create", "products.manage", "pos_core", AccessAction.WRITE),
+    ("inventory:stock_list", "inventory.view", None, AccessAction.READ),
+    ("inventory:import", "inventory.import", None, AccessAction.WRITE),
+    ("inventory:transfer_list", "inventory.transfer", None, AccessAction.READ),
+    ("inventory:adjustment_list", "inventory.adjust", None, AccessAction.READ),
+    ("inventory:count_list", "inventory.count", None, AccessAction.READ),
+    ("purchases:list", "purchases.view", None, AccessAction.READ),
+    ("purchases:create", "purchases.manage", None, AccessAction.WRITE),
+    ("suppliers:list", "suppliers.view", None, AccessAction.READ),
+    ("suppliers:create", "suppliers.manage", None, AccessAction.WRITE),
+    ("expenses:list", "expenses.view", None, AccessAction.READ),
+    ("expenses:create", "expenses.manage", None, AccessAction.WRITE),
+    ("reports:index", "reports.view", None, AccessAction.READ),
+    ("tenants:settings", "settings.manage", None, AccessAction.READ),
+    ("accounts:user_list", "users.manage", "pos_core", AccessAction.READ),
+    ("branches:list", "branches.manage", "pos_core", AccessAction.READ),
+    ("audit:list", "audit.view", None, AccessAction.READ),
+    ("notifications:list", "notifications.view", None, AccessAction.READ),
 )
 
 
@@ -105,8 +108,78 @@ def _shift_route_available(membership, branches):
     ).exists()
 
 
-def _sales_destination(user, membership, excluded_routes):
-    if not membership.has_perm("sales.create"):
+def _access_subject(user, membership, request=None):
+    if (
+        request is not None
+        and getattr(request, "method", "").upper() == "GET"
+        and getattr(getattr(request, "user", None), "pk", None) == user.pk
+        and getattr(getattr(request, "business", None), "pk", None)
+        == membership.business_id
+        and getattr(getattr(request, "membership", None), "pk", None) == membership.pk
+    ):
+        return request
+    return SimpleNamespace(
+        user=user,
+        business=membership.business,
+        membership=membership,
+        method="GET",
+    )
+
+
+def _route_access_allowed(
+    user,
+    membership,
+    *,
+    permission,
+    module_key,
+    action,
+    access_context,
+    request,
+):
+    if permission and not membership.has_perm(permission):
+        return False
+    if module_key:
+        return evaluate_actor_access(
+            user,
+            membership.business,
+            module_key,
+            permission_code=permission,
+            action=action,
+            membership=membership,
+            request=request,
+        ).allowed
+    if access_context.denial is not None:
+        return False
+    return action != AccessAction.WRITE or access_context.mode == AccessMode.FULL
+
+
+def _sales_destination(
+    user,
+    membership,
+    excluded_routes,
+    *,
+    request=None,
+    access_context=None,
+):
+    access_request = _access_subject(user, membership, request)
+    if access_context is None:
+        access_context = evaluate_actor_access(
+            user,
+            membership.business,
+            "pos_core",
+            action=AccessAction.READ,
+            membership=membership,
+            request=access_request,
+        ).context
+    if not _route_access_allowed(
+        user,
+        membership,
+        permission="sales.create",
+        module_key="pos_core",
+        action=AccessAction.WRITE,
+        access_context=access_context,
+        request=access_request,
+    ):
         return None
 
     from apps.registers import services as register_services
@@ -145,7 +218,9 @@ def _sales_destination(user, membership, excluded_routes):
     return None
 
 
-def resolve_user_home_route(user, membership=None, excluded_routes=None):
+def resolve_user_home_route(
+    user, membership=None, excluded_routes=None, *, request=None
+):
     """Return the first named route the user can actually open."""
     excluded_routes = frozenset(excluded_routes or ())
     if not user.is_authenticated or not user.is_active:
@@ -157,24 +232,63 @@ def resolve_user_home_route(user, membership=None, excluded_routes=None):
             return "platformadmin:dashboard"
         return "tenants:no_business"
 
+    access_request = _access_subject(user, membership, request)
+    pos_decision = evaluate_actor_access(
+        user,
+        membership.business,
+        "pos_core",
+        action=AccessAction.READ,
+        membership=membership,
+        request=access_request,
+    )
+    access_context = pos_decision.context
+    if access_context.denial is not None:
+        return "subscriptions:status"
+
     if (
         "dashboard" not in excluded_routes
         and membership.has_perm("dashboard.view")
     ):
         return "dashboard"
 
-    sales_destination = _sales_destination(user, membership, excluded_routes)
+    sales_destination = _sales_destination(
+        user,
+        membership,
+        excluded_routes,
+        request=access_request,
+        access_context=access_context,
+    )
     if sales_destination:
         return sales_destination
 
-    for route_name, permission in MODULE_ROUTE_PRIORITY:
-        if route_name not in excluded_routes and membership.has_perm(permission):
+    for route_name, permission, module_key, action in MODULE_ROUTE_PRIORITY:
+        if route_name in excluded_routes:
+            continue
+        if _route_access_allowed(
+            user,
+            membership,
+            permission=permission,
+            module_key=module_key,
+            action=action,
+            access_context=access_context,
+            request=access_request,
+        ):
             return route_name
 
-    if "registers:shift_list" not in excluded_routes:
+    if "registers:shift_list" not in excluded_routes and _route_access_allowed(
+        user,
+        membership,
+        permission=None,
+        module_key="pos_core",
+        action=AccessAction.READ,
+        access_context=access_context,
+        request=access_request,
+    ):
         branches = _active_branches(membership)
         if _shift_route_available(membership, branches):
             return "registers:shift_list"
+    if not pos_decision.allowed or access_context.mode == AccessMode.READ_ONLY:
+        return "subscriptions:status"
     return "accounts:no_access"
 
 
@@ -200,13 +314,37 @@ def resolve_authorized_next_route(request, membership, next_url, excluded_routes
     if match.args or match.kwargs or reverse(route_name) != path:
         return None
 
-    permission = SAFE_NEXT_ROUTES[route_name]
-    if permission and not membership.has_perm(permission):
+    permission, module_key, action = SAFE_NEXT_ROUTES[route_name]
+    access_request = _access_subject(request.user, membership, request)
+    access_context = evaluate_actor_access(
+        request.user,
+        membership.business,
+        "pos_core",
+        action=AccessAction.READ,
+        membership=membership,
+        request=access_request,
+    ).context
+    if not _route_access_allowed(
+        request.user,
+        membership,
+        permission=permission,
+        module_key=module_key,
+        action=action,
+        access_context=access_context,
+        request=access_request,
+    ):
         return None
     if route_name == "sales:pos":
         return (
             route_name
-            if _sales_destination(request.user, membership, frozenset()) == route_name
+            if _sales_destination(
+                request.user,
+                membership,
+                frozenset(),
+                request=access_request,
+                access_context=access_context,
+            )
+            == route_name
             else None
         )
     if route_name == "registers:shift_list":
@@ -258,6 +396,9 @@ def post_login_redirect(request, *, next_url=None, membership=None, excluded_rou
 
     return redirect(
         resolve_user_home_route(
-            user, membership=membership, excluded_routes=excluded_routes
+            user,
+            membership=membership,
+            excluded_routes=excluded_routes,
+            request=request,
         )
     )

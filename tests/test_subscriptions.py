@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from apps.sales.services import SaleError
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.exceptions import ModuleAccessDenied
 from apps.subscriptions.models import Subscription
 
 from .base import TenantTestCase
@@ -122,7 +123,7 @@ class StatusTests(TenantTestCase):
         sub.save()
         self.assertEqual(sub.effective_status, Subscription.Status.EXPIRED)
         with self.assertRaises(
-            (subscriptions.SubscriptionInactive, SaleError)
+            (subscriptions.SubscriptionInactive, SaleError, ModuleAccessDenied)
         ):
             self.make_sale()
 
@@ -156,7 +157,7 @@ class StatusTests(TenantTestCase):
         self.assertFalse(sub.is_expired)
         self.assertTrue(sub.can_access_app)
 
-    def test_suspended_business_read_only(self):
+    def test_suspended_business_denies_pos_core(self):
         self.allow_no_shift()
         sale = self.make_sale()  # data created while active
         sub = self.business_a.subscription
@@ -165,15 +166,14 @@ class StatusTests(TenantTestCase):
         self.client.force_login(self.owner_a)
         # Reads still work — data is never deleted
         response = self.client.get(reverse("sales:detail", args=[sale.public_id]))
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 403)
         # Writes are blocked by middleware
         response = self.client.post(
             reverse("catalog:product_create"),
             {"name": "Blocked", "product_type": "standard",
              "purchase_price": "1", "sale_price": "2"},
         )
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("/subscription/", response.url)
+        self.assertEqual(response.status_code, 403)
         from apps.catalog.models import Product
 
         self.assertFalse(Product.objects.for_business(self.business_a).filter(

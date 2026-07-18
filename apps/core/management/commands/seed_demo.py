@@ -174,13 +174,13 @@ class Command(BaseCommand):
         card = PaymentMethod.objects.for_business(business).get(kind="card")
         credit = PaymentMethod.objects.for_business(business).get(
             kind="customer_credit")
-        owner_membership = business.memberships.get(user=owner)
+        cashier_membership = business.memberships.get(user=cashier)
 
         def sell(items, payments, customer=walk_in):
             return sales.complete_sale(
                 business=business, branch=branch1, warehouse=warehouse,
                 cashier=cashier, customer=customer, items=items,
-                payments=payments, membership=owner_membership,
+                payments=payments, membership=cashier_membership,
                 register=register, shift=shift,
             )
 
