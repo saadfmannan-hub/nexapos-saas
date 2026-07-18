@@ -941,10 +941,12 @@ def platform_settings(request):
 # ---------------------------------------------------------------------------
 # Plans / coupons / announcements
 # ---------------------------------------------------------------------------
+PLAN_BASIC_FIELDS = [
+    "name", "support_level", "sort_order", "is_active", "description",
+]
 PLAN_PRICING_FIELDS = [
-    "name", "description", "monthly_price", "annual_price", "setup_fee",
-    "currency_code", "trial_days", "allow_trial", "sort_order",
-    "support_level", "is_active",
+    "monthly_price", "annual_price", "setup_fee", "currency_code",
+    "trial_days", "allow_trial",
 ]
 PLAN_LIMIT_FIELDS = [
     "max_branches", "max_users", "max_warehouses", "max_products",
@@ -953,48 +955,61 @@ PLAN_LIMIT_FIELDS = [
     "max_api_calls", "max_branch_managers", "max_cashiers",
     "max_logged_in_devices", "max_pos_terminals",
 ]
-PLAN_CORE_FEATURES = [
-    "feature_sales", "feature_inventory", "feature_customers",
-    "feature_suppliers", "feature_employees", "feature_purchases",
-    "feature_expenses", "feature_returns", "feature_transfers",
-    "feature_advanced_reports", "feature_customer_credit",
-    "feature_api_access", "feature_custom_roles", "feature_audit_logs",
+PLAN_MODULE_FIELDS = [
+    "feature_sales", "feature_inventory", "feature_suppliers",
+    "feature_purchases", "feature_expenses", "feature_transfers",
+    "feature_tailoring_module", "feature_customer_credit",
+    "feature_advanced_reports", "feature_audit_logs",
+    "feature_barcode_printing", "feature_custom_roles",
+    "feature_api_access",
 ]
-PLAN_OPERATIONS_FEATURES = [
-    "feature_executive_dashboard", "feature_tailoring_module",
-    "feature_attendance", "feature_payroll", "feature_manufacturing",
-    "feature_crm", "feature_loyalty_program", "feature_gift_cards",
-    "feature_barcode_printing", "feature_kitchen_display",
-    "feature_multi_currency", "feature_offline_mode",
-]
-PLAN_INTEGRATION_FEATURES = [
-    "feature_whatsapp_integration", "feature_mobile_app",
-    "feature_owner_dashboard_app", "feature_ai_reports",
-    "feature_ai_forecast", "feature_ai_sales_prediction",
-    "feature_ai_assistant", "feature_daily_backup",
-    "feature_weekly_backup", "feature_priority_restore",
-    "feature_email_integration", "feature_sms_integration",
-    "feature_payment_gateway", "feature_white_label",
-    "feature_custom_domain", "feature_logo_replacement",
-    "feature_email_branding", "feature_receipt_branding",
-    "feature_invoice_branding",
-]
+PLAN_MODULE_LABELS = {
+    "feature_sales": "POS Core",
+    "feature_inventory": "Inventory Management",
+    "feature_suppliers": "Suppliers",
+    "feature_purchases": "Purchasing",
+    "feature_expenses": "Expenses",
+    "feature_transfers": "Stock Transfers",
+    "feature_tailoring_module": "Tailoring Operations",
+    "feature_customer_credit": "Customer Credit",
+    "feature_advanced_reports": "Advanced Reports",
+    "feature_audit_logs": "Audit Logs",
+    "feature_barcode_printing": "Barcode Printing",
+    "feature_custom_roles": "Custom Roles",
+    "feature_api_access": "API Access",
+}
+PLAN_MODULE_HELP_TEXT = {
+    "feature_purchases": (
+        "Purchasing requires Inventory Management and Suppliers."
+    ),
+    "feature_transfers": "Stock Transfers require Inventory Management.",
+    "feature_tailoring_module": (
+        "Tailoring Operations require POS Core and Inventory Management."
+    ),
+    "feature_customer_credit": "Customer Credit requires POS Core.",
+    "feature_barcode_printing": "Barcode Printing requires POS Core.",
+    "feature_custom_roles": "Custom Roles require POS Core Users & Staff.",
+    "feature_api_access": (
+        "API Access does not automatically enable any business module."
+    ),
+}
 PLAN_FORM_FIELDS = (
-    PLAN_PRICING_FIELDS + PLAN_LIMIT_FIELDS + PLAN_CORE_FEATURES
-    + PLAN_OPERATIONS_FEATURES + PLAN_INTEGRATION_FEATURES
+    PLAN_BASIC_FIELDS + PLAN_PRICING_FIELDS + PLAN_LIMIT_FIELDS
+    + PLAN_MODULE_FIELDS
 )
 
 
 class PlanForm(forms.ModelForm):
+    BASIC_FIELDS = PLAN_BASIC_FIELDS
     PRICING_FIELDS = PLAN_PRICING_FIELDS
     LIMIT_FIELDS = PLAN_LIMIT_FIELDS
-    CORE_FEATURES = PLAN_CORE_FEATURES
-    OPERATIONS_FEATURES = PLAN_OPERATIONS_FEATURES
-    INTEGRATION_FEATURES = PLAN_INTEGRATION_FEATURES
+    MODULE_FIELDS = PLAN_MODULE_FIELDS
 
     class Meta:
         model = Plan
         fields = PLAN_FORM_FIELDS
+        labels = PLAN_MODULE_LABELS
+        help_texts = PLAN_MODULE_HELP_TEXT
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1005,16 +1020,13 @@ class PlanForm(forms.ModelForm):
                 f.widget.attrs.setdefault("class", "form-select")
             elif isinstance(f.widget, forms.Textarea):
                 f.widget.attrs.setdefault("class", "form-control")
-                f.widget.attrs.setdefault("rows", 2)
+                f.widget.attrs["rows"] = 2
             else:
                 f.widget.attrs.setdefault("class", "form-control")
+        self.basic_fields = [self[name] for name in self.BASIC_FIELDS]
         self.pricing_fields = [self[name] for name in self.PRICING_FIELDS]
         self.limit_fields = [self[name] for name in self.LIMIT_FIELDS]
-        self.feature_groups = [
-            ("Core modules", [self[name] for name in self.CORE_FEATURES]),
-            ("Operations", [self[name] for name in self.OPERATIONS_FEATURES]),
-            ("Integrations & AI", [self[name] for name in self.INTEGRATION_FEATURES]),
-        ]
+        self.module_fields = [self[name] for name in self.MODULE_FIELDS]
 
 
 @platform_admin_required

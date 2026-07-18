@@ -9,6 +9,12 @@ from django.utils import timezone
 from apps.accounts.models import Membership, User
 from apps.audit.models import AuditLog
 from apps.platformadmin.models import PlatformConfig
+from apps.platformadmin.views import (
+    PLAN_FORM_FIELDS,
+    PLAN_MODULE_FIELDS,
+    PLAN_MODULE_LABELS,
+    PlanForm,
+)
 from apps.subscriptions.models import Plan, Subscription, SubscriptionPayment
 from apps.tenants.models import Business
 
@@ -316,14 +322,270 @@ class CreateBusinessTests(PlatformBaseTest):
 
 
 class PlanAdminTests(PlatformBaseTest):
-    def test_plan_form_renders_commercial_fields(self):
+    hidden_feature_fields = [
+        "feature_customers",
+        "feature_employees",
+        "feature_returns",
+        "feature_executive_dashboard",
+        "feature_attendance",
+        "feature_payroll",
+        "feature_manufacturing",
+        "feature_crm",
+        "feature_loyalty_program",
+        "feature_gift_cards",
+        "feature_kitchen_display",
+        "feature_multi_currency",
+        "feature_offline_mode",
+        "feature_mobile_app",
+        "feature_owner_dashboard_app",
+        "feature_whatsapp_integration",
+        "feature_ai_reports",
+        "feature_ai_forecast",
+        "feature_ai_sales_prediction",
+        "feature_ai_assistant",
+        "feature_daily_backup",
+        "feature_weekly_backup",
+        "feature_priority_restore",
+        "feature_email_integration",
+        "feature_sms_integration",
+        "feature_payment_gateway",
+        "feature_white_label",
+        "feature_custom_domain",
+        "feature_logo_replacement",
+        "feature_email_branding",
+        "feature_receipt_branding",
+        "feature_invoice_branding",
+    ]
+    expected_module_labels = [
+        "POS Core",
+        "Inventory Management",
+        "Suppliers",
+        "Purchasing",
+        "Expenses",
+        "Stock Transfers",
+        "Tailoring Operations",
+        "Customer Credit",
+        "Advanced Reports",
+        "Audit Logs",
+        "Barcode Printing",
+        "Custom Roles",
+        "API Access",
+    ]
+    included_pos_core_capabilities = [
+        "Products and Categories",
+        "Customers",
+        "Users and Staff",
+        "Registers and Shifts",
+        "Branches and Operational Warehouses",
+        "Invoices and Receipts",
+        "Held Sales",
+        "Basic Sales Returns",
+    ]
+
+    def _payload(self, name="QA Commercial Plan", **overrides):
+        data = {
+            "name": name,
+            "description": "Commercial modules test plan",
+            "support_level": Plan.SupportLevel.STANDARD,
+            "sort_order": "25",
+            "is_active": "on",
+            "monthly_price": "29.000",
+            "annual_price": "290.000",
+            "setup_fee": "5.000",
+            "currency_code": "OMR",
+            "trial_days": "14",
+            "allow_trial": "on",
+            "max_branches": "2",
+            "max_users": "10",
+            "max_warehouses": "3",
+            "max_products": "1000",
+            "max_customers": "500",
+            "max_monthly_invoices": "2500",
+            "storage_limit_mb": "2048",
+            "max_employees": "20",
+            "max_suppliers": "50",
+            "max_active_orders": "100",
+            "max_api_calls": "5000",
+            "max_branch_managers": "3",
+            "max_cashiers": "8",
+            "max_logged_in_devices": "15",
+            "max_pos_terminals": "6",
+        }
+        data.update({field: "on" for field in PLAN_MODULE_FIELDS})
+        data.update(overrides)
+        return data
+
+    def test_form_uses_exact_module_whitelist_and_commercial_labels(self):
+        form = PlanForm()
+
+        self.assertEqual(list(form.fields), PLAN_FORM_FIELDS)
+        self.assertEqual(len(PLAN_MODULE_FIELDS), 13)
+        self.assertEqual(
+            [form.fields[field].label for field in PLAN_MODULE_FIELDS],
+            self.expected_module_labels,
+        )
+        self.assertEqual(
+            [PLAN_MODULE_LABELS[field] for field in PLAN_MODULE_FIELDS],
+            self.expected_module_labels,
+        )
+        self.assertEqual(form.fields["description"].widget.attrs["rows"], 2)
+        for field in PLAN_MODULE_FIELDS:
+            self.assertNotIn("Feature", form.fields[field].label)
+
+    def test_plan_form_renders_required_sections_modules_and_help(self):
         r = self.client.get(reverse("platformadmin:plan_create"))
 
         self.assertEqual(r.status_code, 200)
-        self.assertContains(r, "setup_fee")
-        self.assertContains(r, "feature_tailoring_module")
-        self.assertContains(r, "feature_executive_dashboard")
-        self.assertContains(r, "max_pos_terminals")
+        for heading in [
+            "Basic Plan Information",
+            "Pricing and Billing",
+            "Limits",
+            "NexaPOS Modules",
+            "Included with POS Core",
+        ]:
+            self.assertContains(r, heading)
+        for field, label in zip(
+            PLAN_MODULE_FIELDS, self.expected_module_labels, strict=True
+        ):
+            self.assertContains(r, f'name="{field}"')
+            self.assertContains(r, label)
+        for text in [
+            "Purchasing requires Inventory Management and Suppliers.",
+            "Stock Transfers require Inventory Management.",
+            "Tailoring Operations require POS Core and Inventory Management.",
+            "Customer Credit requires POS Core.",
+            "Barcode Printing requires POS Core.",
+            "Custom Roles require POS Core Users &amp; Staff.",
+            "API Access does not automatically enable any business module.",
+        ]:
+            self.assertContains(r, text, html=False)
+        self.assertContains(r, "Use 0 for unlimited.")
+        for capability in self.included_pos_core_capabilities:
+            self.assertContains(r, capability)
+
+    def test_compatibility_future_integration_and_branding_fields_are_hidden(self):
+        r = self.client.get(reverse("platformadmin:plan_create"))
+
+        self.assertEqual(r.status_code, 200)
+        form = r.context["form"]
+        for field in self.hidden_feature_fields:
+            self.assertNotIn(field, form.fields)
+            self.assertNotContains(r, f'name="{field}"')
+
+    def test_edit_preserves_every_hidden_feature_value(self):
+        plan = Plan.objects.create(name="Hidden Preservation Plan")
+        expected = {}
+        for index, field in enumerate(self.hidden_feature_fields):
+            value = index % 2 == 0
+            setattr(plan, field, value)
+            expected[field] = value
+        plan.save(update_fields=self.hidden_feature_fields)
+
+        r = self.client.post(
+            reverse("platformadmin:plan_edit", args=[plan.pk]),
+            self._payload(name=plan.name, description="Visible edit only"),
+        )
+
+        self.assertRedirects(r, reverse("platformadmin:plan_list"))
+        plan.refresh_from_db()
+        self.assertEqual(plan.description, "Visible edit only")
+        self.assertEqual(
+            {field: getattr(plan, field) for field in self.hidden_feature_fields},
+            expected,
+        )
+
+    def test_create_ignores_forged_hidden_fields_and_uses_model_defaults(self):
+        payload = self._payload(name="Safe Create Plan")
+        payload.update({field: "on" for field in self.hidden_feature_fields})
+
+        r = self.client.post(reverse("platformadmin:plan_create"), payload)
+
+        self.assertRedirects(r, reverse("platformadmin:plan_list"))
+        plan = Plan.objects.get(name="Safe Create Plan")
+        defaults = {
+            field: Plan._meta.get_field(field).default
+            for field in self.hidden_feature_fields
+        }
+        self.assertEqual(
+            {field: getattr(plan, field) for field in self.hidden_feature_fields},
+            defaults,
+        )
+
+    def test_create_and_edit_visible_plan_workflow(self):
+        create_payload = self._payload(name="Plan Workflow Test")
+        create_payload.pop("feature_transfers")
+
+        create_response = self.client.post(
+            reverse("platformadmin:plan_create"), create_payload
+        )
+
+        self.assertRedirects(create_response, reverse("platformadmin:plan_list"))
+        plan = Plan.objects.get(name="Plan Workflow Test")
+        self.assertEqual(plan.monthly_price, D("29.000"))
+        self.assertTrue(plan.feature_sales)
+        self.assertFalse(plan.feature_transfers)
+
+        edit_payload = self._payload(
+            name=plan.name,
+            monthly_price="39.000",
+            description="Updated through Platform Admin",
+        )
+        edit_payload.pop("feature_inventory")
+        edit_response = self.client.post(
+            reverse("platformadmin:plan_edit", args=[plan.pk]), edit_payload
+        )
+
+        self.assertRedirects(edit_response, reverse("platformadmin:plan_list"))
+        plan.refresh_from_db()
+        self.assertEqual(plan.monthly_price, D("39.000"))
+        self.assertEqual(plan.description, "Updated through Platform Admin")
+        self.assertFalse(plan.feature_inventory)
+
+    def test_plan_validation_rejects_invalid_limits_and_duplicate_names(self):
+        invalid_limit = self.client.post(
+            reverse("platformadmin:plan_create"),
+            self._payload(name="Invalid Limits Plan", max_branches="-1"),
+        )
+
+        self.assertEqual(invalid_limit.status_code, 200)
+        self.assertFormError(
+            invalid_limit.context["form"],
+            "max_branches",
+            "Ensure this value is greater than or equal to 0.",
+        )
+        self.assertFalse(Plan.objects.filter(name="Invalid Limits Plan").exists())
+
+        Plan.objects.create(name="Duplicate Plan Name")
+        duplicate = self.client.post(
+            reverse("platformadmin:plan_create"),
+            self._payload(name="Duplicate Plan Name"),
+        )
+        self.assertEqual(duplicate.status_code, 200)
+        self.assertIn("name", duplicate.context["form"].errors)
+
+    def test_non_platform_user_cannot_view_or_change_plans(self):
+        plan = Plan.objects.create(name="Protected Plan")
+        self.client.logout()
+        self.client.force_login(self.owner_a)
+
+        requests = [
+            self.client.get(reverse("platformadmin:plan_list")),
+            self.client.get(reverse("platformadmin:plan_create")),
+            self.client.get(reverse("platformadmin:plan_edit", args=[plan.pk])),
+            self.client.post(
+                reverse("platformadmin:plan_create"),
+                self._payload(name="Unauthorized Create"),
+            ),
+            self.client.post(
+                reverse("platformadmin:plan_edit", args=[plan.pk]),
+                self._payload(name=plan.name, description="Unauthorized edit"),
+            ),
+        ]
+
+        self.assertTrue(all(response.status_code == 403 for response in requests))
+        plan.refresh_from_db()
+        self.assertEqual(plan.description, "")
+        self.assertFalse(Plan.objects.filter(name="Unauthorized Create").exists())
 
     def test_coupons_hidden_from_platform_sidebar(self):
         r = self.client.get(reverse("platformadmin:plan_list"))
