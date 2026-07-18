@@ -28,7 +28,7 @@
     </div>
     <div class="col-md-2"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
     <div class="col-md-2"><input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm" aria-label="To date"></div>
-    <div class="col-md-2">
+    {% if tailoring_enabled %}<div class="col-md-2">
       <select name="delivery" class="form-select form-select-sm" title="Delivery filter">
         <option value="">Deliveries: any</option>
         <option value="today" {% if request.GET.delivery == "today" %}selected{% endif %}>Today's deliveries</option>
@@ -36,7 +36,7 @@
         <option value="overdue" {% if request.GET.delivery == "overdue" %}selected{% endif %}>Overdue deliveries</option>
         <option value="scheduled" {% if request.GET.delivery == "scheduled" %}selected{% endif %}>All scheduled</option>
       </select>
-    </div>
+    </div>{% endif %}
     <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
       <a href="{% url 'sales:list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>
   </form>
@@ -54,7 +54,7 @@
   <div class="table-responsive">
     <table class="table table-hover mb-0">
       <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Branch</th>
-        <th>Delivery</th>
+        {% if tailoring_enabled %}<th>Delivery</th>{% endif %}
         <th class="text-end">Discount</th><th class="text-end">Total</th><th class="text-end">Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
       <tbody>
         {% for s in page_obj %}
@@ -63,12 +63,12 @@
           <td class="small">{{ s.sale_date|date:"Y-m-d H:i" }}</td>
           <td>{{ s.customer.full_name }}</td>
           <td class="small">{{ s.branch.name }}</td>
-          <td class="small">
+          {% if tailoring_enabled %}<td class="small">
             {% if s.delivery_date %}
               <span class="{% if s.is_delivery_overdue %}text-danger fw-bold{% endif %}">{{ s.delivery_date|date:"M d" }}</span>
               <span class="badge badge-status bs-{{ s.delivery_status }}">{{ s.get_delivery_status_display }}</span>
             {% else %}—{% endif %}
-          </td>
+          </td>{% endif %}
           <td class="text-end">{% money s.discount_amount %}</td>
           <td class="text-end fw-semibold">{% money s.total %}</td>
           <td class="text-end">{% money s.amount_paid %}</td>
@@ -78,7 +78,7 @@
           </td>
         </tr>
         {% empty %}
-        <tr><td colspan="9"><div class="empty-state"><i class="bi bi-receipt d-block mb-2"></i>No sales found.</div></td></tr>
+        <tr><td colspan="{% if tailoring_enabled %}10{% else %}9{% endif %}"><div class="empty-state"><i class="bi bi-receipt d-block mb-2"></i>No sales found.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>

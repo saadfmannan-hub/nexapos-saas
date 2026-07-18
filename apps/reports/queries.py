@@ -142,9 +142,20 @@ def _payment_breakdown(sale):
     return {key: _money(value) for key, value in amounts.items()}
 
 
-def _payment_method_summary(sale):
+def _payment_method_summary(sale, *, include_customer_credit=True):
+    from apps.sales.models import PaymentMethod
+
     names = []
     for payment in sale.payments.all():
+        if (
+            not include_customer_credit
+            and payment.method.kind
+            in {
+                PaymentMethod.Kind.CUSTOMER_CREDIT,
+                PaymentMethod.Kind.STORE_CREDIT,
+            }
+        ):
+            continue
         if payment.method.name not in names:
             names.append(payment.method.name)
     return " + ".join(names) or "-"
@@ -233,6 +244,8 @@ def current_year_financial_summary(
     branch_id=None,
     today=None,
     include_profit=True,
+    include_expenses=True,
+    include_customer_credit=True,
 ):
     """Current-calendar-year dashboard totals, independent of date filters.
 
@@ -242,7 +255,6 @@ def current_year_financial_summary(
     before the per-invoice balance is clamped at zero.
     """
     from apps.core.money import money
-    from apps.expenses.models import Expense
     from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment, SaleReturn
 
     today = today or timezone.localdate()
@@ -280,66 +292,72 @@ def current_year_financial_summary(
         branch_id=selected_branch_id,
     )
 
-    payment_subquery = (
-        SalePayment.objects.for_business(business)
-        .filter(
-            sale_id=OuterRef("pk"),
-            method__kind__in=receivable_payment_kinds,
+    if include_customer_credit:
+        payment_subquery = (
+            SalePayment.objects.for_business(business)
+            .filter(
+                sale_id=OuterRef("pk"),
+                method__kind__in=receivable_payment_kinds,
+            )
+            .values("sale_id")
+            .annotate(total=Sum("amount"))
+            .values("total")[:1]
         )
-        .values("sale_id")
-        .annotate(total=Sum("amount"))
-        .values("total")[:1]
-    )
-    return_subquery = (
-        SaleReturn.objects.for_business(business)
-        .filter(sale_id=OuterRef("pk"))
-        .values("sale_id")
-        .annotate(total=Sum("refund_amount"))
-        .values("total")[:1]
-    )
-    paid_refund_subquery = (
-        SaleReturn.objects.for_business(business)
-        .filter(
-            sale_id=OuterRef("pk"),
-            refund_method__in=receivable_payment_kinds,
+        return_subquery = (
+            SaleReturn.objects.for_business(business)
+            .filter(sale_id=OuterRef("pk"))
+            .values("sale_id")
+            .annotate(total=Sum("refund_amount"))
+            .values("total")[:1]
         )
-        .values("sale_id")
-        .annotate(total=Sum("refund_amount"))
-        .values("total")[:1]
-    )
-    sales_with_balance = valid_sales.annotate(
-        _real_received=Coalesce(
-            Subquery(payment_subquery, output_field=amount_field),
-            zero,
-            output_field=amount_field,
-        ),
-        _returned_total=Coalesce(
-            Subquery(return_subquery, output_field=amount_field),
-            zero,
-            output_field=amount_field,
-        ),
-        _paid_refunds=Coalesce(
-            Subquery(paid_refund_subquery, output_field=amount_field),
-            zero,
-            output_field=amount_field,
-        ),
-    ).annotate(
-        _receivable=Greatest(
-            ExpressionWrapper(
-                F("total")
-                - F("_returned_total")
-                - F("_real_received")
-                + F("_paid_refunds"),
+        paid_refund_subquery = (
+            SaleReturn.objects.for_business(business)
+            .filter(
+                sale_id=OuterRef("pk"),
+                refund_method__in=receivable_payment_kinds,
+            )
+            .values("sale_id")
+            .annotate(total=Sum("refund_amount"))
+            .values("total")[:1]
+        )
+        sales_with_balance = valid_sales.annotate(
+            _real_received=Coalesce(
+                Subquery(payment_subquery, output_field=amount_field),
+                zero,
                 output_field=amount_field,
             ),
-            zero,
-            output_field=amount_field,
+            _returned_total=Coalesce(
+                Subquery(return_subquery, output_field=amount_field),
+                zero,
+                output_field=amount_field,
+            ),
+            _paid_refunds=Coalesce(
+                Subquery(paid_refund_subquery, output_field=amount_field),
+                zero,
+                output_field=amount_field,
+            ),
+        ).annotate(
+            _receivable=Greatest(
+                ExpressionWrapper(
+                    F("total")
+                    - F("_returned_total")
+                    - F("_real_received")
+                    + F("_paid_refunds"),
+                    output_field=amount_field,
+                ),
+                zero,
+                output_field=amount_field,
+            )
         )
-    )
-    sales_totals = sales_with_balance.aggregate(
-        total_sales=Sum("total", output_field=amount_field),
-        total_receivable=Sum("_receivable", output_field=amount_field),
-    )
+        sales_totals = sales_with_balance.aggregate(
+            total_sales=Sum("total", output_field=amount_field),
+            total_receivable=Sum("_receivable", output_field=amount_field),
+        )
+    else:
+        sales_totals = valid_sales.aggregate(
+            total_sales=Sum("total", output_field=amount_field),
+        )
+        sales_totals["total_receivable"] = None
 
     payments = SalePayment.objects.for_business(business).filter(
         payment_date__gte=year_start,
@@ -363,18 +381,22 @@ def current_year_financial_summary(
         )
     total_income = payments.aggregate(total=Sum("amount"))["total"] or ZERO
 
-    expenses = Expense.objects.for_business(business).filter(
-        expense_date__gte=year_start,
-        expense_date__lte=today,
-        status__in=[Expense.Status.APPROVED, Expense.Status.PAID],
-    )
-    expenses = _scope_to_membership_branches(
-        expenses,
-        business=business,
-        membership=membership,
-        branch_id=selected_branch_id,
-    )
-    total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
+    total_expenses = None
+    if include_expenses:
+        from apps.expenses.models import Expense
+
+        expenses = Expense.objects.for_business(business).filter(
+            expense_date__gte=year_start,
+            expense_date__lte=today,
+            status__in=[Expense.Status.APPROVED, Expense.Status.PAID],
+        )
+        expenses = _scope_to_membership_branches(
+            expenses,
+            business=business,
+            membership=membership,
+            branch_id=selected_branch_id,
+        )
+        total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
 
     returns = SaleReturn.objects.for_business(business).filter(
         created_at__date__gte=year_start,
@@ -431,9 +453,13 @@ def current_year_financial_summary(
         )
 
     total_sales = money(sales_totals["total_sales"] or ZERO)
-    total_receivable = money(sales_totals["total_receivable"] or ZERO)
+    total_receivable = (
+        money(sales_totals["total_receivable"] or ZERO)
+        if include_customer_credit
+        else None
+    )
     total_income = money(total_income)
-    total_expenses = money(total_expenses)
+    total_expenses = money(total_expenses) if total_expenses is not None else None
     total_returns = money(total_returns)
     net_sales = money(total_sales - total_returns)
     gross_profit = money(gross_profit) if gross_profit is not None else None
@@ -451,7 +477,7 @@ def current_year_financial_summary(
         "gross_profit": gross_profit,
         "estimated_net_profit": (
             money(gross_profit - total_expenses)
-            if gross_profit is not None
+            if gross_profit is not None and total_expenses is not None
             else None
         ),
     }
@@ -530,7 +556,9 @@ def sales_detailed(business, f):
     )
     if f.get("product_id"):
         qs = qs.filter(product_id=f["product_id"])
-    if f.get("garment_classification") in ("adult", "child"):
+    tailoring_enabled = f.get("tailoring_enabled", True)
+    customer_credit_enabled = f.get("customer_credit_enabled", True)
+    if tailoring_enabled and f.get("garment_classification") in ("adult", "child"):
         qs = qs.filter(garment_classification=f["garment_classification"])
 
     rows = []
@@ -601,7 +629,10 @@ def sales_detailed(business, f):
             estimated_fabric,
             actual_fabric,
             variance,
-            _payment_method_summary(sale),
+            _payment_method_summary(
+                sale,
+                include_customer_credit=customer_credit_enabled,
+            ),
             sale.net_total,
             sale.net_amount_paid,
             sale.balance,
@@ -612,15 +643,33 @@ def sales_detailed(business, f):
             variant_name,
             warehouse_name,
         ])
-    return {
-        "columns": [
+    columns = [
             "Invoice", "Date", "Customer", "Branch", "Cashier", "Product",
             "Garment Classification", "Collection", "Quantity",
             "Legacy Estimated Fabric", "Legacy Workshop Actual",
             "Legacy Variance", "Payment Method", "Total", "Paid",
             "Balance", "Status", "POS Meter", "Net Meter Deducted", "Brand",
             "Variant / Color", "Warehouse",
-        ],
+        ]
+    if not tailoring_enabled:
+        tailoring_indexes = {6, 7, 9, 10, 11, 17, 18}
+        columns = [
+            column for index, column in enumerate(columns)
+            if index not in tailoring_indexes
+        ]
+        rows = [
+            [value for index, value in enumerate(row) if index not in tailoring_indexes]
+            for row in rows
+        ]
+    if not customer_credit_enabled:
+        balance_index = columns.index("Balance")
+        columns.pop(balance_index)
+        rows = [
+            [value for index, value in enumerate(row) if index != balance_index]
+            for row in rows
+        ]
+    return {
+        "columns": columns,
         "rows": rows,
         "totals": None,
         "summary": [
@@ -643,7 +692,7 @@ def sales_detailed(business, f):
                 "Legacy Variance Total",
                 fabric_totals["variance"] if has_fabric["variance"] else None,
             ),
-        ],
+        ] if tailoring_enabled else [],
         "wide_pdf": True,
     }
 
@@ -799,6 +848,15 @@ def returns_report(business, f):
         qs = qs.filter(sale_return__created_at__date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(sale_return__branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(
+            sale_return__branch_id__in=allowed_branch_ids,
+            sale_return__warehouse__business=business,
+        ).filter(
+            Q(sale_return__warehouse__branch_id__in=allowed_branch_ids)
+            | Q(sale_return__warehouse__branch__isnull=True)
+        )
     rows = []
     for item in qs.order_by("-sale_return__created_at", "sale_item__product_name"):
         sale_return = item.sale_return
@@ -858,6 +916,14 @@ def current_stock(business, f):
     )
     if f.get("warehouse_id"):
         qs = qs.filter(warehouse_id=f["warehouse_id"])
+    if not f.get("tailoring_enabled", True):
+        qs = qs.filter(product__is_tailoring_item=False)
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(warehouse__business=business).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
     rows = []
     total_value = ZERO
     for level in qs[:5000]:
@@ -886,6 +952,14 @@ def low_stock(business, f):
     )
     if f.get("warehouse_id"):
         qs = qs.filter(warehouse_id=f["warehouse_id"])
+    if not f.get("tailoring_enabled", True):
+        qs = qs.filter(product__is_tailoring_item=False)
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(warehouse__business=business).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
     rows = [[level.product.name, level.warehouse.name, level.quantity,
              level.product.reorder_level] for level in qs[:2000]]
     return {"columns": ["Product", "Warehouse", "Current stock", "Reorder level"],
@@ -906,6 +980,8 @@ def stock_movements_report(business, f):
         qs = qs.filter(created_at__date__lte=f["date_to"])
     if f.get("warehouse_id"):
         qs = qs.filter(warehouse_id=f["warehouse_id"])
+    if not f.get("tailoring_enabled", True):
+        qs = qs.filter(product__is_tailoring_item=False)
     if f.get("branch_id"):
         qs = qs.filter(warehouse__branch_id=f["branch_id"])
     allowed_branch_ids = f.get("allowed_branch_ids")
@@ -1580,6 +1656,9 @@ def expenses_report(business, f):
         qs = qs.filter(expense_date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(branch_id__in=allowed_branch_ids)
     rows = [[e.expense_number, str(e.expense_date), e.category.name,
              e.source_display,
              e.payee or (e.supplier.name if e.supplier else ""), e.branch.name,
@@ -1610,6 +1689,9 @@ def profit_summary(business, f):
         exp_qs = exp_qs.filter(expense_date__lte=f["date_to"])
     if f.get("branch_id"):
         exp_qs = exp_qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        exp_qs = exp_qs.filter(branch_id__in=allowed_branch_ids)
     expenses = exp_qs.aggregate(t=Sum("amount"))["t"] or ZERO
     rows = [
         ["Revenue (net of tax)", _money(revenue)],
@@ -1631,6 +1713,9 @@ def shifts_report(business, f):
         qs = qs.filter(opened_at__date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(branch_id__in=allowed_branch_ids)
     rows = [[s.register.name, s.cashier.full_name,
              s.opened_at.strftime("%Y-%m-%d %H:%M"),
              s.closed_at.strftime("%Y-%m-%d %H:%M") if s.closed_at else "",
@@ -1662,6 +1747,9 @@ def profit_loss(business, f):
         exp_qs = exp_qs.filter(expense_date__lte=f["date_to"])
     if f.get("branch_id"):
         exp_qs = exp_qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        exp_qs = exp_qs.filter(branch_id__in=allowed_branch_ids)
     by_category = exp_qs.values("category__name").annotate(
         t=Sum("amount")).order_by("-t")
 
@@ -1704,34 +1792,68 @@ def cash_flow(business, f):
             qs = qs.filter(**{f"{field}__lte": f["date_to"]})
         return qs
 
+    def branch_scoped(qs, field):
+        selected_branch_id = f.get("branch_id")
+        if selected_branch_id:
+            qs = qs.filter(**{field: selected_branch_id})
+        allowed_branch_ids = f.get("allowed_branch_ids")
+        if allowed_branch_ids is not None:
+            qs = qs.filter(**{f"{field}__in": allowed_branch_ids})
+        return qs
+
     sale_pay = (
-        ranged(SalePayment.objects.for_business(business), "created_at__date")
+        branch_scoped(
+            ranged(SalePayment.objects.for_business(business), "created_at__date"),
+            "sale__branch_id",
+        )
         .exclude(method__kind__in=["customer_credit", "store_credit"])
         .values("method__name").annotate(t=Sum("amount")).order_by("-t")
     )
-    collections = ranged(
-        CustomerPayment.objects.for_business(business).filter(kind="collection"),
-        "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
-    supplier_immediate = ranged(
-        SupplierPayment.objects.for_business(business).exclude(
-            method=SupplierPayment.Method.CHEQUE,
+    collections = branch_scoped(
+        ranged(
+            CustomerPayment.objects.for_business(business).filter(kind="collection"),
+            "created_at__date",
         ),
-        "created_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
-    supplier_cleared_cheques = ranged(
-        SupplierPayment.objects.for_business(business).filter(
-            method=SupplierPayment.Method.CHEQUE,
-            cheque_status=SupplierPayment.ChequeStatus.CLEARED,
+        "branch_id",
+    ).aggregate(t=Sum("amount"))["t"] or ZERO
+    supplier_immediate = branch_scoped(
+        ranged(
+            SupplierPayment.objects.for_business(business).exclude(
+                method=SupplierPayment.Method.CHEQUE,
+            ),
+            "created_at__date",
         ),
-        "cleared_at__date").aggregate(t=Sum("amount"))["t"] or ZERO
+        "purchase__branch_id",
+    ).aggregate(t=Sum("amount"))["t"] or ZERO
+    supplier_cleared_cheques = branch_scoped(
+        ranged(
+            SupplierPayment.objects.for_business(business).filter(
+                method=SupplierPayment.Method.CHEQUE,
+                cheque_status=SupplierPayment.ChequeStatus.CLEARED,
+            ),
+            "cleared_at__date",
+        ),
+        "purchase__branch_id",
+    ).aggregate(t=Sum("amount"))["t"] or ZERO
     supplier_pay = supplier_immediate + supplier_cleared_cheques
-    expenses = ranged(
-        Expense.objects.for_business(business)
-        .exclude(status__in=["rejected", "cancelled"]),
-        "expense_date").aggregate(t=Sum("amount"))["t"] or ZERO
-    refunds = ranged(
-        SaleReturn.objects.for_business(business)
-        .filter(refund_method__in=["cash", "card", "bank"]),
-        "created_at__date").aggregate(t=Sum("refund_amount"))["t"] or ZERO
+    expenses = branch_scoped(
+        ranged(
+            Expense.objects.for_business(business).exclude(
+                status__in=["rejected", "cancelled"]
+            ),
+            "expense_date",
+        ),
+        "branch_id",
+    ).aggregate(t=Sum("amount"))["t"] or ZERO
+    refunds = branch_scoped(
+        ranged(
+            SaleReturn.objects.for_business(business).filter(
+                refund_method__in=["cash", "card", "bank"]
+            ),
+            "created_at__date",
+        ),
+        "branch_id",
+    ).aggregate(t=Sum("refund_amount"))["t"] or ZERO
 
     rows = [["CASH IN", ""]]
     total_in = ZERO
@@ -1765,6 +1887,9 @@ def expense_analysis(business, f):
         qs = qs.filter(expense_date__lte=f["date_to"])
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        qs = qs.filter(branch_id__in=allowed_branch_ids)
     data = qs.values("category__name").annotate(
         count=Count("id"), total=Sum("amount"), avg=Avg("amount")
     ).order_by("-total")
@@ -1850,6 +1975,44 @@ REPORTS = {
     "top_customers": ("Top customers", top_customers, "reports.view"),
     "expenses": ("Expenses", expenses_report, "reports.financial"),
     "shifts": ("Shifts & cash differences", shifts_report, "reports.view"),
+}
+
+# Commercial-module requirements are kept beside the report registry so the
+# screen, exports, and navigation all make the same authorization decision.
+# Advanced reports explicitly list every source module they query; enabling
+# Advanced Reports never grants access to those source modules.
+REPORT_REQUIRED_MODULES = {
+    "sales_summary": ("pos_core",),
+    "sales_detailed": ("pos_core",),
+    "product_sales": ("advanced_reports", "pos_core"),
+    "category_sales": ("advanced_reports", "pos_core"),
+    "cashier_sales": ("advanced_reports", "pos_core"),
+    "payment_methods": ("pos_core",),
+    "voids": ("pos_core",),
+    "returns": ("pos_core",),
+    "tax": ("pos_core",),
+    "profit": ("advanced_reports", "pos_core", "expenses"),
+    "profit_loss": ("advanced_reports", "pos_core", "expenses"),
+    "cash_flow": (
+        "advanced_reports",
+        "pos_core",
+        "customer_credit",
+        "purchases",
+        "expenses",
+    ),
+    "expense_analysis": ("advanced_reports", "expenses"),
+    "customer_sales": ("advanced_reports", "pos_core", "customer_credit"),
+    "current_stock": ("inventory",),
+    "low_stock": ("inventory",),
+    "stock_movements": ("inventory",),
+    "fabric_history": ("tailoring", "inventory"),
+    "purchases": ("purchases",),
+    "supplier_balances": ("purchases",),
+    "supplier_payments_cheques": ("purchases",),
+    "receivables": ("customer_credit",),
+    "top_customers": ("advanced_reports", "pos_core"),
+    "expenses": ("expenses",),
+    "shifts": ("pos_core",),
 }
 
 REPORT_GROUPS = [

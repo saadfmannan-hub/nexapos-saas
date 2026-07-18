@@ -3,12 +3,13 @@ from django.db.models import Q
 from django.shortcuts import render
 
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import require_permission
+from apps.subscriptions.access import AccessAction
+from apps.subscriptions.decorators import module_permission_required
 
 from .models import AuditLog
 
 
-@require_permission("audit.view")
+@module_permission_required("audit_logs", "audit.view", action=AccessAction.READ)
 def audit_list(request):
     qs = AuditLog.objects.filter(business=request.business).select_related("user")
     q = request.GET.get("q", "").strip()

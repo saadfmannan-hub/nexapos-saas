@@ -38,14 +38,23 @@ class TenantTestCase(TestCase):
         )
 
         # These are controlled test tenants.  Production seed-plan data stays
-        # untouched while legacy POS/catalog/customer/register suites exercise
-        # the explicitly enabled POS Core and Inventory capabilities.
+        # untouched while legacy POS/catalog/customer/register/purchasing suites
+        # exercise explicitly enabled commercial capabilities.
         plan_ids = Subscription.objects.filter(
             business__in=(cls.business_a, cls.business_b)
         ).values_list("plan_id", flat=True)
         Plan.objects.filter(pk__in=plan_ids).update(
             feature_sales=True,
             feature_inventory=True,
+            feature_suppliers=True,
+            feature_purchases=True,
+            feature_expenses=True,
+            feature_tailoring_module=True,
+            feature_customer_credit=True,
+            feature_advanced_reports=True,
+            feature_audit_logs=True,
+            feature_barcode_printing=True,
+            feature_custom_roles=True,
         )
         cls.business_a.refresh_from_db()
         cls.business_b.refresh_from_db()
@@ -118,7 +127,7 @@ class TenantTestCase(TestCase):
 
         items = items or [{"product": self.product_a, "quantity": Decimal("2"),
                            "unit_price": Decimal("10.000")}]
-        total = kwargs.pop("expect_total", None)
+        kwargs.pop("expect_total", None)
         if payments is None:
             from apps.sales.services import compute_line
 

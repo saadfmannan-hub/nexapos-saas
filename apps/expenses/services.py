@@ -9,7 +9,8 @@ from django.utils import timezone
 
 from apps.audit import services as audit
 from apps.branches.models import Branch
-from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, evaluate_public_access
+from apps.subscriptions.exceptions import DenialCode
 
 from .models import Expense, ExpenseCategory, RecurringExpenseTemplate
 
@@ -81,16 +82,17 @@ def _generation_branch(business):
 @transaction.atomic
 def ensure_recurring_expenses_for_month(business, target_date):
     """Create each applicable template's expense once for the target month."""
-    if business is None or not business.is_active:
-        raise RecurringExpenseGenerationError("An active business is required.")
-    try:
-        subscriptions.require_operational(business)
-    except subscriptions.SubscriptionInactive as exc:
-        raise RecurringExpenseGenerationError(str(exc)) from exc
-    if not subscriptions.has_feature(business, "expenses"):
-        raise RecurringExpenseGenerationError(
-            "The business plan does not include expenses."
-        )
+    decision = evaluate_public_access(
+        business, "expenses", action=AccessAction.WRITE
+    )
+    if not decision.allowed:
+        if decision.denial.code == DenialCode.BUSINESS_INACTIVE:
+            message = "Recurring expense generation requires an active business."
+        elif decision.denial.code == DenialCode.MODULE_DISABLED:
+            message = "The current plan does not include expenses."
+        else:
+            message = decision.denial.message
+        raise RecurringExpenseGenerationError(message)
 
     month_start, month_end = _month_bounds(target_date)
     branch = _generation_branch(business)

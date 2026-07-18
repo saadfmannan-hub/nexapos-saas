@@ -86,7 +86,7 @@
       <div class="small text-secondary mt-1">Cash + card + bank only</div>
     </div>
   </div>
-  <div class="col-6 col-xl-2">
+  {% if customer_credit_access %}<div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#f59e0b,#fde68a)">
       <div class="d-flex justify-content-between align-items-start">
         <div><div class="kpi-label">Today Credit / Receivable</div><div class="kpi-value {% if kpis.today_receivable > 0 %}text-warning{% endif %}">{% money kpis.today_receivable %}</div></div>
@@ -94,7 +94,7 @@
       </div>
       <div class="small text-secondary mt-1">Credit and unpaid invoices</div>
     </div>
-  </div>
+  </div>{% endif %}
   <div class="col-6 col-xl-2">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#dc2626,#fca5a5)">
       <div class="d-flex justify-content-between align-items-start">
@@ -113,7 +113,7 @@
       <div class="small text-secondary mt-1">Today sales minus returns</div>
     </div>
   </div>
-  <div class="col-6 col-xl-2">
+  {% if customer_credit_access %}<div class="col-6 col-xl-2">
     <a href="{% url 'reports:view' 'receivables' %}" class="text-reset">
     <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#6366f1,#c7d2fe)">
       <div class="d-flex justify-content-between align-items-start">
@@ -122,7 +122,7 @@
       </div>
       <div class="small text-secondary mt-1">Total outstanding receivables</div>
     </div></a>
-  </div>
+  </div>{% endif %}
 </div>
 
 <div class="row g-3 mb-3">
@@ -130,22 +130,22 @@
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#2563eb,#93c5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Card</div><div class="kpi-value">{% money kpis.card %}</div></div><div class="kpi-icon" style="background:#dbeafe;color:#2563eb"><i class="bi bi-credit-card"></i></div></div></div></div>
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#7c3aed,#c4b5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Bank Transfer</div><div class="kpi-value">{% money kpis.bank %}</div></div><div class="kpi-icon" style="background:#ede9fe;color:#7c3aed"><i class="bi bi-bank"></i></div></div></div></div>
   {% if inventory_access %}<div class="col-6 col-xl-2"><a href="{% url 'reports:view' 'low_stock' %}" class="text-reset"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#ef4444,#fecaca)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Low Stock Items</div><div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock|intcomma }}</div></div><div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div></div></div></a></div>{% endif %}
-  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Orders Booked</div><div class="kpi-value">{{ delivery_counts.booked|intcomma }}</div></div><div class="kpi-icon" style="background:#e2e8f0;color:#334155"><i class="bi bi-clipboard-check"></i></div></div></div></div>
-  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0891b2,#67e8f9)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Ready for Delivery</div><div class="kpi-value">{{ delivery_counts.ready|intcomma }}</div></div><div class="kpi-icon" style="background:#cffafe;color:#0891b2"><i class="bi bi-bag-check"></i></div></div></div></div>
+  {% if tailoring_access %}<div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Orders Booked</div><div class="kpi-value">{{ delivery_counts.booked|intcomma }}</div></div><div class="kpi-icon" style="background:#e2e8f0;color:#334155"><i class="bi bi-clipboard-check"></i></div></div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0891b2,#67e8f9)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Ready for Delivery</div><div class="kpi-value">{{ delivery_counts.ready|intcomma }}</div></div><div class="kpi-icon" style="background:#cffafe;color:#0891b2"><i class="bi bi-bag-check"></i></div></div></div></div>{% endif %}
 </div>
 
 <div class="row g-3 mb-3">
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Orders In Process</span><span class="badge badge-status bs-in_production">{{ delivery_counts.in_process|intcomma }}</span></div></div></div>
+  {% if tailoring_access %}<div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Orders In Process</span><span class="badge badge-status bs-in_production">{{ delivery_counts.in_process|intcomma }}</span></div></div></div>
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Orders Finished</span><span class="badge badge-status bs-ready">{{ delivery_counts.finished|intcomma }}</span></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Pending Delivery</span><strong>{{ delivery_counts.pending_delivery|intcomma }}</strong></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Sales / Income</span><strong>{% money kpis.period_sales %} / {% money kpis.period_income %}</strong></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Pending Delivery</span><strong>{{ delivery_counts.pending_delivery|intcomma }}</strong></div></div></div>{% endif %}
+  <div class="{% if tailoring_access %}col-6 col-xl-3{% else %}col-12{% endif %}"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Sales / Income</span><strong>{% money kpis.period_sales %} / {% money kpis.period_income %}</strong></div></div></div>
 </div>
 
 {% if show_profit %}
 <div class="row g-3 mb-3">
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Gross Profit</span><strong class="text-success">{% money kpis.gross_profit %}</strong></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Est. Net Profit</span><strong class="{% if kpis.net_profit < 0 %}text-danger{% endif %}">{% money kpis.net_profit %}</strong></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Credit</span><strong class="text-warning">{% money kpis.period_credit %}</strong></div></div></div>
+  {% if expenses_access %}<div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Est. Net Profit</span><strong class="{% if kpis.net_profit < 0 %}text-danger{% endif %}">{% money kpis.net_profit %}</strong></div></div></div>{% endif %}
+  {% if customer_credit_access %}<div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Credit</span><strong class="text-warning">{% money kpis.period_credit %}</strong></div></div></div>{% endif %}
   {% if inventory_access %}<div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Inventory Value</span><strong>{% if kpis.stock_value is not None %}{% money kpis.stock_value %}{% else %}-{% endif %}</strong></div></div></div>{% endif %}
 </div>
 {% endif %}
@@ -176,7 +176,7 @@
         <div class="small text-secondary mt-1">This Year</div>
       </div>
     </div>
-    <div class="col-12 col-md-6 col-xl-3">
+    {% if customer_credit_access %}<div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#f59e0b,#fde68a)">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div><div class="kpi-label">Total Receivable &mdash; This Year</div><div class="kpi-value {% if current_year.total_receivable > 0 %}text-warning{% endif %}">{% money current_year.total_receivable %}</div></div>
@@ -184,8 +184,8 @@
         </div>
         <div class="small text-secondary mt-1">This Year</div>
       </div>
-    </div>
-    <div class="col-12 col-md-6 col-xl-3">
+    </div>{% endif %}
+    {% if expenses_access %}<div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#7c3aed,#c4b5fd)">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div><div class="kpi-label">Total Expenses &mdash; This Year</div><div class="kpi-value">{% money current_year.total_expenses %}</div></div>
@@ -193,7 +193,7 @@
         </div>
         <div class="small text-secondary mt-1">This Year</div>
       </div>
-    </div>
+    </div>{% endif %}
     <div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#dc2626,#fca5a5)">
         <div class="d-flex justify-content-between align-items-start gap-2">
@@ -222,7 +222,7 @@
         <div class="small text-secondary mt-1">This Year</div>
       </div>
     </div>
-    <div class="col-12 col-md-6 col-xl-3">
+    {% if expenses_access %}<div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)">
         <div class="d-flex justify-content-between align-items-start gap-2">
           <div><div class="kpi-label">Estimated Net Profit &mdash; This Year</div><div class="kpi-value {% if current_year.estimated_net_profit < 0 %}text-danger{% endif %}">{% money current_year.estimated_net_profit %}</div></div>
@@ -230,7 +230,7 @@
         </div>
         <div class="small text-secondary mt-1">This Year</div>
       </div>
-    </div>
+    </div>{% endif %}
     {% endif %}
   </div>
 </section>
@@ -244,7 +244,7 @@
     <div class="card chart-card"><div class="card-header">Payment method breakdown</div>
       <div class="card-body"><div class="chart-frame chart-frame-method"><canvas id="methodChart"></canvas></div></div></div>
   </div>
-  <div class="col-lg-4">
+  {% if advanced_reports_access %}<div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Top products</div>
       <div class="card-body"><div class="chart-frame chart-frame-products"><canvas id="productChart"></canvas></div></div></div>
   </div>
@@ -252,6 +252,7 @@
     <div class="card chart-card"><div class="card-header">Top customers</div>
       <div class="card-body"><div class="chart-frame chart-frame-customers"><canvas id="customerChart"></canvas></div></div></div>
   </div>
+  {% endif %}
   <div class="col-lg-4">
     <div class="card chart-card"><div class="card-header">Sales by branch</div>
       <div class="card-body"><div class="chart-frame chart-frame-branches"><canvas id="branchChart"></canvas></div></div></div>
@@ -267,10 +268,10 @@
 </div>
 
 <div class="row g-3">
-  <div class="col-xl-6">
+  {% if advanced_reports_access %}<div class="col-xl-6">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Top Products</span><a class="small" href="{% url 'reports:view' 'product_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>
+        <span>Top Products</span>{% if advanced_reports_access %}<a class="small" href="{% url 'reports:view' 'product_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>{% endif %}
       </div>
       <div class="table-responsive">
         <table class="table table-sm commercial-table mb-0">
@@ -287,20 +288,21 @@
   <div class="col-xl-6">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>Top Customers</span><a class="small" href="{% url 'reports:view' 'customer_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>
+        <span>Top Customers</span>{% if advanced_reports_access and customer_credit_access %}<a class="small" href="{% url 'reports:view' 'customer_sales' %}?from={{ date_from }}&to={{ date_to }}">Report</a>{% endif %}
       </div>
       <div class="table-responsive">
         <table class="table table-sm commercial-table mb-0">
-          <thead><tr><th>Customer</th><th>Phone</th><th class="text-end">Sales Amount</th><th class="text-end">Paid Amount</th><th class="text-end">Credit / Receivable</th></tr></thead>
+          <thead><tr><th>Customer</th><th>Phone</th><th class="text-end">Sales Amount</th><th class="text-end">Paid Amount</th>{% if customer_credit_access %}<th class="text-end">Credit / Receivable</th>{% endif %}</tr></thead>
           <tbody>
             {% for c in top_customers_table %}
-            <tr><td class="name-cell">{{ c.customer }}</td><td>{{ c.phone }}</td><td class="text-end">{% money c.sales %}</td><td class="text-end">{% money c.paid %}</td><td class="text-end {% if c.receivable > 0 %}text-warning fw-semibold{% endif %}">{% money c.receivable %}</td></tr>
-            {% empty %}<tr><td colspan="5" class="text-secondary small">No customer sales in this period.</td></tr>{% endfor %}
+            <tr><td class="name-cell">{{ c.customer }}</td><td>{{ c.phone }}</td><td class="text-end">{% money c.sales %}</td><td class="text-end">{% money c.paid %}</td>{% if customer_credit_access %}<td class="text-end {% if c.receivable > 0 %}text-warning fw-semibold{% endif %}">{% money c.receivable %}</td>{% endif %}</tr>
+            {% empty %}<tr><td colspan="{% if customer_credit_access %}5{% else %}4{% endif %}" class="text-secondary small">No customer sales in this period.</td></tr>{% endfor %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
   {% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}
   <div class="{% if inventory_access %}col-xl-7{% else %}col-12{% endif %}">
     <div class="card h-100">
@@ -309,7 +311,7 @@
       </div>
       <div class="table-responsive">
         <table class="table table-sm commercial-table mb-0">
-          <thead><tr><th>Invoice No</th><th>Customer</th><th>Phone</th><th class="text-end">Total</th><th class="text-end">Paid</th><th class="text-end">Balance</th><th>Status</th></tr></thead>
+          <thead><tr><th>Invoice No</th><th>Customer</th><th>Phone</th><th class="text-end">Total</th><th class="text-end">Paid</th>{% if customer_credit_access %}<th class="text-end">Balance</th>{% endif %}<th>Status</th></tr></thead>
           <tbody>
             {% for s in widgets.recent_sales %}
             <tr>
@@ -318,16 +320,15 @@
               <td>{{ s.customer.mobile|default:"-" }}</td>
               <td class="text-end">{% money s.total %}</td>
               <td class="text-end">{% money s.amount_paid %}</td>
-              <td class="text-end {% if s.balance > 0 %}text-warning fw-semibold{% endif %}">{% money s.balance %}</td>
+              {% if customer_credit_access %}<td class="text-end {% if s.balance > 0 %}text-warning fw-semibold{% endif %}">{% money s.balance %}</td>{% endif %}
               <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
             </tr>
-            {% empty %}<tr><td colspan="7" class="text-secondary small">No sales yet.</td></tr>{% endfor %}
+            {% empty %}<tr><td colspan="{% if customer_credit_access %}7{% else %}6{% endif %}" class="text-secondary small">No sales yet.</td></tr>{% endfor %}
           </tbody>
         </table>
       </div>
     </div>
-  </div>
-  {% endif %}
+  </div>{% endif %}
   {% if inventory_access %}<div class="{% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}col-xl-5{% else %}col-12{% endif %}">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
@@ -352,9 +353,11 @@
 {% block extra_js %}
 {{ chart_trend|json_script:"trend-data" }}
 {{ chart_methods|json_script:"method-data" }}
+{% if advanced_reports_access %}
 {{ chart_products|json_script:"product-data" }}
-{{ chart_branches|json_script:"branch-data" }}
 {{ chart_customers|json_script:"customer-data" }}
+{% endif %}
+{{ chart_branches|json_script:"branch-data" }}
 {{ chart_hourly|json_script:"hourly-data" }}
 {% if inventory_access %}{{ chart_movement|json_script:"movement-data" }}{% endif %}
 {{ sparks|json_script:"spark-data" }}
@@ -450,10 +453,10 @@
         scales: {x: {beginAtZero: true, grid: {color: '#eef2f7'}},
           y: {grid: {display: false}, ticks: {callback: tickLabel, autoSkip: false,
             padding: 8, font: {size: 11}}}}}});
-  const products = get('product-data');
+  {% if advanced_reports_access %}const products = get('product-data');
   hbar('productChart', products.labels, products.data, '#0d6efd', 'Sales Amount');
   const customers = get('customer-data');
-  hbar('customerChart', customers.labels, customers.data, '#6366f1', 'Sales Amount');
+  hbar('customerChart', customers.labels, customers.data, '#6366f1', 'Sales Amount');{% endif %}
 
   const branchesData = get('branch-data');
   new Chart(document.getElementById('branchChart'), {type: 'bar',

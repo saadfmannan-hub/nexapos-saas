@@ -1,64 +1,111 @@
-"""API v1 — tenant-aware, token or session authenticated, read-first.
+"""API v1 -- explicitly tenant-scoped, subscription-aware, read-only."""
 
-Every queryset is filtered by the caller's active business membership.
-API access additionally requires the subscription plan feature flag.
-"""
+from types import SimpleNamespace
+
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.exceptions import PermissionDenied
-from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from apps.accounts.models import Membership
-from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction
+from apps.subscriptions.api_permissions import HasSubscriptionModuleAccess
 
 from . import serializers
 
-
-def _membership_for(request):
-    return (
-        Membership.objects.filter(
-            user=request.user, is_active=True, business__is_active=True
-        )
-        .select_related("business", "role")
-        .first()
-    )
+_INVALID_BUSINESS = SimpleNamespace(pk=None, is_active=False)
+_INVALID_MEMBERSHIP = SimpleNamespace(
+    pk=None,
+    is_active=False,
+    user_id=None,
+    business_id=None,
+)
 
 
-class HasBusinessAPIAccess(BasePermission):
-    message = "API access requires an active business and an API-enabled plan."
+def _resolve_explicit_context(request):
+    """Resolve one exact actor/business context without membership guessing.
 
-    def has_permission(self, request, view):
-        membership = _membership_for(request)
-        if membership is None:
-            return False
-        if not subscriptions.has_feature(membership.business, "api_access"):
-            raise PermissionDenied(
-                "Your subscription plan does not include API access."
+    Browser sessions may reuse their already-selected business membership.
+    Token callers must identify a business or membership using
+    ``X-Business-ID`` or ``X-Membership-ID``. Invalid explicit identifiers
+    deliberately collapse to the same central membership denial.
+    """
+
+    cached = getattr(request, "_nexapos_explicit_api_context", None)
+    if cached is not None:
+        return cached
+
+    business_id = request.headers.get("X-Business-ID", "").strip()
+    membership_id = request.headers.get("X-Membership-ID", "").strip()
+    if business_id or membership_id:
+        try:
+            query = Membership.objects.select_related("business", "role").filter(
+                user=request.user,
+                is_active=True,
+                business__is_active=True,
             )
-        request.api_membership = membership
-        request.api_business = membership.business
-        return True
+            if business_id:
+                query = query.filter(business__public_id=business_id)
+            if membership_id:
+                query = query.filter(public_id=membership_id)
+            membership = query.get()
+        except (
+            DjangoValidationError,
+            Membership.DoesNotExist,
+            Membership.MultipleObjectsReturned,
+            ValueError,
+        ):
+            context = (_INVALID_BUSINESS, _INVALID_MEMBERSHIP)
+        else:
+            context = (membership.business, membership)
+    else:
+        business = getattr(request, "business", None)
+        membership = getattr(request, "membership", None)
+        if (
+            business is not None
+            and membership is not None
+            and membership.user_id == request.user.pk
+            and membership.business_id == business.pk
+        ):
+            context = (business, membership)
+        else:
+            context = (_INVALID_BUSINESS, _INVALID_MEMBERSHIP)
+
+    request._nexapos_explicit_api_context = context
+    return context
 
 
-class TenantReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [IsAuthenticated, HasBusinessAPIAccess]
+class ExplicitAPIContextMixin:
+    def get_api_business(self, request):
+        return _resolve_explicit_context(request)[0]
+
+    def get_api_membership(self, request):
+        return _resolve_explicit_context(request)[1]
+
+
+class TenantReadOnlyViewSet(ExplicitAPIContextMixin, viewsets.ReadOnlyModelViewSet):
+    permission_classes = [HasSubscriptionModuleAccess]
     lookup_field = "public_id"
-    required_perm = None
+    required_modules = ("pos_core",)
+    required_permission = None
+    access_action = AccessAction.READ
 
     def get_queryset(self):
-        qs = self.base_queryset.for_business(self.request.api_business)
-        if self.required_perm and not self.request.api_membership.has_perm(
-            self.required_perm
-        ):
-            raise PermissionDenied("Missing permission: " + self.required_perm)
-        return qs
+        return self.base_queryset.for_business(self.request.api_business)
 
 
 class ProductViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.ProductSerializer
-    required_perm = "products.view"
+    required_permission = "products.view"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if "tailoring" not in self.request.api_access_context.effective_modules:
+            queryset = queryset.filter(is_tailoring_item=False)
+        return queryset
 
     @property
     def base_queryset(self):
@@ -71,7 +118,7 @@ class ProductViewSet(TenantReadOnlyViewSet):
 
 class CategoryViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.CategorySerializer
-    required_perm = "products.view"
+    required_permission = "products.view"
 
     @property
     def base_queryset(self):
@@ -82,7 +129,7 @@ class CategoryViewSet(TenantReadOnlyViewSet):
 
 class CustomerViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.CustomerSerializer
-    required_perm = "customers.view"
+    required_permission = "customers.view"
 
     @property
     def base_queryset(self):
@@ -93,19 +140,30 @@ class CustomerViewSet(TenantReadOnlyViewSet):
 
 class SaleViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.SaleSerializer
-    required_perm = "sales.view"
+    required_permission = "sales.view"
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().filter(
+            warehouse__business=self.request.api_business,
+        )
         allowed = self.request.api_membership.allowed_branch_ids
         if allowed is None:
             return qs
-        return qs.filter(
-            branch_id__in=allowed,
-            warehouse__business=self.request.api_business,
-        ).filter(
+        return qs.filter(branch_id__in=allowed).filter(
             Q(warehouse__branch_id__in=allowed)
             | Q(warehouse__branch__isnull=True)
+        )
+
+    def has_api_object_scope(self, request, context, obj):
+        if not context.membership.can_access_branch(obj.branch):
+            return False
+        allowed_warehouses = context.membership.allowed_warehouse_ids
+        return (
+            obj.warehouse.business_id == context.business.pk
+            and (
+                allowed_warehouses is None
+                or obj.warehouse_id in allowed_warehouses
+            )
         )
 
     @property
@@ -113,7 +171,8 @@ class SaleViewSet(TenantReadOnlyViewSet):
         from apps.sales.models import Sale
 
         return Sale.objects.exclude(status="draft").prefetch_related(
-            "items").select_related("customer", "branch")
+            "items"
+        ).select_related("customer", "branch", "warehouse")
 
 
 @api_view(["GET"])
@@ -131,15 +190,23 @@ def health(request):
     return Response({"status": "ok" if db_ok else "degraded", "database": db_ok})
 
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated, HasBusinessAPIAccess])
-def me(request):
-    m = request.api_membership
-    return Response({
-        "user": {"email": request.user.email, "name": request.user.full_name},
-        "business": {"name": m.business.name,
-                     "public_id": str(m.business.public_id),
-                     "currency": m.business.currency_code},
-        "role": m.role.name,
-        "permissions": sorted(m.permission_set),
-    })
+class MeView(ExplicitAPIContextMixin, APIView):
+    permission_classes = [HasSubscriptionModuleAccess]
+    required_modules = ("pos_core",)
+    access_action = AccessAction.READ
+
+    def get(self, request):
+        membership = request.api_membership
+        return Response({
+            "user": {
+                "email": request.user.email,
+                "name": request.user.full_name,
+            },
+            "business": {
+                "name": membership.business.name,
+                "public_id": str(membership.business.public_id),
+                "currency": membership.business.currency_code,
+            },
+            "role": membership.role.name,
+            "permissions": sorted(membership.permission_set),
+        })

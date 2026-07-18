@@ -5,8 +5,9 @@
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">Customers</h1>
   <div class="d-flex gap-2 align-items-center">
-    <span class="badge text-bg-light border">Outstanding receivables:
+    {% if credit_access and receivables is not None %}<span class="badge text-bg-light border">Outstanding receivables:
       <strong>{% money receivables symbol=1 %}</strong></span>
+    {% endif %}
     {% if module_capabilities.pos_core.enabled and "customers.export" in business_perms %}
     <div class="btn-group btn-group-sm">
       <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
@@ -33,7 +34,7 @@
     <div class="col-md-3">
       <select name="filter" class="form-select form-select-sm">
         <option value="">All customers</option>
-        <option value="credit" {% if request.GET.filter == "credit" %}selected{% endif %}>With outstanding balance</option>
+        {% if credit_access %}<option value="credit" {% if request.GET.filter == "credit" %}selected{% endif %}>With outstanding balance</option>{% endif %}
         <option value="inactive" {% if request.GET.filter == "inactive" %}selected{% endif %}>Inactive</option>
       </select>
     </div>
@@ -45,9 +46,9 @@
 
 <div class="card"><div class="table-responsive">
   <table class="table table-hover mb-0">
-    <thead><tr><th>Customer</th><th>Code</th><th>Mobile</th>
+    <thead><tr><th>Customer</th><th>Code</th><th>Mobile</th>{% if credit_access %}
       <th class="text-end">Balance owed</th><th class="text-end">Store credit</th>
-      <th class="text-end">Credit limit</th><th>Status</th><th class="w-1"></th></tr></thead>
+      <th class="text-end">Credit limit</th>{% endif %}<th>Status</th><th class="w-1"></th></tr></thead>
     <tbody>
       {% for c in page_obj %}
       <tr>
@@ -55,9 +56,9 @@
           {% if c.is_walk_in %}<span class="badge text-bg-secondary ms-1">Walk-in</span>{% endif %}</td>
         <td class="small">{{ c.code }}</td>
         <td class="small">{{ c.mobile|default:"—" }}</td>
-        <td class="text-end {% if c.balance > 0 %}text-danger fw-semibold{% endif %}">{% money c.balance %}</td>
+        {% if credit_access %}<td class="text-end {% if c.balance > 0 %}text-danger fw-semibold{% endif %}">{% money c.balance %}</td>
         <td class="text-end">{% money c.store_credit %}</td>
-        <td class="text-end text-secondary">{% money c.credit_limit %}</td>
+        <td class="text-end text-secondary">{% money c.credit_limit %}</td>{% endif %}
         <td>{% if c.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
         <td class="text-nowrap">
           {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms and not c.is_walk_in %}
@@ -66,7 +67,7 @@
         </td>
       </tr>
       {% empty %}
-      <tr><td colspan="8"><div class="empty-state"><i class="bi bi-people d-block mb-2"></i>No customers found.</div></td></tr>
+      <tr><td colspan="{% if credit_access %}8{% else %}5{% endif %}"><div class="empty-state"><i class="bi bi-people d-block mb-2"></i>No customers found.</div></td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http import Http404
 from django.urls import reverse
 from django.utils import timezone
 
@@ -441,7 +442,7 @@ class LockedTailoringAdversarialTests(TenantTestCase):
         )
         purchase_count = Purchase.objects.count()
 
-        with self.assertRaisesMessage(ValidationError, "belong to this business"):
+        with self.assertRaises(Http404):
             purchases.create_purchase(
                 business=self.business_a,
                 supplier=supplier_b,

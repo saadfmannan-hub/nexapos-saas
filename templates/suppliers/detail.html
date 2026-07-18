@@ -5,28 +5,33 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">{{ supplier.name }}</h1>
   <div class="d-flex gap-2">
-    {% if "purchases.manage" in business_perms %}
+    {% if purchases_access and module_capabilities.purchases.can_write and "purchases.manage" in business_perms %}
     <a href="{% url 'purchases:create' %}" class="btn btn-outline-primary btn-sm"><i class="bi bi-bag-plus"></i> New purchase</a>
     {% endif %}
-    {% if "suppliers.manage" in business_perms %}
+    {% if module_capabilities.suppliers.can_write and "suppliers.manage" in business_perms %}
     <a href="{% url 'suppliers:edit' supplier.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
     {% endif %}
   </div>
 </div>
 
 <div class="row g-3 mb-3">
+  {% if purchases_access %}
   <div class="col-md-4"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Total purchases</div><div class="kpi-value">{% money stats.total %}</div>
   </div></div></div>
   <div class="col-md-4"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Total paid</div><div class="kpi-value">{% money stats.paid %}</div>
   </div></div></div>
+  {% endif %}
   <div class="col-md-4"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Outstanding payable</div>
+    {% if show_business_balance %}
     <div class="kpi-value {% if supplier.balance > 0 %}text-danger{% endif %}">{% money supplier.balance %}</div>
+    {% else %}<div class="small text-secondary">Business-wide balance hidden for branch-restricted access.</div>{% endif %}
   </div></div></div>
 </div>
 
+{% if purchases_access %}
 <div class="card mb-3"><div class="card-body py-2">
   <form class="row g-2 align-items-center" method="get">
     <div class="col-md-3"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
@@ -91,4 +96,13 @@
     </div></div>
   </div>
 </div>
+{% else %}
+<div class="card"><div class="card-header">Contact</div><div class="card-body small">
+  <div><i class="bi bi-person me-2"></i>{{ supplier.contact_person|default:"-" }}</div>
+  <div><i class="bi bi-telephone me-2"></i>{{ supplier.mobile|default:"-" }}</div>
+  <div><i class="bi bi-envelope me-2"></i>{{ supplier.email|default:"-" }}</div>
+  <div><i class="bi bi-geo-alt me-2"></i>{{ supplier.address|default:"-" }}</div>
+  {% if supplier.payment_terms %}<div><i class="bi bi-calendar me-2"></i>{{ supplier.payment_terms }}</div>{% endif %}
+</div></div>
+{% endif %}
 {% endblock %}

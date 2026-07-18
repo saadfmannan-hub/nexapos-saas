@@ -56,37 +56,99 @@ def protected_media(request, path):
     """
     if not request.user.is_authenticated:
         raise Http404
-    full_path = Path(settings.MEDIA_ROOT) / path
+    media_root = Path(settings.MEDIA_ROOT).resolve()
+    full_path = media_root / path
     try:
         full_path = full_path.resolve()
-        full_path.relative_to(Path(settings.MEDIA_ROOT).resolve())
+        normalized = full_path.relative_to(media_root).as_posix()
     except (ValueError, OSError):
-        raise Http404
+        raise Http404 from None
     if not full_path.is_file():
         raise Http404
 
     # Tenant ownership check for sensitive folders
-    sensitive_prefixes = ("expenses/", "purchases/")
-    normalized = path.replace("\\", "/")
-    if normalized.startswith(sensitive_prefixes):
+    normalized_kind = normalized.casefold()
+    force_attachment = False
+    if normalized_kind.startswith(("expenses/", "purchases/")):
         business = getattr(request, "business", None)
         if business is None:
             raise Http404
-        from apps.expenses.models import Expense
-        from apps.purchases.models import Purchase
+        if normalized_kind.startswith("expenses/"):
+            from apps.expenses.models import Expense
+            from apps.subscriptions.access import AccessAction, evaluate_access
 
-        owned = (
-            Expense.objects.for_business(business).filter(
-                attachment=normalized).exists()
-            or Purchase.objects.for_business(business).filter(
-                attachment=normalized).exists()
-        )
-        if not owned:
-            raise Http404
+            expense = (
+                Expense.objects.for_business(business)
+                .select_related("branch")
+                .filter(attachment=normalized, branch__business=business)
+                .first()
+            )
+            decision = evaluate_access(
+                request,
+                "expenses",
+                permission_code="expenses.view",
+                action=AccessAction.READ,
+            )
+            if expense is None or not decision.allowed:
+                raise Http404
+            allowed_branches = decision.context.membership.allowed_branch_ids
+            if (
+                allowed_branches is not None
+                and expense.branch_id not in allowed_branches
+            ):
+                raise Http404
+            force_attachment = True
+        else:
+            from django.db.models import F, Q
+
+            from apps.purchases.models import Purchase
+            from apps.subscriptions.access import AccessAction, evaluate_access
+
+            purchase = (
+                Purchase.objects.for_business(business)
+                .select_related("supplier", "branch", "warehouse")
+                .filter(
+                    attachment=normalized,
+                    supplier__business=business,
+                    branch__business=business,
+                    warehouse__business=business,
+                )
+                .filter(
+                    Q(warehouse__branch_id=F("branch_id"))
+                    | Q(warehouse__branch__isnull=True)
+                )
+                .first()
+            )
+            decision = evaluate_access(
+                request,
+                "purchases",
+                permission_code="purchases.view",
+                action=AccessAction.READ,
+            )
+            if purchase is None or not decision.allowed:
+                raise Http404
+            membership = decision.context.membership
+            allowed_branches = membership.allowed_branch_ids
+            allowed_warehouses = membership.allowed_warehouse_ids
+            if (
+                allowed_branches is not None
+                and purchase.branch_id not in allowed_branches
+            ) or (
+                allowed_warehouses is not None
+                and purchase.warehouse_id not in allowed_warehouses
+            ):
+                raise Http404
+            force_attachment = True
 
     content_type, _ = mimetypes.guess_type(str(full_path))
-    return FileResponse(open(full_path, "rb"),
-                        content_type=content_type or "application/octet-stream")
+    response = FileResponse(
+        open(full_path, "rb"),
+        content_type=content_type or "application/octet-stream",
+        as_attachment=force_attachment,
+        filename=full_path.name if force_attachment else "",
+    )
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def error_400(request, exception=None):

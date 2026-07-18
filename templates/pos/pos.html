@@ -273,7 +273,7 @@
         <div class="d-flex justify-content-between fs-5 fw-bold border-top pt-2 mt-1">
           <span>Grand Total</span><span><span x-text="fmt(totals.total)"></span> {{ currency }}</span>
         </div>
-        <div class="d-flex align-items-center justify-content-between gap-2 my-2">
+        {% if tailoring_enabled %}<div class="d-flex align-items-center justify-content-between gap-2 my-2">
           <label class="form-label mb-0 required-star" for="orderPriority">Priority</label>
           <select id="orderPriority" class="form-select form-select-sm pos-priority-select"
                   x-model="priority" required>
@@ -281,7 +281,7 @@
             <option value="high">High</option>
             <option value="urgent">Urgent</option>
           </select>
-        </div>
+        </div>{% endif %}
         <input type="text" class="form-control form-control-sm my-2" placeholder="Sale notes…" x-model="notes">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" @click="holdSale()" :disabled="!cart.length" title="Hold (F7)">
@@ -318,7 +318,7 @@
             <div class="small text-secondary" x-show="customer.store_credit > 0">
               Store credit available: <strong x-text="fmt(customer.store_credit)"></strong>
             </div>
-            <div class="mt-2">
+            {% if tailoring_enabled %}<div class="mt-2">
               <label class="form-label small mb-1" for="deliveryDate">
                 <i class="bi bi-truck me-1"></i>Delivery date
                 <span class="text-danger" x-show="requiresDelivery">*</span>
@@ -326,7 +326,7 @@
               <input id="deliveryDate" type="date" class="form-control form-control-sm"
                      x-model="deliveryDate" min="{{ today|date:'Y-m-d' }}" :required="requiresDelivery">
               <div class="form-text" x-show="requiresDelivery">Required for tailoring bookings.</div>
-            </div>
+            </div>{% endif %}
           </div>
           <div class="col-md-7">
             <template x-for="(p, i) in payments" :key="i">
@@ -334,6 +334,7 @@
                 <select class="form-select form-select-sm" x-model="p.method_id" style="max-width:170px">
                   {% for m in payment_methods %}
                     {% if m.kind == "customer_credit" %}{% if can_credit %}<option value="{{ m.id }}">{{ m.name }}</option>{% endif %}
+                    {% elif m.kind == "store_credit" %}{% if credit_module_write %}<option value="{{ m.id }}">{{ m.name }}</option>{% endif %}
                     {% else %}<option value="{{ m.id }}">{{ m.name }}</option>{% endif %}
                   {% endfor %}
                 </select>

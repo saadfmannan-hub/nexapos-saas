@@ -2,6 +2,7 @@
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.exceptions import FieldDoesNotExist
@@ -724,7 +725,18 @@ class PosUiAndContractTests(TenantTestCase):
             delivery_date=timezone.localdate(),
             priority=Sale.Priority.HIGH,
         )
-        self.assertTrue(ProductSerializer(self.product_a).data["is_tailoring_item"])
-        data = SaleSerializer(sale).data
+        context = {
+            "request": SimpleNamespace(
+                api_access_context=SimpleNamespace(
+                    effective_modules=frozenset({"tailoring"})
+                )
+            )
+        }
+        self.assertTrue(
+            ProductSerializer(self.product_a, context=context).data[
+                "is_tailoring_item"
+            ]
+        )
+        data = SaleSerializer(sale, context=context).data
         self.assertEqual(data["priority"], "high")
         self.assertEqual(data["items"][0]["garment_classification"], "child")

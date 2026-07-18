@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 from django.urls import reverse
 from django.utils import timezone
@@ -257,22 +258,39 @@ class LockedTailoringReportsApiTests(TenantTestCase):
     def test_internal_sale_serializer_exposes_meter_and_historical_null(self):
         sale, _item = self.sale_item("LOCK-API-001", meter=D("3.125"))
         historical_sale, _item = self.sale_item("LOCK-API-LEGACY", meter=None)
+        context = {
+            "request": SimpleNamespace(
+                api_access_context=SimpleNamespace(
+                    effective_modules=frozenset({"tailoring"})
+                )
+            )
+        }
 
         self.assertEqual(
-            SaleSerializer(sale).data["items"][0]["fabric_meter_used"],
+            SaleSerializer(sale, context=context).data["items"][0]["fabric_meter_used"],
             "3.125",
         )
         self.assertIsNone(
-            SaleSerializer(historical_sale).data["items"][0]["fabric_meter_used"]
+            SaleSerializer(historical_sale, context=context).data["items"][0][
+                "fabric_meter_used"
+            ]
         )
 
     def test_internal_sale_item_serializer_validates_meter_decimal(self):
         _sale, item = self.sale_item("LOCK-API-VALIDATE", meter=D("3.125"))
+        context = {
+            "request": SimpleNamespace(
+                api_access_context=SimpleNamespace(
+                    effective_modules=frozenset({"tailoring"})
+                )
+            )
+        }
 
         valid = SaleItemSerializer(
             item,
             data={"fabric_meter_used": "3.500"},
             partial=True,
+            context=context,
         )
         self.assertTrue(valid.is_valid(), valid.errors)
         self.assertEqual(valid.validated_data["fabric_meter_used"], D("3.500"))
@@ -283,6 +301,7 @@ class LockedTailoringReportsApiTests(TenantTestCase):
                     item,
                     data={"fabric_meter_used": value},
                     partial=True,
+                    context=context,
                 )
                 self.assertFalse(invalid.is_valid())
                 self.assertIn("fabric_meter_used", invalid.errors)

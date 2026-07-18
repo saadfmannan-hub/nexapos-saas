@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from apps.subscriptions.access import AccessAction, require_actor_access
+from apps.subscriptions.exceptions import ModuleAccessDenied
 
 from .models import Brand, Category, Product, ProductVariant, TaxRate, Unit
 
@@ -128,6 +129,22 @@ def _require_product_write(*, business, user, permission_code,
     )
 
 
+def _require_tailoring_product_write(
+    *, business, user, permission_code, membership=None, request=None
+):
+    """Authorize a mutation whose canonical target is Tailoring-specific."""
+
+    return require_actor_access(
+        user,
+        business,
+        "tailoring",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+
+
 @transaction.atomic
 def save_product(*, product, business, user, membership=None, request=None):
     """Persist a basic product only after central POS Core authorization."""
@@ -170,6 +187,7 @@ def save_product(*, product, business, user, membership=None, request=None):
     if product.pk:
         canonical_product = (
             Product.objects.select_for_update()
+            .select_related("unit")
             .filter(pk=product.pk, business=business)
             .first()
         )
@@ -182,9 +200,39 @@ def save_product(*, product, business, user, membership=None, request=None):
                 request=request,
                 scope_allowed=False,
             )
+        target_is_meter = bool(product.unit_id and product.unit.is_meter)
+        preserves_legacy_meter_retail = bool(
+            canonical_product.unit_id
+            and canonical_product.unit.is_meter
+            and not canonical_product.is_tailoring_item
+            and target_is_meter
+            and not product.is_tailoring_item
+        )
+        if (
+            canonical_product.is_tailoring_item
+            or product.is_tailoring_item
+            or (target_is_meter and not preserves_legacy_meter_retail)
+        ):
+            _require_tailoring_product_write(
+                business=business,
+                user=user,
+                permission_code="products.manage",
+                membership=membership,
+                request=request,
+            )
         for field_name in PRODUCT_FORM_FIELDS:
             setattr(canonical_product, field_name, getattr(product, field_name))
         product = canonical_product
+    elif product.is_tailoring_item or (
+        product.unit_id and product.unit.is_meter
+    ):
+        _require_tailoring_product_write(
+            business=business,
+            user=user,
+            permission_code="products.manage",
+            membership=membership,
+            request=request,
+        )
     product.business = business
     product.save()
     return product
@@ -214,6 +262,14 @@ def save_variant(*, variant, product, user, membership=None, request=None):
             membership=membership,
             request=request,
             scope_allowed=False,
+        )
+    if canonical_product.is_tailoring_item:
+        _require_tailoring_product_write(
+            business=business,
+            user=user,
+            permission_code="products.manage",
+            membership=membership,
+            request=request,
         )
     if variant.business_id not in (None, business.id) or variant.product_id not in (
         None, canonical_product.id
@@ -310,6 +366,14 @@ def delete_product_if_safe(product, *, user, membership=None, request=None):
             request=request,
             scope_allowed=False,
         )
+    if canonical_product.is_tailoring_item:
+        _require_tailoring_product_write(
+            business=business,
+            user=user,
+            permission_code="products.delete",
+            membership=membership,
+            request=request,
+        )
     refs = product_history_refs(canonical_product)
     if refs:
         raise ProductInUse(
@@ -344,6 +408,14 @@ def archive_product(*, product, user, membership=None, request=None):
             request=request,
             scope_allowed=False,
         )
+    if canonical_product.is_tailoring_item:
+        _require_tailoring_product_write(
+            business=business,
+            user=user,
+            permission_code="products.archive",
+            membership=membership,
+            request=request,
+        )
     canonical_product.is_archived = True
     canonical_product.is_active = False
     canonical_product.save(
@@ -375,6 +447,14 @@ def restore_product(product, *, user, membership=None, request=None):
             membership=membership,
             request=request,
             scope_allowed=False,
+        )
+    if canonical_product.is_tailoring_item:
+        _require_tailoring_product_write(
+            business=business,
+            user=user,
+            permission_code="products.archive",
+            membership=membership,
+            request=request,
         )
     canonical_product.is_archived = False
     canonical_product.is_active = True
@@ -553,6 +633,8 @@ def product_export_dataset(
 
     qs = Product.objects.for_business(business).select_related(
         "category", "brand", "unit")
+    if not filters.get("include_tailoring", True):
+        qs = qs.filter(is_tailoring_item=False)
 
     if filters.get("category_id"):
         qs = qs.filter(category_id=filters["category_id"])
@@ -637,6 +719,7 @@ def product_export_dataset(
     return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
 
 
+@transaction.atomic
 def import_products(
     *, business, rows, match_by, user, allowed_warehouse_ids=None,
     membership=None, request=None,
@@ -784,16 +867,6 @@ def import_products(
                 r.get("warehouse", ""),
                 allowed_warehouse_ids=effective_warehouse_ids,
             )
-            category = None
-            if r.get("category"):
-                category, _ = Category.objects.get_or_create(
-                    business=business, name=r["category"][:120], parent=None
-                )
-            brand = None
-            if r.get("brand"):
-                brand, _ = Brand.objects.get_or_create(
-                    business=business, name=r["brand"][:120]
-                )
             unit = None
             if r.get("unit"):
                 unit = Unit.objects.for_business(business).filter(
@@ -834,6 +907,26 @@ def import_products(
                 if is_variant_row and existing is not None
                 else effective_unit and effective_unit.is_meter
             )
+            if is_meter or (existing is not None and existing.is_tailoring_item):
+                _require_tailoring_product_write(
+                    business=business,
+                    user=user,
+                    permission_code="products.import",
+                    membership=context.membership,
+                    request=request,
+                )
+            # Do not create even ancillary catalog rows until the commercial
+            # Tailoring boundary above has authorized a Meter/Tailoring row.
+            category = None
+            if r.get("category"):
+                category, _ = Category.objects.get_or_create(
+                    business=business, name=r["category"][:120], parent=None
+                )
+            brand = None
+            if r.get("brand"):
+                brand, _ = Brand.objects.get_or_create(
+                    business=business, name=r["brand"][:120]
+                )
             tax_rate = None
             if not is_meter:
                 tax_rate = _resolve_tax_rate(
@@ -988,6 +1081,8 @@ def import_products(
                         quantity=opening_stock, unit_cost=purchase_price, user=user,
                     )
                 summary["created"] += 1
+        except ModuleAccessDenied:
+            raise
         except Exception as exc:
             errors.append((idx, str(exc)))
             summary["failed"] += 1

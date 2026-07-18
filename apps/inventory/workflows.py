@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.audit import services as audit
 from apps.core.money import D
+from apps.subscriptions.access import AccessAction, require_actor_access
 
 from . import services
 from .models import (
@@ -71,6 +72,23 @@ def _validate_warehouse(business, warehouse):
         )
 
 
+def _require_tailoring_inventory_write(
+    *, business, products, user, permission_code, membership=None, request=None
+):
+    """Authorize inventory mutations whose canonical products are Tailoring-owned."""
+    if not any(product.is_tailoring_item for product in products):
+        return
+    require_actor_access(
+        user,
+        business,
+        "tailoring",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Transfers
 # ---------------------------------------------------------------------------
@@ -105,6 +123,14 @@ def create_transfer(
     if from_warehouse.pk == to_warehouse.pk:
         raise ValidationError("Transfer warehouses must be different.")
     rows = _lock_inventory_rows(business, rows)
+    _require_tailoring_inventory_write(
+        business=business,
+        products=(row["product"] for row in rows),
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+    )
     if any(D(row.get("quantity")) <= 0 for row in rows):
         raise ValidationError("Transfer quantities must be greater than zero.")
     transfer = StockTransfer.objects.create(
@@ -141,9 +167,18 @@ def dispatch_transfer(*, transfer, user, membership=None, request=None):
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
+    items = list(transfer.items.select_related("product", "variant"))
+    _require_tailoring_inventory_write(
+        business=transfer.business,
+        products=(item.product for item in items),
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+    )
     if transfer.status not in (StockTransfer.Status.DRAFT, StockTransfer.Status.APPROVED):
         raise ValidationError("Transfer cannot be dispatched in its current status.")
-    for item in transfer.items.select_related("product", "variant"):
+    for item in items:
         services.record_movement(
             business=transfer.business, warehouse=transfer.from_warehouse,
             product=item.product, variant=item.variant,
@@ -174,9 +209,18 @@ def receive_transfer(*, transfer, user, membership=None, request=None):
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
+    items = list(transfer.items.select_related("product", "variant"))
+    _require_tailoring_inventory_write(
+        business=transfer.business,
+        products=(item.product for item in items),
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+    )
     if transfer.status != StockTransfer.Status.DISPATCHED:
         raise ValidationError("Only dispatched transfers can be received.")
-    for item in transfer.items.select_related("product", "variant"):
+    for item in items:
         services.record_movement(
             business=transfer.business, warehouse=transfer.to_warehouse,
             product=item.product, variant=item.variant,
@@ -207,9 +251,18 @@ def cancel_transfer(*, transfer, user, membership=None, request=None):
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
+    items = list(transfer.items.select_related("product", "variant"))
+    _require_tailoring_inventory_write(
+        business=transfer.business,
+        products=(item.product for item in items),
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+    )
     if transfer.status == StockTransfer.Status.DISPATCHED:
         # Return goods to source
-        for item in transfer.items.select_related("product", "variant"):
+        for item in items:
             services.record_movement(
                 business=transfer.business, warehouse=transfer.from_warehouse,
                 product=item.product, variant=item.variant,
@@ -262,6 +315,14 @@ def create_adjustment(*, business, warehouse, reason, rows, user, notes="",
     _validate_warehouse(business, warehouse)
     rows = _lock_inventory_rows(
         business, rows, allow_parent_meter_repair=True
+    )
+    _require_tailoring_inventory_write(
+        business=business,
+        products=(row["product"] for row in rows),
+        user=user,
+        permission_code="inventory.adjust",
+        membership=membership,
+        request=request,
     )
     for row in rows:
         product = row["product"]
@@ -334,6 +395,15 @@ def approve_adjustment(*, adjustment, user, membership=None, request=None):
     adjustment = StockAdjustment.objects.select_for_update().get(
         pk=adjustment.pk, business=adjustment.business
     )
+    items = list(adjustment.items.select_related("product", "variant"))
+    _require_tailoring_inventory_write(
+        business=adjustment.business,
+        products=(item.product for item in items),
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+    )
     if adjustment.status != StockAdjustment.Status.PENDING:
         raise ValidationError("Only pending adjustments can be approved.")
     adjustment.status = StockAdjustment.Status.APPROVED
@@ -359,6 +429,15 @@ def reject_adjustment(*, adjustment, user, membership=None, request=None):
     adjustment = StockAdjustment.objects.select_for_update().get(
         pk=adjustment.pk, business=adjustment.business
     )
+    items = list(adjustment.items.select_related("product", "variant"))
+    _require_tailoring_inventory_write(
+        business=adjustment.business,
+        products=(item.product for item in items),
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+    )
     if adjustment.status != StockAdjustment.Status.PENDING:
         raise ValidationError("Only pending adjustments can be rejected.")
     adjustment.status = StockAdjustment.Status.REJECTED
@@ -378,7 +457,7 @@ def start_count(
     *, business, warehouse, user, notes="", membership=None, request=None
 ):
     """Snapshot expected stock for every stocked product in the warehouse."""
-    services.require_inventory_write(
+    inventory_context = services.require_inventory_write(
         business=business,
         user=user,
         permission_code="inventory.count",
@@ -395,6 +474,8 @@ def start_count(
     levels = StockLevel.objects.for_business(business).filter(
         warehouse=warehouse
     ).select_related("product", "variant")
+    if not inventory_context.has_module("tailoring"):
+        levels = levels.filter(product__is_tailoring_item=False)
     for level in levels:
         StockCountItem.objects.create(
             business=business, count=count, product=level.product,
@@ -418,8 +499,24 @@ def approve_count(*, count, user, membership=None, request=None):
     )
     if count.status not in (StockCount.Status.OPEN, StockCount.Status.REVIEW):
         raise ValidationError("This count is not open.")
+    items = list(count.items.select_related("product", "variant"))
+    tailoring_corrections = (
+        item.product
+        for item in items
+        if item.product.is_tailoring_item
+        and item.counted_quantity is not None
+        and item.counted_quantity != item.expected_quantity
+    )
+    _require_tailoring_inventory_write(
+        business=count.business,
+        products=tailoring_corrections,
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+    )
     corrections = 0
-    for item in count.items.select_related("product", "variant"):
+    for item in items:
         if item.counted_quantity is None:
             continue
         variance = item.counted_quantity - item.expected_quantity

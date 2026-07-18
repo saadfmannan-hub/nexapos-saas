@@ -10,6 +10,7 @@ from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import get_access_context
 from apps.subscriptions.decorators import module_permission_required
 
 from . import services, workflows
@@ -81,6 +82,7 @@ def _transfer_scoped(request, queryset):
 
 @module_permission_required("inventory", "inventory.view")
 def stock_list(request):
+    tailoring_enabled = get_access_context(request).has_module("tailoring")
     qs = (
         _warehouse_scoped(
             request,
@@ -90,6 +92,8 @@ def stock_list(request):
         .filter(product__is_archived=False)
         .order_by("product__name")
     )
+    if not tailoring_enabled:
+        qs = qs.filter(product__is_tailoring_item=False)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(product__name__icontains=q) | Q(product__sku__icontains=q) |
@@ -121,6 +125,7 @@ def stock_list(request):
         services.stock_value(
             request.business,
             allowed_warehouse_ids=_allowed_warehouse_ids(request),
+            include_tailoring=tailoring_enabled,
         )
         if show_cost
         else None
@@ -146,6 +151,7 @@ def inventory_export(request):
         request.business,
         filters,
         allowed_warehouse_ids=_allowed_warehouse_ids(request),
+        include_tailoring=get_access_context(request).has_module("tailoring"),
     )
     audit.log("inventory.exported", request=request, module="inventory",
               description=f"Exported {len(data['rows'])} stock rows "
@@ -234,6 +240,8 @@ def movement_list(request):
         StockMovement.objects.for_business(request.business)
         .select_related("product__unit", "variant", "warehouse", "user")
     )
+    if not get_access_context(request).has_module("tailoring"):
+        qs = qs.filter(product__is_tailoring_item=False)
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
         qs = qs.filter(
@@ -275,8 +283,10 @@ def item_search(request):
         Product.objects.for_business(request.business)
         .filter(is_active=True, is_archived=False)
         .filter(Q(name__icontains=q) | Q(sku__icontains=q) | Q(barcode__icontains=q))
-        .prefetch_related("variants")[:15]
     )
+    if not get_access_context(request).has_module("tailoring"):
+        products = products.filter(is_tailoring_item=False)
+    products = products.prefetch_related("variants")[:15]
     results = []
     include_parent_meter_repair = request.GET.get("parent_meter_repair") == "1"
     for p in products:
@@ -542,6 +552,8 @@ def count_detail(request, public_id):
         public_id=public_id,
     )
     items = count.items.select_related("product", "variant").order_by("product__name")
+    if not get_access_context(request).has_module("tailoring"):
+        items = items.filter(product__is_tailoring_item=False)
     if request.method == "POST" and count.status in ("open", "review"):
         action = request.POST.get("action", "save")
         for item in items:

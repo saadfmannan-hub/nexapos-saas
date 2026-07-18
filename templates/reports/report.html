@@ -84,13 +84,13 @@
         {% for product in products %}<option value="{{ product.id }}" {% if filters.product_id == product.id %}selected{% endif %}>{{ product.name }}</option>{% endfor %}
       </select>
     </div>
-    <div class="col-auto">
+    {% if filters.tailoring_enabled %}<div class="col-auto">
       <select name="garment_classification" class="form-select form-select-sm">
         <option value="">All garment classifications</option>
         <option value="adult" {% if filters.garment_classification == "adult" %}selected{% endif %}>Adult</option>
         <option value="child" {% if filters.garment_classification == "child" %}selected{% endif %}>Child</option>
       </select>
-    </div>
+    </div>{% endif %}
     {% endif %}
     <div class="col-auto"><button class="btn btn-sm btn-primary">Apply</button>
       <a href="{% url 'reports:view' key %}" class="btn btn-sm btn-outline-secondary">Reset</a></div>

@@ -8,7 +8,7 @@ from apps.expenses.services import (
     RecurringExpenseGenerationError,
     ensure_recurring_expenses_for_month,
 )
-from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, evaluate_public_access
 from apps.tenants.models import Business
 
 
@@ -98,12 +98,7 @@ class Command(BaseCommand):
 
     @staticmethod
     def _ineligible_reason(business):
-        if not business.is_active:
-            return "The business is inactive."
-        try:
-            subscriptions.require_operational(business)
-        except subscriptions.SubscriptionInactive as exc:
-            return str(exc)
-        if not subscriptions.has_feature(business, "expenses"):
-            return "The business plan does not include expenses."
-        return ""
+        decision = evaluate_public_access(
+            business, "expenses", action=AccessAction.WRITE
+        )
+        return "" if decision.allowed else decision.denial.message

@@ -217,7 +217,7 @@
       <div class="info-title">Sale Details</div>
       <div class="muted">Branch: {{ sale.branch.name }}</div>
       <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
-      {% if sale.delivery_date %}
+      {% if show_tailoring and sale.delivery_date %}
         <div class="muted">Delivery: {{ sale.delivery_date|date:"d-M-Y" }} ({{ sale.get_delivery_status_display }})</div>
       {% endif %}
     </td>
@@ -243,7 +243,7 @@
       <td>{{ forloop.counter }}</td>
       <td>
         <div class="item-name">{{ item.product_name }}</div>
-        {% if item.is_tailoring_line %}
+        {% if show_tailoring and item.is_tailoring_line %}
         <div class="sku-small">Garment: {{ item.garment_classification_label }}</div>
         <div class="sku-small">Collection: {{ item.collection_type_label }}</div>
         {% endif %}
@@ -328,7 +328,7 @@
         <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
         <tr><td>Refunded</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
         <tr class="emphasis"><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
-        <tr class="emphasis"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>
+        {% if show_credit %}<tr class="emphasis"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>
     </td>

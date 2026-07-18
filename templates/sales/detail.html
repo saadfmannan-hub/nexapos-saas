@@ -16,7 +16,7 @@
     {% if module_capabilities.pos_core.can_write and "sales.refund" in business_perms and sale.status != "voided" %}
       <a href="{% url 'sales:return_create' sale.public_id %}" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Return items</a>
     {% endif %}
-    {% if module_capabilities.pos_core.can_write and "sales.void" in business_perms and sale.status != "voided" and not returns %}
+    {% if module_capabilities.pos_core.can_write and "sales.void" in business_perms and sale.status != "voided" and not has_returns %}
       <button class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#voidModal"><i class="bi bi-x-octagon"></i> Void</button>
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "sales.delete" in business_perms and sale.status == "draft" %}
@@ -41,7 +41,7 @@
           <tr>
             <td>
               {{ item.product_name }}
-              {% if item.is_tailoring_line %}
+              {% if show_tailoring and item.is_tailoring_line %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
                 <div class="small text-secondary">Collection: <span class="fw-semibold text-body">{{ item.collection_type_label }}</span></div>
                 {% if item.fabric_meter_used is not None %}
@@ -66,7 +66,7 @@
             {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
             <td class="text-end">
-              {% if item.is_tailoring_line %}
+              {% if show_tailoring and item.is_tailoring_line %}
                 <a href="{% url 'sales:sale_item_workshop_job_card_pdf' sale.public_id item.id %}"
                    class="btn btn-sm btn-outline-primary" target="_blank">Job Card</a>
                 {% if can_edit_actual_fabric and item.fabric_meter_used is None %}
@@ -121,7 +121,7 @@
         {% if sale.customer.mobile %}<tr><th>Customer Phone</th><td>{{ sale.customer.mobile }}</td></tr>{% endif %}
         <tr><th>Branch</th><td>{{ sale.branch.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ sale.cashier.full_name }}</td></tr>
-        <tr><th>Priority</th><td>{{ sale.get_priority_display }}</td></tr>
+        {% if show_tailoring %}<tr><th>Priority</th><td>{{ sale.get_priority_display }}</td></tr>{% endif %}
         <tr><th>Subtotal</th><td>{% money sale.subtotal %}</td></tr>
         <tr><th>Invoice Discount</th><td>-{% money sale.discount_amount %}</td></tr>
         <tr><th>Discounted Subtotal</th><td>{% money discounted_subtotal %}</td></tr>
@@ -141,7 +141,7 @@
         <tr><th>Refunded</th><td class="text-danger">-{% money sale.refunded_amount %}</td></tr>
         <tr><th>Net Paid</th><td>{% money sale.net_amount_paid %}</td></tr>
         {% endif %}
-        <tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>
+        {% if credit_access %}<tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>{% endif %}
         {% if show_profit %}
         <tr><th>Cost</th><td>{% money sale.total_cost %}</td></tr>
         <tr><th>Gross profit</th><td class="fw-bold text-success">{% money sale.gross_profit %}</td></tr>
@@ -152,7 +152,7 @@
         {% endif %}
       </table>
     </div></div>
-    {% if sale.delivery_date %}
+    {% if show_tailoring and sale.delivery_date %}
     <div class="card mt-3 {% if sale.is_delivery_overdue %}border-danger{% endif %}">
       <div class="card-header"><i class="bi bi-truck me-1"></i>Delivery</div>
       <div class="card-body">
@@ -201,7 +201,7 @@
           <tr class="table-light fw-bold"><td colspan="3">Net paid</td>
             <td class="text-end">{% money sale.net_amount_paid %}</td><td></td></tr>
           {% endif %}
-          {% if sale.balance > 0 %}
+          {% if credit_access and sale.balance > 0 %}
           <tr class="text-danger fw-bold"><td colspan="3">Balance due</td>
             <td class="text-end">{% money sale.balance %}</td><td></td></tr>
           {% endif %}
@@ -210,7 +210,7 @@
       </table></div>
     </div>
 
-    {% if module_capabilities.pos_core.can_write and "customers.payments" in business_perms and sale.balance > 0 and sale.status != "voided" and sale.status != "draft" %}
+    {% if can_collect_credit and sale.balance > 0 and sale.status != "voided" and sale.status != "draft" %}
     <div class="card mt-3 border-primary"><div class="card-header text-primary">Record payment</div>
       <div class="card-body">
         <form method="post" action="{% url 'sales:payment_add' sale.public_id %}">{% csrf_token %}

@@ -6,11 +6,17 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import F
+from django.http import Http404
 
-from apps.core.money import D
-from apps.subscriptions.access import AccessAction, require_actor_access
+from apps.audit import services as audit
+from apps.core.money import D, money
+from apps.subscriptions.access import (
+    AccessAction,
+    evaluate_actor_access,
+    require_actor_access,
+)
 
-from .models import Customer, CustomerGroup
+from .models import Customer, CustomerGroup, CustomerPayment
 
 # Export column order ↔ model field mapping (reused by export + import template)
 BASE_EXPORT_COLUMNS = [
@@ -23,6 +29,10 @@ BASE_IMPORT_COLUMNS = [
     "address", "city", "country", "group", "credit limit",
     "opening balance", "notes", "active",
 ]
+CREDIT_EXPORT_COLUMNS = {
+    "Credit Limit", "Outstanding Balance", "Opening Balance", "Store Credit",
+}
+CREDIT_IMPORT_COLUMNS = {"credit limit", "opening balance"}
 CUSTOM_FIELD_HEADER_WORDS = ("custom", "measurement", "moreoption", "moreoptions")
 
 
@@ -45,14 +55,20 @@ def more_option_values(business, customer):
     return options
 
 
-def export_columns(business):
-    return BASE_EXPORT_COLUMNS + [
+def export_columns(business, *, include_credit=True):
+    columns = BASE_EXPORT_COLUMNS
+    if not include_credit:
+        columns = [column for column in columns if column not in CREDIT_EXPORT_COLUMNS]
+    return columns + [
         option["label"] for option in business.settings.more_option_labels
     ]
 
 
-def import_columns(business):
-    return BASE_IMPORT_COLUMNS + [
+def import_columns(business, *, include_credit=True):
+    columns = BASE_IMPORT_COLUMNS
+    if not include_credit:
+        columns = [column for column in columns if column not in CREDIT_IMPORT_COLUMNS]
+    return columns + [
         option["label"].lower() for option in business.settings.more_option_labels
     ]
 
@@ -158,6 +174,7 @@ def save_customer(*, customer, business, user, membership=None, request=None):
                 scope_allowed=False,
             )
         customer.group = canonical_group
+    credit_limit_changed = customer.pk is None and D(customer.credit_limit) != 0
     if customer.pk:
         canonical_customer = (
             Customer.objects.select_for_update()
@@ -175,9 +192,32 @@ def save_customer(*, customer, business, user, membership=None, request=None):
                 request=request,
                 scope_allowed=False,
             )
+        credit_limit_changed = D(customer.credit_limit) != D(
+            canonical_customer.credit_limit
+        )
+        if credit_limit_changed:
+            require_actor_access(
+                user,
+                business,
+                "customer_credit",
+                permission_code="customers.manage",
+                action=AccessAction.WRITE,
+                membership=membership,
+                request=request,
+            )
         for field_name in CUSTOMER_FORM_FIELDS:
             setattr(canonical_customer, field_name, getattr(customer, field_name))
         customer = canonical_customer
+    elif credit_limit_changed:
+        require_actor_access(
+            user,
+            business,
+            "customer_credit",
+            permission_code="customers.manage",
+            action=AccessAction.WRITE,
+            membership=membership,
+            request=request,
+        )
     customer.business = business
     customer.save()
     return customer
@@ -194,24 +234,174 @@ def apply_store_credit_change(customer_id, delta: Decimal):
     Customer.objects.filter(pk=customer_id).update(store_credit=F("store_credit") + delta)
 
 
+@transaction.atomic
+def record_customer_payment(
+    *,
+    business,
+    customer,
+    amount,
+    payment_method,
+    user,
+    reference="",
+    notes="",
+    shift=None,
+    membership=None,
+    request=None,
+):
+    """Collect a receivable behind Customer Credit and exact actor scope."""
+    from apps.sales.models import PaymentMethod
+    from apps.tenants.models import Business
+
+    canonical_business = (
+        Business.objects.select_for_update(no_key=True)
+        .filter(pk=getattr(business, "pk", None))
+        .first()
+    )
+    if canonical_business is None:
+        raise Http404
+    context = require_actor_access(
+        user,
+        canonical_business,
+        "customer_credit",
+        permission_code="customers.payments",
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+    customer = (
+        Customer.objects.select_for_update()
+        .filter(
+            pk=getattr(customer, "pk", None),
+            business=canonical_business,
+        )
+        .first()
+    )
+    payment_method = (
+        PaymentMethod.objects.select_for_update()
+        .filter(
+            pk=getattr(payment_method, "pk", None),
+            business=canonical_business,
+            is_active=True,
+        )
+        .first()
+    )
+    if customer is None or payment_method is None:
+        raise Http404
+    if payment_method.kind in (
+        PaymentMethod.Kind.CUSTOMER_CREDIT,
+        PaymentMethod.Kind.STORE_CREDIT,
+    ):
+        raise ValidationError("Use a real payment method to collect a balance.")
+
+    if context.membership.allowed_branch_ids is not None:
+        require_actor_access(
+            user,
+            canonical_business,
+            "customer_credit",
+            permission_code="customers.payments",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+
+    branch = None
+    if shift is not None:
+        from apps.registers.models import Shift
+
+        shift = (
+            Shift.objects.select_for_update()
+            .select_related("branch")
+            .filter(
+                pk=getattr(shift, "pk", None),
+                business=canonical_business,
+                cashier=user,
+                status="open",
+            )
+            .first()
+        )
+        if shift is None or not context.membership.can_access_branch(shift.branch):
+            require_actor_access(
+                user,
+                canonical_business,
+                "customer_credit",
+                permission_code="customers.payments",
+                action=AccessAction.WRITE,
+                membership=context.membership,
+                request=request,
+                scope_allowed=False,
+            )
+        branch = shift.branch
+    amount = money(amount)
+    if amount <= 0:
+        raise ValidationError("Payment amount must be positive.")
+    if amount > customer.balance:
+        raise ValidationError(
+            "Payment exceeds the customer's outstanding balance."
+        )
+    number = CustomerPayment.objects.for_business(canonical_business).count() + 1
+    while CustomerPayment.objects.for_business(canonical_business).filter(
+        receipt_number=f"RCV-{number:06d}"
+    ).exists():
+        number += 1
+    payment = CustomerPayment.objects.create(
+        business=canonical_business,
+        receipt_number=f"RCV-{number:06d}",
+        customer=customer,
+        branch=branch,
+        kind=CustomerPayment.Kind.COLLECTION,
+        amount=amount,
+        payment_method=payment_method,
+        reference=str(reference or "")[:120],
+        notes=str(notes or "")[:300],
+        received_by=user,
+        shift=shift,
+    )
+    customer.balance = money(customer.balance - amount)
+    customer.save(update_fields=["balance", "updated_at"])
+    audit.log(
+        "customer.payment",
+        business=canonical_business,
+        user=user,
+        request=request,
+        module="customers",
+        obj=payment,
+        description=(
+            f"Collected {amount} from {customer.full_name} "
+            f"({payment.receipt_number})."
+        ),
+    )
+    return payment
+
+
 # ---------------------------------------------------------------------------
 # Import / export
 # ---------------------------------------------------------------------------
-def export_dataset(business, queryset):
+def export_dataset(business, queryset, *, include_credit=True):
     """Build {columns, rows} for customer export (CSV/XLSX)."""
     rows = []
     option_labels = business.settings.more_option_labels
     for c in queryset.select_related("group"):
         more_values = c.more_options or {}
-        rows.append([
+        row = [
             c.code, c.full_name, c.mobile, c.whatsapp, c.email, c.address,
             c.city, c.country, c.group.name if c.group else "",
-            c.credit_limit, c.balance, c.opening_balance, c.store_credit, c.notes,
-            "Active" if c.is_active else "Inactive",
+        ]
+        if include_credit:
+            row.extend([
+                c.credit_limit, c.balance, c.opening_balance, c.store_credit,
+            ])
+        row.extend([
+            c.notes, "Active" if c.is_active else "Inactive",
             c.created_at.strftime("%Y-%m-%d"),
             *[more_values.get(option["key"], "") for option in option_labels],
         ])
-    return {"columns": export_columns(business), "rows": rows, "totals": None}
+        rows.append(row)
+    return {
+        "columns": export_columns(business, include_credit=include_credit),
+        "rows": rows,
+        "totals": None,
+    }
 
 
 @transaction.atomic
@@ -233,6 +423,15 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
         membership=membership,
         request=request,
     )
+    credit_allowed = evaluate_actor_access(
+        user,
+        business,
+        "customer_credit",
+        permission_code="customers.import",
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    ).allowed
 
     summary = {"imported": 0, "updated": 0, "skipped": 0, "failed": 0}
     errors = []
@@ -240,6 +439,17 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
 
     for idx, raw in enumerate(rows, start=2):  # row 1 = header
         r = normalize_row(raw)
+        if not credit_allowed and any(
+            str(r.get(column, "") or "").strip()
+            for column in CREDIT_IMPORT_COLUMNS
+        ):
+            errors.append((
+                idx,
+                "Customer Credit must be enabled to import credit limits or "
+                "opening balances.",
+            ))
+            summary["failed"] += 1
+            continue
         more_option_columns, used_more_option_columns = _more_option_column_map(
             business, raw)
         unknown_custom_columns = _unknown_custom_columns(
@@ -301,7 +511,14 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
                 continue
             # update mode
             try:
-                _apply_fields(business, existing, r, raw, more_option_columns)
+                _apply_fields(
+                    business,
+                    existing,
+                    r,
+                    raw,
+                    more_option_columns,
+                    include_credit=credit_allowed,
+                )
                 existing.save()
                 summary["updated"] += 1
             except Exception as exc:
@@ -312,7 +529,14 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
             try:
                 customer = Customer(business=business,
                                     code=code or next_customer_code(business))
-                _apply_fields(business, customer, r, raw, more_option_columns)
+                _apply_fields(
+                    business,
+                    customer,
+                    r,
+                    raw,
+                    more_option_columns,
+                    include_credit=credit_allowed,
+                )
                 customer.full_clean(exclude=["public_id"])
                 customer.save()
                 summary["imported"] += 1
@@ -332,7 +556,9 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
     return summary, errors
 
 
-def _apply_fields(business, customer, r, raw, more_option_columns):
+def _apply_fields(
+    business, customer, r, raw, more_option_columns, *, include_credit=True
+):
     customer.full_name = r.get("customer name", customer.full_name)[:160]
     if r.get("mobile"):
         customer.mobile = r["mobile"][:30]
@@ -341,9 +567,9 @@ def _apply_fields(business, customer, r, raw, more_option_columns):
     customer.address = r.get("address", customer.address)[:255]
     customer.city = r.get("city", customer.city)[:100]
     customer.country = r.get("country", customer.country)[:100]
-    if r.get("credit limit"):
+    if include_credit and r.get("credit limit"):
         customer.credit_limit = D(r["credit limit"])
-    if r.get("opening balance"):
+    if include_credit and r.get("opening balance"):
         customer.opening_balance = D(r["opening balance"])
         if not customer.pk:
             customer.balance = customer.opening_balance

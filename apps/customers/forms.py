@@ -15,8 +15,10 @@ class CustomerForm(TenantStyledModelForm):
                   "notes", "is_active"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, include_credit=True, **kwargs):
         super().__init__(business, *args, **kwargs)
+        if not include_credit:
+            self.fields.pop("credit_limit", None)
         self.fields["group"].queryset = CustomerGroup.objects.for_business(business)
         self.fields["group"].required = False
         self.fields["code"].required = False

@@ -6,7 +6,7 @@
   <h1 class="page-title">{{ customer.full_name }}
     {% if not customer.is_active %}<span class="badge badge-status bs-suspended ms-2">Inactive</span>{% endif %}</h1>
   <div class="d-flex gap-2">
-    <a href="{% url 'customers:statement' customer.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> Statement</a>
+    {% if credit_access %}<a href="{% url 'customers:statement' customer.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-file-text"></i> Statement</a>{% endif %}
     {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms and not customer.is_walk_in %}
     <a href="{% url 'customers:edit' customer.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
     {% endif %}
@@ -19,7 +19,7 @@
     <div class="kpi-value">{% money stats.total %}</div>
     <div class="small text-secondary">{{ stats.count|default:0 }} invoice{{ stats.count|pluralize }}</div>
   </div></div></div>
-  <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
+  {% if credit_balance_access %}<div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Outstanding balance</div>
     <div class="kpi-value {% if customer.balance > 0 %}text-danger{% endif %}">{% money customer.balance %}</div>
     <div class="small text-secondary">Credit limit: {% money customer.credit_limit %}</div>
@@ -27,7 +27,7 @@
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Store credit</div>
     <div class="kpi-value text-success">{% money customer.store_credit %}</div>
-  </div></div></div>
+  </div></div></div>{% endif %}
   <div class="col-6 col-lg-3"><div class="card kpi-card"><div class="card-body">
     <div class="kpi-label">Average invoice</div>
     <div class="kpi-value">{% money stats.avg %}</div>
@@ -90,7 +90,7 @@
       </div>
     </div>
     {% endif %}
-    <div class="card">
+    {% if credit_access %}<div class="card">
       <div class="card-header">Payment history</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <tbody>
@@ -103,7 +103,7 @@
           {% empty %}<tr><td class="text-center text-secondary py-3">No payments recorded</td></tr>{% endfor %}
         </tbody>
       </table></div>
-    </div>
+    </div>{% endif %}
     <div class="card mt-3"><div class="card-header">Contact</div><div class="card-body small">
       <div><i class="bi bi-telephone me-2"></i>{{ customer.mobile|default:"—" }}</div>
       <div><i class="bi bi-whatsapp me-2"></i>{{ customer.whatsapp|default:"—" }}</div>

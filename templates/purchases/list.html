@@ -4,7 +4,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <h1 class="page-title">Purchases</h1>
-  {% if "purchases.manage" in business_perms %}
+  {% if module_capabilities.purchases.can_write and "purchases.manage" in business_perms %}
   <a href="{% url 'purchases:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New purchase</a>
   {% endif %}
 </div>

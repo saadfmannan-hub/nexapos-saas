@@ -25,6 +25,27 @@ METER_PARENT_REPAIR_TYPES = {
 }
 
 
+def _require_tailoring_product_write(
+    *,
+    access_context,
+    business,
+    user,
+    product,
+    permission_code,
+    request=None,
+):
+    if product.is_tailoring_item and not access_context.has_module("tailoring"):
+        require_actor_access(
+            user,
+            business,
+            "tailoring",
+            permission_code=permission_code,
+            action=AccessAction.WRITE,
+            membership=access_context.membership,
+            request=request,
+        )
+
+
 class InsufficientStock(ValidationError):
     pass
 
@@ -118,7 +139,7 @@ def record_movement(
     # locked/refreshed product prevents a concurrent edit from changing a
     # Meter parent between caller validation and the ledger write.
     product = (
-        product.__class__.objects.select_for_update()
+        product.__class__.objects.select_for_update(of=("self",))
         .select_related("unit")
         .get(pk=product.pk, business=business)
     )
@@ -237,6 +258,7 @@ def _low_stock_alert(business, product, variant, current):
     )
 
 
+@transaction.atomic
 def set_opening_stock(
     *,
     business,
@@ -249,7 +271,7 @@ def set_opening_stock(
     membership=None,
     request=None,
 ):
-    require_inventory_write(
+    access_context = require_inventory_write(
         business=business,
         user=user,
         permission_code="inventory.adjust",
@@ -257,6 +279,27 @@ def set_opening_stock(
         request=request,
         warehouses=(warehouse,),
         tenant_objects=(product, variant),
+    )
+    from apps.catalog.models import Product, ProductVariant
+
+    product = (
+        Product.objects.select_for_update(of=("self",))
+        .select_related("unit")
+        .get(pk=product.pk, business=business)
+    )
+    if variant is not None:
+        variant = ProductVariant.objects.select_for_update().get(
+            pk=variant.pk,
+            business=business,
+            product=product,
+        )
+    _require_tailoring_product_write(
+        access_context=access_context,
+        business=business,
+        user=user,
+        product=product,
+        permission_code="inventory.adjust",
+        request=request,
     )
     return record_movement(
         business=business, warehouse=warehouse, product=product, variant=variant,
@@ -280,7 +323,13 @@ IMPORT_COLUMNS = [
 IMPORT_MODES = {"add", "replace", "opening", "minimum"}
 
 
-def inventory_export_dataset(business, filters, *, allowed_warehouse_ids=None):
+def inventory_export_dataset(
+    business,
+    filters,
+    *,
+    allowed_warehouse_ids=None,
+    include_tailoring=True,
+):
     """Build {columns, rows} for inventory export (one row per stock level).
 
     Reserved stock is always 0 (no reservation system in v1), so
@@ -294,6 +343,8 @@ def inventory_export_dataset(business, filters, *, allowed_warehouse_ids=None):
     )
     if allowed_warehouse_ids is not None:
         qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
+    if not include_tailoring:
+        qs = qs.filter(product__is_tailoring_item=False)
     if filters.get("warehouse_id"):
         qs = qs.filter(warehouse_id=filters["warehouse_id"])
     if filters.get("branch_id"):
@@ -450,6 +501,14 @@ def import_inventory(
             Product.objects.select_for_update()
             .select_related("unit")
             .get(pk=product.pk, business=business)
+        )
+        _require_tailoring_product_write(
+            access_context=access_context,
+            business=business,
+            user=user,
+            product=product,
+            permission_code="inventory.import",
+            request=request,
         )
         if variant is not None and (
             variant.business_id != business.id
@@ -636,11 +695,19 @@ def import_inventory(
     return summary, errors
 
 
-def stock_value(business, warehouse=None, *, allowed_warehouse_ids=None):
+def stock_value(
+    business,
+    warehouse=None,
+    *,
+    allowed_warehouse_ids=None,
+    include_tailoring=True,
+):
     """Total stock value at average cost."""
     qs = StockLevel.objects.for_business(business).filter(quantity__gt=0)
     if allowed_warehouse_ids is not None:
         qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
+    if not include_tailoring:
+        qs = qs.filter(product__is_tailoring_item=False)
     if warehouse is not None:
         qs = qs.filter(warehouse=warehouse)
     total = ZERO

@@ -2,17 +2,15 @@ from django import forms as django_forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db import IntegrityError, transaction
-from django.db.models import Q
-from django.http import JsonResponse
+from django.db import IntegrityError
+from django.db.models import F, Q
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.audit import services as audit
 from apps.branches.models import Branch, Warehouse
 from apps.catalog.forms import QuickProductForm
-from apps.catalog.models import Product
 from apps.core.date_ranges import (
     business_localdate,
     date_range_querystring,
@@ -21,32 +19,117 @@ from apps.core.date_ranges import (
 from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
-from apps.subscriptions import services as subscriptions
+from apps.subscriptions import services as subscription_services
+from apps.subscriptions.access import (
+    AccessAction,
+    evaluate_access,
+    evaluate_public_access,
+)
+from apps.subscriptions.decorators import module_permission_required
 from apps.suppliers.models import Supplier, SupplierPayment
 
 from . import services
-from .models import Purchase
+from .models import Purchase, PurchaseReturnItem
 
 
 def _purchases_for_request(request, queryset=None):
-    """Scope purchase reads and mutations to assigned branches."""
+    """Scope purchase reads and mutations to assigned branches/warehouses."""
     qs = queryset if queryset is not None else Purchase.objects.all()
-    allowed = request.membership.allowed_branch_ids
-    if allowed is None:
-        return qs
+    allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_branches is not None:
+        qs = qs.filter(branch_id__in=allowed_branches)
+    if allowed_warehouses is not None:
+        qs = qs.filter(warehouse_id__in=allowed_warehouses)
     return qs.filter(
-        branch_id__in=allowed,
+        business=request.business,
+        supplier__business=request.business,
+        branch__business=request.business,
         warehouse__business=request.business,
     ).filter(
-        Q(warehouse__branch_id__in=allowed) | Q(warehouse__branch__isnull=True)
+        Q(warehouse__branch_id=F("branch_id")) | Q(warehouse__branch__isnull=True)
     )
 
 
-@require_permission("purchases.view")
+def _validated_purchase_children(purchase):
+    """Return display children only after strict tenant/relation validation."""
+
+    business_id = purchase.business_id
+    if (
+        purchase.supplier.business_id != business_id
+        or purchase.branch.business_id != business_id
+        or purchase.warehouse.business_id != business_id
+        or purchase.warehouse.branch_id not in (None, purchase.branch_id)
+    ):
+        raise Http404
+
+    items = list(purchase.items.select_related("product", "variant"))
+    for item in items:
+        if (
+            item.business_id != business_id
+            or item.product.business_id != business_id
+            or (
+                item.variant_id is not None
+                and (
+                    item.variant.business_id != business_id
+                    or item.variant.product_id != item.product_id
+                )
+            )
+        ):
+            raise Http404
+
+    payments = list(
+        purchase.payments.select_related("supplier", "payment_method")
+    )
+    for payment in payments:
+        if (
+            payment.business_id != business_id
+            or payment.supplier_id != purchase.supplier_id
+            or payment.supplier.business_id != business_id
+            or (
+                payment.payment_method_id is not None
+                and payment.payment_method.business_id != business_id
+            )
+        ):
+            raise Http404
+
+    returns = list(
+        purchase.purchase_returns.select_related("supplier", "warehouse")
+    )
+    for purchase_return in returns:
+        if (
+            purchase_return.business_id != business_id
+            or purchase_return.supplier_id != purchase.supplier_id
+            or purchase_return.supplier.business_id != business_id
+            or purchase_return.warehouse_id != purchase.warehouse_id
+            or purchase_return.warehouse.business_id != business_id
+        ):
+            raise Http404
+
+    item_ids = {item.pk for item in items}
+    return_ids = {purchase_return.pk for purchase_return in returns}
+    return_items = PurchaseReturnItem.objects.select_related(
+        "purchase_return", "purchase_item"
+    ).filter(
+        Q(purchase_return_id__in=return_ids) | Q(purchase_item_id__in=item_ids)
+    )
+    for return_item in return_items:
+        if (
+            return_item.business_id != business_id
+            or return_item.purchase_return_id not in return_ids
+            or return_item.purchase_item_id not in item_ids
+            or return_item.purchase_item.business_id != business_id
+            or return_item.purchase_item.purchase_id != purchase.pk
+            or not return_item.quantity.is_finite()
+            or return_item.quantity <= 0
+        ):
+            raise Http404
+
+    return items, payments, returns
+
+
+@module_permission_required("purchases", "purchases.view", action=AccessAction.READ)
 def purchase_list(request):
-    if not subscriptions.has_feature(request.business, "purchases"):
-        return render(request, "inventory/feature_locked.html",
-                      {"feature": "Purchases", "active_nav": "purchases"})
     qs = services.with_pending_cheques(
         _purchases_for_request(
             request,
@@ -95,7 +178,7 @@ def _parse_purchase_rows(request):
         try:
             product = Product.objects.for_business(business).get(pk=int(pid))
         except (Product.DoesNotExist, ValueError):
-            raise ValidationError("Invalid product in line items.")
+            raise ValidationError("Invalid product in line items.") from None
         variant = None
         vid = vids[i] if i < len(vids) else ""
         if vid:
@@ -103,7 +186,7 @@ def _parse_purchase_rows(request):
                 variant = ProductVariant.objects.for_business(business).get(
                     pk=int(vid), product=product)
             except (ProductVariant.DoesNotExist, ValueError):
-                raise ValidationError("Invalid variant in line items.")
+                raise ValidationError("Invalid variant in line items.") from None
         if product.is_meter_tailoring and product.has_variants and variant is None:
             raise ValidationError(f"Select a variant/color for {product.name}.")
         qty = D(qtys[i] if i < len(qtys) else 0)
@@ -118,11 +201,10 @@ def _parse_purchase_rows(request):
     return rows
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
 def purchase_create(request):
-    if not subscriptions.has_feature(request.business, "purchases"):
-        messages.warning(request, "Purchases are not included in your plan.")
-        return redirect("dashboard")
     suppliers = Supplier.objects.for_business(request.business).filter(is_active=True)
     warehouses = Warehouse.objects.for_business(request.business).filter(is_active=True)
     branches = Branch.objects.for_business(request.business).filter(is_active=True)
@@ -132,9 +214,11 @@ def purchase_create(request):
         warehouses = warehouses.filter(
             Q(branch_id__in=allowed) | Q(branch__isnull=True)
         )
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_warehouses is not None:
+        warehouses = warehouses.filter(pk__in=allowed_warehouses)
     if request.method == "POST":
         try:
-            subscriptions.require_operational(request.business)
             supplier = get_tenant_object(Supplier, request.business,
                                          pk=request.POST.get("supplier_id"))
             warehouse = get_tenant_object(warehouses, request.business,
@@ -153,17 +237,26 @@ def purchase_create(request):
                 other=D(request.POST.get("other")),
                 notes=request.POST.get("notes", ""),
                 attachment=request.FILES.get("attachment"),
+                membership=request.membership,
                 request=request,
             )
             messages.success(request, f"Purchase {purchase.purchase_number} created.")
             return redirect("purchases:detail", public_id=purchase.public_id)
-        except (ValidationError, django_forms.ValidationError,
-                subscriptions.SubscriptionInactive) as exc:
+        except (ValidationError, django_forms.ValidationError) as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
+    quick_tailoring_enabled = evaluate_access(
+        request,
+        "tailoring",
+        permission_code="products.manage",
+        action=AccessAction.WRITE,
+    ).allowed
     return render(request, "purchases/form.html", {
         "suppliers": suppliers, "warehouses": warehouses, "branches": branches,
         "active_nav": "purchases", "today": timezone.now().date(),
-        "quick_product_form": QuickProductForm(request.business),
+        "quick_product_form": QuickProductForm(
+            request.business,
+            tailoring_enabled=quick_tailoring_enabled,
+        ),
         "can_quick_add_product": request.membership.has_perm("products.manage"),
     })
 
@@ -175,37 +268,41 @@ def _form_errors(form):
     }
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
 @require_permission("products.manage")
 @require_POST
 def quick_add_product(request):
     """Create a standard product for the current purchase without posting stock."""
-    if not subscriptions.has_feature(request.business, "purchases"):
-        return JsonResponse({
-            "ok": False,
-            "errors": {"__all__": ["Purchases are not included in your plan."]},
-        }, status=403)
-
-    form = QuickProductForm(request.business, request.POST)
+    tailoring_enabled = evaluate_access(
+        request,
+        "tailoring",
+        permission_code="products.manage",
+        action=AccessAction.WRITE,
+    ).allowed
+    form = QuickProductForm(
+        request.business,
+        request.POST,
+        tailoring_enabled=tailoring_enabled,
+    )
     if not form.is_valid():
         return JsonResponse(
             {"ok": False, "errors": _form_errors(form)}, status=400,
         )
 
     try:
-        subscriptions.check_limit(request.business, "products")
-        with transaction.atomic():
-            product = form.save(commit=False)
-            product.business = request.business
-            product.product_type = Product.Type.STANDARD
-            if product.unit.is_meter:
-                product.is_tailoring_item = True
-                product.track_inventory = True
-                product.allow_discount = False
-            product.is_active = True
-            product.save()
-    except (subscriptions.LimitExceeded,
-            subscriptions.SubscriptionInactive) as exc:
+        product = services.quick_add_product(
+            business=request.business,
+            form=form,
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
+    except (
+        subscription_services.LimitExceeded,
+        subscription_services.SubscriptionInactive,
+    ) as exc:
         return JsonResponse({
             "ok": False, "errors": {"__all__": [str(exc)]},
         }, status=400)
@@ -215,10 +312,6 @@ def quick_add_product(request):
             "errors": {"sku": ["This SKU is already in use."]},
         }, status=400)
 
-    audit.log(
-        "product.saved", request=request, module="catalog", obj=product,
-        description=f"Product '{product.name}' quick-added from a purchase.",
-    )
     unit_label = product.unit.abbreviation or product.unit.name
     return JsonResponse({
         "ok": True,
@@ -233,7 +326,7 @@ def quick_add_product(request):
     }, status=201)
 
 
-@require_permission("purchases.view")
+@module_permission_required("purchases", "purchases.view", action=AccessAction.READ)
 def purchase_detail(request, public_id):
     purchase = get_tenant_object(
         _purchases_for_request(
@@ -244,13 +337,31 @@ def purchase_detail(request, public_id):
         ),
         request.business, public_id=public_id,
     )
-    items = purchase.items.select_related("product", "variant")
-    payments = purchase.payments.select_related("payment_method")
-    returns = purchase.purchase_returns.all()
+    items, payments, returns = _validated_purchase_children(purchase)
+    manage_decision = evaluate_access(
+        request,
+        "purchases",
+        permission_code="purchases.manage",
+        action=AccessAction.WRITE,
+    )
+    email_decision = evaluate_access(
+        request,
+        "purchases",
+        permission_code="purchases.view",
+        action=AccessAction.WRITE,
+    )
+    supplier_decision = evaluate_access(
+        request,
+        "suppliers",
+        permission_code="suppliers.view",
+        action=AccessAction.READ,
+    )
     return render(request, "purchases/detail.html", {
         "purchase": purchase, "items": items, "payments": payments,
         "returns": returns, "active_nav": "purchases",
-        "can_manage": request.membership.has_perm("purchases.manage"),
+        "can_manage": manage_decision.allowed,
+        "can_email": email_decision.allowed,
+        "can_view_supplier": supplier_decision.allowed,
         "cheque_issue_date_default": business_localdate(request.business),
     })
 
@@ -266,7 +377,10 @@ def _collect_quantities(request, prefix):
     return quantities
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
+@require_POST
 def purchase_receive(request, public_id):
     purchase = get_tenant_object(
         _purchases_for_request(request),
@@ -275,14 +389,15 @@ def purchase_receive(request, public_id):
     )
     if request.method == "POST":
         try:
-            subscriptions.require_operational(request.business)
             services.receive_purchase(
                 purchase=purchase,
                 quantities=_collect_quantities(request, "receive_"),
-                user=request.user, request=request,
+                user=request.user,
+                membership=request.membership,
+                request=request,
             )
             messages.success(request, "Goods received — stock and supplier payable updated.")
-        except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+        except ValidationError as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return redirect("purchases:detail", public_id=public_id)
 
@@ -305,7 +420,9 @@ def _parse_payment_rows(request):
     return rows
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
 @require_POST
 def purchase_pay(request, public_id):
     purchase = get_tenant_object(
@@ -314,23 +431,25 @@ def purchase_pay(request, public_id):
         public_id=public_id,
     )
     try:
-        subscriptions.require_operational(request.business)
         payments = services.record_purchase_payments(
             purchase=purchase,
             rows=_parse_payment_rows(request),
             user=request.user,
+            membership=request.membership,
             request=request,
         )
         messages.success(
             request,
             f"{len(payments)} payment row{'s' if len(payments) != 1 else ''} recorded.",
         )
-    except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+    except ValidationError as exc:
         messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return redirect("purchases:detail", public_id=public_id)
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
 @require_POST
 def purchase_cheque_status(request, public_id, payment_public_id):
     purchase = get_tenant_object(
@@ -345,20 +464,23 @@ def purchase_cheque_status(request, public_id, payment_public_id):
         purchase=purchase,
     )
     try:
-        subscriptions.require_operational(request.business)
         services.update_cheque_status(
             payment=payment,
             status=request.POST.get("status", ""),
             user=request.user,
+            membership=request.membership,
             request=request,
         )
         messages.success(request, "Cheque status updated.")
-    except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+    except ValidationError as exc:
         messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return redirect("purchases:detail", public_id=public_id)
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
+@require_POST
 def purchase_return(request, public_id):
     purchase = get_tenant_object(
         _purchases_for_request(request),
@@ -367,15 +489,15 @@ def purchase_return(request, public_id):
     )
     if request.method == "POST":
         try:
-            subscriptions.require_operational(request.business)
             services.return_purchase(
                 purchase=purchase,
                 quantities=_collect_quantities(request, "return_"),
                 user=request.user, reason=request.POST.get("reason", ""),
+                membership=request.membership,
                 request=request,
             )
             messages.success(request, "Purchase return processed.")
-        except (ValidationError, subscriptions.SubscriptionInactive) as exc:
+        except ValidationError as exc:
             messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return redirect("purchases:detail", public_id=public_id)
 
@@ -388,16 +510,17 @@ PO_SHARE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
 
 
 def _po_context(purchase, **extra):
+    items, _payments, _returns = _validated_purchase_children(purchase)
     return {
         "purchase": purchase,
-        "items": purchase.items.all(),
+        "items": items,
         "business": purchase.business,
         "settings_obj": purchase.business.settings,
         **extra,
     }
 
 
-@require_permission("purchases.view")
+@module_permission_required("purchases", "purchases.view", action=AccessAction.READ)
 def purchase_print(request, public_id):
     purchase = get_tenant_object(
         _purchases_for_request(
@@ -413,7 +536,7 @@ def purchase_print(request, public_id):
     return _render(request, "invoices/purchase_order.html", _po_context(purchase))
 
 
-@require_permission("purchases.view")
+@module_permission_required("purchases", "purchases.view", action=AccessAction.READ)
 def purchase_pdf(request, public_id):
     from django.http import HttpResponse
 
@@ -437,7 +560,7 @@ def purchase_pdf(request, public_id):
     return response
 
 
-@require_permission("purchases.view")
+@module_permission_required("purchases", "purchases.view")
 def purchase_share(request, public_id):
     """Generate (and display) a time-limited signed link the supplier can
     open without an account. The token is unguessable and tenant-bound."""
@@ -473,18 +596,26 @@ def purchase_shared(request, token):
     try:
         data = signing.loads(token, salt=PO_SHARE_SALT, max_age=PO_SHARE_MAX_AGE)
     except signing.BadSignature:
-        raise Http404
+        raise Http404 from None
     try:
         purchase = Purchase.objects.select_related(
             "supplier", "warehouse", "branch", "business"
         ).get(public_id=data.get("po"))
     except (Purchase.DoesNotExist, ValueError):
+        raise Http404 from None
+    if not evaluate_public_access(
+        purchase.business,
+        "purchases",
+        action=AccessAction.READ,
+    ).allowed:
         raise Http404
     return _render(request, "invoices/purchase_order.html",
                    _po_context(purchase, shared_mode=True))
 
 
-@require_permission("purchases.view")
+@module_permission_required(
+    "purchases", "purchases.view", action=AccessAction.WRITE
+)
 def purchase_email(request, public_id):
     """Email the PO PDF to the supplier (or a provided address)."""
     from django.core import signing
@@ -502,6 +633,13 @@ def purchase_email(request, public_id):
     )
     if request.method != "POST":
         return redirect("purchases:detail", public_id=public_id)
+    purchase = services.authorize_purchase_write(
+        purchase=purchase,
+        user=request.user,
+        permission_code="purchases.view",
+        membership=request.membership,
+        request=request,
+    )
     to_email = (request.POST.get("email") or purchase.supplier.email or "").strip()
     if not to_email:
         messages.error(request, "The supplier has no email address — enter one "
@@ -535,7 +673,10 @@ def purchase_email(request, public_id):
     return redirect("purchases:detail", public_id=public_id)
 
 
-@require_permission("purchases.manage")
+@module_permission_required(
+    "purchases", "purchases.manage", action=AccessAction.WRITE
+)
+@require_POST
 def purchase_cancel(request, public_id):
     purchase = get_tenant_object(
         _purchases_for_request(request),
@@ -547,6 +688,7 @@ def purchase_cancel(request, public_id):
             services.cancel_purchase(
                 purchase=purchase,
                 user=request.user,
+                membership=request.membership,
                 request=request,
             )
         except ValidationError as exc:

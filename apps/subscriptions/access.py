@@ -506,6 +506,105 @@ def evaluate_access(
     return AccessDecision(True, context)
 
 
+def evaluate_public_access(
+    business,
+    module_keys: str | tuple[str, ...],
+    *,
+    action: AccessAction | str = AccessAction.READ,
+) -> AccessDecision:
+    """Evaluate current business/module entitlement for an anonymous output.
+
+    Public signed-document routes intentionally have no actor membership or
+    role permission.  They must still re-evaluate the same business,
+    subscription, plan, state, and effective-module rules on every request.
+    Callers should translate every denial to one generic not-found response so
+    public URLs never disclose tenant or subscription state.
+    """
+
+    if business is None or not getattr(business, "is_active", False):
+        denial = _denial(DenialCode.BUSINESS_INACTIVE, "The business is inactive.")
+        return AccessDecision(False, _empty_context(denial, business=business), denial)
+
+    subscription = (
+        Subscription.objects.select_related("plan")
+        .filter(business_id=getattr(business, "pk", None))
+        .first()
+    )
+    if subscription is None:
+        denial = _denial(
+            DenialCode.SUBSCRIPTION_MISSING,
+            "The business does not have a subscription.",
+        )
+        return AccessDecision(False, _empty_context(denial, business=business), denial)
+
+    plan = subscription.plan
+    if not plan.is_active:
+        denial = _denial(DenialCode.PLAN_INACTIVE, "The assigned plan is inactive.")
+        context = _empty_context(
+            denial,
+            business=business,
+            subscription=subscription,
+            plan=plan,
+        )
+        return AccessDecision(False, context, denial)
+
+    mode, mode_denial = _subscription_mode(subscription, plan)
+    if mode == AccessMode.DENIED:
+        context = _empty_context(
+            mode_denial,
+            business=business,
+            subscription=subscription,
+            plan=plan,
+        )
+        return AccessDecision(False, context, mode_denial)
+
+    resolution = calculate_effective_modules(plan)
+    context = AccessContext(
+        mode=mode,
+        effective_modules=resolution.effective_modules,
+        business=business,
+        membership=None,
+        subscription=subscription,
+        plan=plan,
+        denial=None,
+        module_denials=resolution.denials,
+    )
+    modules = _normalize_module_keys(module_keys)
+    if not modules:
+        denial = _denial(
+            DenialCode.UNKNOWN_MODULE,
+            "At least one registered commercial module is required.",
+        )
+        return AccessDecision(False, context, denial)
+
+    resolved_action = _resolve_action(SimpleNamespace(method="GET"), action)
+    if mode == AccessMode.READ_ONLY and resolved_action == AccessAction.WRITE:
+        denial = _denial(
+            DenialCode.SUBSCRIPTION_READ_ONLY,
+            "The subscription currently permits read-only access.",
+        )
+        return AccessDecision(False, context, denial)
+
+    for module_key in modules:
+        definition = get_module_definition(module_key)
+        if definition is None:
+            denial = _denial(
+                DenialCode.UNKNOWN_MODULE,
+                "The requested commercial module is not registered.",
+                module_key=module_key,
+            )
+            return AccessDecision(False, context, denial)
+        if module_key not in context.effective_modules:
+            denial = context.module_denials.get(module_key) or _denial(
+                DenialCode.MODULE_DISABLED,
+                f"{definition.label} is not available.",
+                module_key=module_key,
+            )
+            return AccessDecision(False, context, denial)
+
+    return AccessDecision(True, context)
+
+
 def require_access(*args, **kwargs) -> AccessContext:
     """Evaluate access and raise a structured Django 403 on failure."""
 

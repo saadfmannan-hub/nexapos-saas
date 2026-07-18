@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
+from django.db.models import Q
 
 from apps.core.permissions import PERMISSIONS
 
@@ -61,13 +62,21 @@ class EmployeeForm(forms.Form):
     is_active = forms.BooleanField(required=False, initial=True,
                                    widget=forms.CheckboxInput(attrs={"class": "form-check-input"}))
 
-    def __init__(self, business, *args, editing=None, **kwargs):
+    def __init__(
+        self, business, *args, editing=None, custom_roles_enabled=True, **kwargs
+    ):
         super().__init__(*args, **kwargs)
         from apps.branches.models import Branch
 
         self.business = business
         self.editing = editing  # Membership being edited, or None
-        self.fields["role"].queryset = Role.objects.for_business(business)
+        role_qs = Role.objects.for_business(business)
+        if not custom_roles_enabled:
+            current_role_id = editing.role_id if editing is not None else None
+            role_qs = role_qs.filter(
+                Q(is_system=True) | Q(pk=current_role_id)
+            )
+        self.fields["role"].queryset = role_qs
         self.fields["branches"].queryset = Branch.objects.for_business(business).filter(
             is_active=True
         )

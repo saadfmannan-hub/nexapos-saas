@@ -3,7 +3,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title mb-0">Expenses</h1>
-  {% if can_manage %}
+  {% if module_capabilities.expenses.can_write and can_manage %}
   <a href="{% url 'expenses:categories' %}" class="btn btn-outline-secondary btn-sm">Categories</a>
   {% endif %}
 </div>
@@ -11,7 +11,7 @@
 <section class="mb-4" aria-labelledby="current-expenses-heading">
   <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
     <h2 id="current-expenses-heading" class="h4 mb-0">Current Expenses (Daily Expenses)</h2>
-    {% if can_manage %}
+    {% if module_capabilities.expenses.can_write and can_manage %}
     <a href="{% url 'expenses:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add Current Expense</a>
     {% endif %}
   </div>
@@ -58,6 +58,7 @@
             <td><span class="badge badge-status bs-{{ e.status }}">{{ e.get_status_display }}</span></td>
             <td class="text-end text-nowrap">
               {% if e.attachment %}<a class="btn btn-sm btn-outline-secondary" href="{{ e.attachment.url }}" target="_blank" title="Receipt"><i class="bi bi-paperclip"></i></a>{% endif %}
+              {% if module_capabilities.expenses.can_write %}
               {% if e.status == "submitted" and can_approve %}
               <form class="d-inline" method="post" action="{% url 'expenses:action' e.public_id 'approve' %}">{% csrf_token %}
                 <button class="btn btn-sm btn-success">Approve</button></form>
@@ -65,6 +66,7 @@
                 <button class="btn btn-sm btn-outline-danger">Reject</button></form>
               {% elif e.status == "draft" or e.status == "submitted" %}
               <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:edit' e.public_id %}" title="Edit expense"><i class="bi bi-pencil"></i></a>
+              {% endif %}
               {% endif %}
             </td>
           </tr>
@@ -81,7 +83,7 @@
 <section id="fixed-expenses" aria-labelledby="fixed-expenses-heading">
   <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
     <h2 id="fixed-expenses-heading" class="h4 mb-0">Fixed Expenses (Rent, Phone bills etc)</h2>
-    {% if can_manage %}
+    {% if module_capabilities.expenses.can_write and can_manage %}
     <a href="{% url 'expenses:recurring_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add Fixed Expense</a>
     {% endif %}
   </div>
@@ -105,7 +107,7 @@
             <td class="small text-nowrap">{{ item.end_date|default:"-" }}</td>
             <td>{% if item.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
             <td class="text-end text-nowrap">
-              {% if can_manage %}
+              {% if module_capabilities.expenses.can_write and can_manage %}
               <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:recurring_edit' item.public_id %}" title="Edit fixed expense"><i class="bi bi-pencil"></i></a>
               {% if item.is_active %}
               <form class="d-inline" method="post" action="{% url 'expenses:recurring_action' item.public_id 'archive' %}">{% csrf_token %}

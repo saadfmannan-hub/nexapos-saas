@@ -13,8 +13,9 @@
        class="btn btn-outline-secondary btn-sm"><i class="bi bi-download"></i> PDF</a>
     <a href="{% url 'purchases:share' purchase.public_id %}"
        class="btn btn-outline-secondary btn-sm"><i class="bi bi-link-45deg"></i> Supplier link</a>
-    <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal"
+    {% if can_email %}<button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal"
             data-bs-target="#emailPoModal"><i class="bi bi-envelope"></i> Email</button>
+    {% endif %}
     {% if can_manage and purchase.status == "order" %}
     <form method="post" action="{% url 'purchases:cancel' purchase.public_id %}"
           onsubmit="return confirm('Cancel this purchase order?')">{% csrf_token %}
@@ -24,6 +25,7 @@
 </div>
 
 <!-- Email PO modal -->
+{% if can_email %}
 <div class="modal fade" id="emailPoModal" tabindex="-1">
   <div class="modal-dialog"><div class="modal-content">
     <form method="post" action="{% url 'purchases:email' purchase.public_id %}">{% csrf_token %}
@@ -42,12 +44,14 @@
     </form>
   </div></div>
 </div>
+{% endif %}
 
 <div class="row g-3">
   <div class="col-lg-8">
     <div class="card">
       <div class="card-header">Items {% if can_manage and purchase.status != "received" and purchase.status != "cancelled" %}<span class="small text-secondary">— enter quantities and click Receive</span>{% endif %}</div>
-      <form method="post" action="{% url 'purchases:receive' purchase.public_id %}">{% csrf_token %}
+      {% if can_manage %}<form method="post" action="{% url 'purchases:receive' purchase.public_id %}">{% csrf_token %}
+      {% else %}<div>{% endif %}
       <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
         <thead><tr><th>Item</th><th class="text-end">Ordered</th><th class="text-end">Received</th>
           <th class="text-end">Unit cost</th><th class="text-end">Total</th>
@@ -70,11 +74,11 @@
           {% endfor %}
         </tbody>
       </table></div>
-      {% if can_manage and purchase.status == "order" or purchase.status == "partially_received" %}
+      {% if can_manage %}{% if purchase.status == "order" or purchase.status == "partially_received" %}
       <div class="card-body py-2">
         <button class="btn btn-success btn-sm"><i class="bi bi-box-arrow-in-down"></i> Receive goods</button>
       </div>
-      {% endif %}
+      {% endif %}{% endif %}
       </form>
     </div>
 
@@ -106,7 +110,7 @@
   <div class="col-lg-4">
     <div class="card"><div class="card-header">Summary</div><div class="card-body">
       <table class="table table-sm small mb-0">
-        <tr><th>Supplier</th><td><a href="{% url 'suppliers:detail' purchase.supplier.public_id %}">{{ purchase.supplier.name }}</a></td></tr>
+        <tr><th>Supplier</th><td>{% if can_view_supplier %}<a href="{% url 'suppliers:detail' purchase.supplier.public_id %}">{{ purchase.supplier.name }}</a>{% else %}{{ purchase.supplier.name }}{% endif %}</td></tr>
         <tr><th>Date</th><td>{{ purchase.purchase_date }}</td></tr>
         {% if purchase.due_date %}<tr><th>Due</th><td>{{ purchase.due_date }}</td></tr>{% endif %}
         <tr><th>Warehouse</th><td>{{ purchase.warehouse.name }}</td></tr>
@@ -191,7 +195,7 @@
           <button class="btn btn-primary flex-grow-1">Save payments</button>
         </div>
         <div class="form-text mt-2">Pending cheques are shown separately and do not count as Paid until cleared.</div>
-      </form>
+      {% if can_manage %}</form>{% else %}</div>{% endif %}
       </div>
     </div>
     {% endif %}

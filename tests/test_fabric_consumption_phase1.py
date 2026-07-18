@@ -1,6 +1,7 @@
 import csv
 from decimal import Decimal
 from io import BytesIO, StringIO
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.template.loader import render_to_string
@@ -449,10 +450,17 @@ class FabricConsumptionPhase1Tests(TenantTestCase):
     def test_api_exposes_read_only_fabric_snapshots(self):
         sale = self.tailoring_sale([("child", 1)])
         item = self.record_actual(sale.items.get(), "2.000")
-        product_data = ProductSerializer(self.product_a).data
+        context = {
+            "request": SimpleNamespace(
+                api_access_context=SimpleNamespace(
+                    effective_modules=frozenset({"tailoring"})
+                )
+            )
+        }
+        product_data = ProductSerializer(self.product_a, context=context).data
         self.assertEqual(product_data["estimated_adult_fabric"], "3.500")
         self.assertEqual(product_data["estimated_child_fabric"], "2.250")
-        item_data = SaleSerializer(sale).data["items"][0]
+        item_data = SaleSerializer(sale, context=context).data["items"][0]
         self.assertEqual(item_data["estimated_fabric"], "2.250")
         self.assertEqual(item_data["actual_fabric_used"], "2.000")
         self.assertEqual(item_data["fabric_variance"], "-0.250")

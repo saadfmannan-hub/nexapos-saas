@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
+from django.http import Http404
 from django.urls import reverse
 
 from apps.core.date_ranges import business_localdate
@@ -266,9 +267,7 @@ class SupplierPaymentPhase4ATests(TenantTestCase):
     def test_cross_tenant_payment_method_is_rejected(self):
         purchase = self.make_purchase()
         cash_b = PaymentMethod.objects.for_business(self.business_b).get(kind="cash")
-        with self.assertRaisesMessage(
-            ValidationError, "Invalid payment method for this business.",
-        ):
+        with self.assertRaises(Http404):
             purchases.pay_purchase(
                 purchase=purchase,
                 amount=D("10"),

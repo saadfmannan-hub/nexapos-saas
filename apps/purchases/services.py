@@ -5,28 +5,375 @@ increases when goods are received (the payable follows the received
 value, with the full total recorded on the purchase itself).
 """
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import DecimalField, F, Q, Sum, Value
 from django.db.models.functions import Coalesce
+from django.http import Http404
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from apps.audit import services as audit
+from apps.branches.models import Branch, Warehouse
+from apps.catalog.models import Category, Product, ProductVariant, TaxRate, Unit
 from apps.core.date_ranges import business_localdate
-from apps.core.money import D, money
+from apps.core.money import money
 from apps.inventory import services as inventory
 from apps.sales.models import PaymentMethod
+from apps.subscriptions import services as subscription_services
+from apps.subscriptions.access import AccessAction, require_actor_access
 from apps.suppliers.models import Supplier, SupplierPayment
 
 from .models import Purchase, PurchaseItem, PurchaseReturn, PurchaseReturnItem
 
 ZERO = Decimal("0")
+DECIMAL_FIELD_LIMIT = Decimal("100000000000")
+
+
+def _validated_decimal(value, label):
+    """Parse untrusted numeric input and reject NaN/infinity explicitly."""
+
+    if value is None or value == "":
+        return ZERO
+    if isinstance(value, Decimal):
+        parsed = value
+    else:
+        raw_value = repr(value) if isinstance(value, float) else str(value)
+        try:
+            parsed = Decimal(raw_value)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValidationError(f"{label} must be a valid number.") from exc
+    if not parsed.is_finite():
+        raise ValidationError(f"{label} must be a finite number.")
+    if abs(parsed) >= DECIMAL_FIELD_LIMIT:
+        raise ValidationError(f"{label} is outside the supported range.")
+    return parsed
+
+
+def _validated_money(value, label):
+    try:
+        return money(_validated_decimal(value, label))
+    except InvalidOperation as exc:
+        raise ValidationError(f"{label} must be a valid money amount.") from exc
+
+
+def _validated_date(value, label, *, allow_empty=False):
+    if isinstance(value, date):
+        return value
+    if allow_empty and (value is None or value == ""):
+        return None
+    try:
+        parsed = parse_date(str(value or ""))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError(f"Enter a valid {label}.") from exc
+    if parsed is None:
+        raise ValidationError(f"Enter a valid {label}.")
+    return parsed
+
+
+def _ensure_purchases_scope(
+    context,
+    *,
+    business,
+    branch=None,
+    warehouse=None,
+    tenant_objects=(),
+):
+    membership = context.membership
+    allowed_branches = membership.allowed_branch_ids
+    allowed_warehouses = membership.allowed_warehouse_ids
+    if branch is not None and (
+        branch.business_id != business.pk
+        or (allowed_branches is not None and branch.pk not in allowed_branches)
+    ):
+        raise Http404
+    if warehouse is not None and (
+        warehouse.business_id != business.pk
+        or (allowed_warehouses is not None and warehouse.pk not in allowed_warehouses)
+    ):
+        raise Http404
+    if branch is not None and warehouse is not None and warehouse.branch_id not in (
+        None,
+        branch.pk,
+    ):
+        raise Http404
+    if any(
+        getattr(obj, "business_id", None) != business.pk
+        for obj in tenant_objects
+        if obj is not None
+    ):
+        raise Http404
+
+
+def require_purchases_write(
+    *,
+    business,
+    user,
+    permission_code="purchases.manage",
+    membership=None,
+    request=None,
+    branch=None,
+    warehouse=None,
+    tenant_objects=(),
+    lock_business=False,
+):
+    """Authorize one Purchasing mutation and its tenant/location scope."""
+
+    request_business = getattr(request, "business", None)
+    if request_business is not None and request_business.pk != getattr(
+        business, "pk", None
+    ):
+        raise Http404
+    business_queryset = business.__class__.objects
+    if lock_business:
+        # PostgreSQL NO KEY UPDATE still serializes Phase 2C workflows while
+        # remaining compatible with FK KEY SHARE locks from unrelated inserts.
+        business_queryset = business_queryset.select_for_update(no_key=True)
+    business = business_queryset.filter(pk=business.pk).first()
+    if business is None:
+        raise Http404
+    context = require_actor_access(
+        user,
+        business,
+        "purchases",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        # Critical service guards must not reuse a request-level entitlement
+        # cache after business/subscription state changes concurrently.
+        request=None,
+    )
+    _ensure_purchases_scope(
+        context,
+        business=business,
+        branch=branch,
+        warehouse=warehouse,
+        tenant_objects=tenant_objects,
+    )
+    return context
+
+
+def _business_for_canonical_object(obj, *, user, membership=None, request=None):
+    """Resolve the actor's business without trusting the supplied ORM object.
+
+    Callers pass an object that has already been reloaded canonically.  A
+    request or explicit membership identifies the intended tenant; without
+    either, require an exact active actor/object-business membership before
+    entitlement evaluation.  Cross-tenant object probes therefore remain a
+    not-found result instead of leaking membership state through a 403.
+    """
+
+    request_business = getattr(request, "business", None)
+    if request_business is not None:
+        if request_business.pk != obj.business_id:
+            raise Http404
+        return request_business
+
+    if membership is not None:
+        if (
+            getattr(membership, "user_id", None) != getattr(user, "pk", None)
+            or getattr(membership, "business_id", None) != obj.business_id
+        ):
+            raise Http404
+        return obj.business
+
+    from apps.accounts.models import Membership
+
+    if not Membership.objects.filter(
+        business_id=obj.business_id,
+        user=user,
+        is_active=True,
+    ).exists():
+        raise Http404
+    return obj.business
+
+
+def _authorized_purchase(
+    *,
+    purchase,
+    user,
+    membership=None,
+    request=None,
+    permission_code="purchases.manage",
+    lock=True,
+    lock_business=False,
+):
+    candidate = Purchase.objects.select_related("business").filter(
+        pk=getattr(purchase, "pk", None)
+    ).first()
+    if candidate is None:
+        raise Http404
+    business = _business_for_canonical_object(
+        candidate,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    context = require_purchases_write(
+        business=business,
+        user=user,
+        permission_code=permission_code,
+        membership=membership,
+        request=request,
+        lock_business=lock_business,
+    )
+    business = context.business
+    queryset = Purchase.objects.select_related(
+        "business", "supplier", "branch", "warehouse"
+    )
+    if lock:
+        queryset = queryset.select_for_update(of=("self",))
+    locked_purchase = queryset.filter(
+        pk=candidate.pk,
+        business=business,
+    ).first()
+    if locked_purchase is None:
+        raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=business,
+        branch=locked_purchase.branch,
+        warehouse=locked_purchase.warehouse,
+        tenant_objects=(locked_purchase.supplier,),
+    )
+    return locked_purchase, context
+
+
+def authorize_purchase_write(
+    *,
+    purchase,
+    user,
+    permission_code="purchases.view",
+    membership=None,
+    request=None,
+):
+    """Authorize an unsafe Purchase output action before external effects."""
+
+    authorized_purchase, _context = _authorized_purchase(
+        purchase=purchase,
+        user=user,
+        membership=membership,
+        request=request,
+        permission_code=permission_code,
+        lock=False,
+    )
+    return authorized_purchase
+
+
+def _positive_requested_ids(quantities):
+    requested = set()
+    for item_id, raw_quantity in quantities.items():
+        try:
+            normalized_id = int(item_id)
+            quantity = _validated_decimal(raw_quantity, "Quantity")
+        except (TypeError, ValueError):
+            raise Http404 from None
+        if quantity > 0:
+            requested.add(normalized_id)
+    return requested
+
+
+def _locked_purchase_items(purchase):
+    """Lock and validate every child item, including inconsistent tenants."""
+
+    items = list(
+        PurchaseItem.objects.select_for_update(of=("self",))
+        .select_related("product__unit", "variant")
+        .filter(purchase=purchase)
+        .order_by("pk")
+    )
+    for item in items:
+        if (
+            item.business_id != purchase.business_id
+            or item.product.business_id != purchase.business_id
+            or (
+                item.product.unit_id is not None
+                and item.product.unit.business_id != purchase.business_id
+            )
+            or (
+                item.variant_id is not None
+                and (
+                    item.variant.business_id != purchase.business_id
+                    or item.variant.product_id != item.product_id
+                )
+            )
+        ):
+            raise Http404
+    return items
+
+
+def _locked_purchase_payments(purchase):
+    payments = list(
+        SupplierPayment.objects.select_for_update(of=("self",))
+        .select_related("supplier", "payment_method")
+        .filter(purchase=purchase)
+        .order_by("pk")
+    )
+    for payment in payments:
+        if (
+            payment.business_id != purchase.business_id
+            or payment.supplier_id != purchase.supplier_id
+            or payment.supplier.business_id != purchase.business_id
+            or (
+                payment.payment_method_id is not None
+                and payment.payment_method.business_id != purchase.business_id
+            )
+        ):
+            raise Http404
+    return payments
+
+
+def _locked_returned_quantities(purchase, purchase_items):
+    purchase_returns = list(
+        PurchaseReturn.objects.select_for_update(of=("self",))
+        .select_related("supplier", "warehouse")
+        .filter(purchase=purchase)
+        .order_by("pk")
+    )
+    for purchase_return in purchase_returns:
+        if (
+            purchase_return.business_id != purchase.business_id
+            or purchase_return.supplier_id != purchase.supplier_id
+            or purchase_return.supplier.business_id != purchase.business_id
+            or purchase_return.warehouse_id != purchase.warehouse_id
+            or purchase_return.warehouse.business_id != purchase.business_id
+        ):
+            raise Http404
+
+    item_ids = {item.pk for item in purchase_items}
+    return_ids = {purchase_return.pk for purchase_return in purchase_returns}
+    returned_quantities = {}
+    return_items = list(
+        PurchaseReturnItem.objects.select_for_update(of=("self",))
+        .select_related("purchase_return", "purchase_item")
+        .filter(Q(purchase_return_id__in=return_ids) | Q(purchase_item_id__in=item_ids))
+        .order_by("pk")
+    )
+    for return_item in return_items:
+        if (
+            return_item.business_id != purchase.business_id
+            or return_item.purchase_return_id not in return_ids
+            or return_item.purchase_item_id not in item_ids
+            or return_item.purchase_item.business_id != purchase.business_id
+            or return_item.purchase_item.purchase_id != purchase.pk
+        ):
+            raise Http404
+        quantity = _validated_decimal(
+            return_item.quantity, "Existing purchase return quantity"
+        )
+        if quantity <= 0:
+            raise Http404
+        returned_quantities[return_item.purchase_item_id] = (
+            returned_quantities.get(return_item.purchase_item_id, ZERO) + quantity
+        )
+    return returned_quantities
 
 
 def _next_number(model, business, field, prefix):
+    # Numbered workflows lock Business before any purchase/supplier/product
+    # row, providing one global lock order for the count-based identifier.
     n = model.objects.for_business(business).count() + 1
     while model.objects.for_business(business).filter(**{field: f"{prefix}-{n:06d}"}).exists():
         n += 1
@@ -34,82 +381,251 @@ def _next_number(model, business, field, prefix):
 
 
 @transaction.atomic
+def quick_add_product(
+    *,
+    business,
+    form,
+    user,
+    membership=None,
+    request=None,
+):
+    """Create a standard Product inside an authorized Purchase workflow."""
+
+    context = require_purchases_write(
+        business=business,
+        user=user,
+        membership=membership,
+        request=request,
+        lock_business=True,
+    )
+    business = context.business
+    require_actor_access(
+        user,
+        business,
+        "pos_core",
+        permission_code="products.manage",
+        action=AccessAction.WRITE,
+        membership=context.membership,
+        request=None,
+    )
+    product = form.save(commit=False)
+    category = None
+    if product.category_id is not None:
+        category = Category.objects.select_for_update(no_key=True).filter(
+            pk=product.category_id,
+            business=business,
+            is_active=True,
+        ).first()
+        if category is None:
+            raise Http404
+    unit = Unit.objects.select_for_update(no_key=True).filter(
+        pk=product.unit_id,
+        business=business,
+        is_active=True,
+    ).first()
+    if unit is None:
+        raise Http404
+    tax_rate = None
+    if product.tax_rate_id is not None:
+        tax_rate = TaxRate.objects.select_for_update(no_key=True).filter(
+            pk=product.tax_rate_id,
+            business=business,
+            is_active=True,
+        ).first()
+        if tax_rate is None:
+            raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=business,
+        tenant_objects=(category, unit, tax_rate),
+    )
+    if unit.is_meter:
+        require_actor_access(
+            user,
+            business,
+            "tailoring",
+            permission_code="products.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
+    subscription_services.check_limit(business, "products")
+    product.business = business
+    product.category = category
+    product.brand = None
+    product.unit = unit
+    product.tax_rate = tax_rate
+    product.preferred_supplier = None
+    product.product_type = Product.Type.STANDARD
+    if product.unit.is_meter:
+        product.is_tailoring_item = True
+        product.track_inventory = True
+        product.allow_discount = False
+    product.is_active = True
+    product.save()
+    audit.log(
+        "product.saved",
+        business=business,
+        user=user,
+        request=request,
+        module="catalog",
+        obj=product,
+        description=f"Product '{product.name}' quick-added from a purchase.",
+    )
+    return product
+
+
+@transaction.atomic
 def create_purchase(*, business, supplier, branch, warehouse, rows, user,
                     purchase_date, due_date=None, supplier_invoice_number="",
                     discount=ZERO, shipping=ZERO, other=ZERO, notes="",
-                    attachment=None, request=None):
+                    attachment=None, membership=None, request=None):
     """rows: [{product, variant, quantity, unit_cost}]"""
+    context = require_purchases_write(
+        business=business,
+        user=user,
+        membership=membership,
+        request=request,
+        lock_business=True,
+    )
+    business = context.business
     rows = list(rows)
     if not rows:
         raise ValidationError("Enter at least one purchase item.")
-    if (
-        supplier.business_id != business.id
-        or branch.business_id != business.id
-        or warehouse.business_id != business.id
-        or not supplier.is_active
-        or not branch.is_active
-        or not warehouse.is_active
-    ):
+    supplier = Supplier.objects.select_for_update(no_key=True).filter(
+        pk=getattr(supplier, "pk", None), business=business
+    ).first()
+    branch = Branch.objects.select_for_update(no_key=True).filter(
+        pk=getattr(branch, "pk", None), business=business
+    ).first()
+    warehouse = Warehouse.objects.select_for_update(no_key=True).filter(
+        pk=getattr(warehouse, "pk", None), business=business
+    ).first()
+    if supplier is None or branch is None or warehouse is None:
+        raise Http404
+    if not supplier.is_active or not branch.is_active or not warehouse.is_active:
         raise ValidationError(
             "Purchase supplier and location must be active and belong to this business."
         )
-    if warehouse.branch_id not in (None, branch.id):
-        raise ValidationError("Purchase warehouse must belong to the selected branch.")
-
-    product_model = rows[0]["product"].__class__
-    product_ids = sorted({row["product"].pk for row in rows})
+    requested_product_ids = {
+        getattr(row.get("product"), "pk", None) for row in rows
+    }
+    if None in requested_product_ids:
+        raise Http404
+    product_ids = sorted(requested_product_ids)
     locked_products = {
         product.pk: product
         for product in (
-            product_model.objects.select_for_update()
+            Product.objects.select_for_update(of=("self",), no_key=True)
             .select_related("unit")
             .filter(pk__in=product_ids, business=business)
             .order_by("pk")
         )
     }
-
-    purchase = Purchase.objects.create(
+    if set(locked_products) != set(product_ids):
+        raise Http404
+    variant_ids = {
+        row["variant"].pk
+        for row in rows
+        if row.get("variant") is not None
+    }
+    locked_variants = {
+        variant.pk: variant
+        for variant in ProductVariant.objects.select_for_update(no_key=True).filter(
+            pk__in=variant_ids,
+            business=business,
+        )
+    }
+    if set(locked_variants) != variant_ids:
+        raise Http404
+    _ensure_purchases_scope(
+        context,
         business=business,
-        purchase_number=_next_number(Purchase, business, "purchase_number", "PUR"),
-        supplier=supplier, branch=branch, warehouse=warehouse,
-        supplier_invoice_number=supplier_invoice_number[:60],
-        purchase_date=purchase_date, due_date=due_date,
-        discount_amount=money(discount), shipping_cost=money(shipping),
-        other_charges=money(other), notes=notes, created_by=user,
-        attachment=attachment,
+        branch=branch,
+        warehouse=warehouse,
+        tenant_objects=(supplier, *locked_products.values(), *locked_variants.values()),
     )
+
+    purchase_date = _validated_date(purchase_date, "purchase date")
+    due_date = _validated_date(due_date, "due date", allow_empty=True)
+
+    discount_value = _validated_money(discount, "Discount")
+    shipping_value = _validated_money(shipping, "Shipping cost")
+    other_value = _validated_money(other, "Other charges")
+    if discount_value < 0 or shipping_value < 0 or other_value < 0:
+        raise ValidationError("Purchase adjustments cannot be negative.")
+
+    validated_rows = []
     subtotal = ZERO
     for row in rows:
         product = locked_products.get(row["product"].pk)
-        variant = row.get("variant")
+        variant = (
+            locked_variants.get(row["variant"].pk)
+            if row.get("variant") is not None
+            else None
+        )
         if product is None:
-            raise ValidationError("Invalid product on purchase.")
-        if variant is not None and (
-            variant.business_id != business.id
-            or variant.product_id != product.id
-        ):
-            raise ValidationError("Invalid product variant on purchase.")
-        qty, cost = D(row["quantity"]), money(row.get("unit_cost", 0))
+            raise Http404
+        if variant is not None and variant.product_id != product.id:
+            raise Http404
+        qty = _validated_decimal(row["quantity"], "Purchase quantity")
+        cost = _validated_money(row.get("unit_cost", 0), "Purchase unit cost")
         if qty <= 0:
             raise ValidationError("Purchase quantities must be positive.")
+        if cost < 0:
+            raise ValidationError("Purchase unit costs cannot be negative.")
         if product.is_meter_tailoring and product.has_variants and variant is None:
             raise ValidationError(
                 f"Select a variant/color for {product.name}."
             )
-        line_total = money(qty * cost)
+        line_total = _validated_money(qty * cost, "Purchase line total")
         subtotal += line_total
+        validated_rows.append((product, variant, qty, cost, line_total))
+
+    if any(product.is_tailoring_item for product, *_rest in validated_rows):
+        require_actor_access(
+            user,
+            business,
+            "tailoring",
+            permission_code="purchases.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
+
+    subtotal = _validated_money(subtotal, "Purchase subtotal")
+    total = _validated_money(
+        subtotal - discount_value + shipping_value + other_value,
+        "Purchase total",
+    )
+    if total < 0:
+        raise ValidationError("Purchase total cannot be negative.")
+
+    purchase = Purchase.objects.create(
+        business=business,
+        purchase_number=_next_number(Purchase, business, "purchase_number", "PUR"),
+        supplier=supplier,
+        branch=branch,
+        warehouse=warehouse,
+        supplier_invoice_number=supplier_invoice_number[:60],
+        purchase_date=purchase_date,
+        due_date=due_date,
+        subtotal=subtotal,
+        discount_amount=discount_value,
+        shipping_cost=shipping_value,
+        other_charges=other_value,
+        total=total,
+        notes=notes,
+        created_by=user,
+        attachment=attachment,
+    )
+    for product, variant, qty, cost, line_total in validated_rows:
         PurchaseItem.objects.create(
             business=business, purchase=purchase,
             product=product, variant=variant,
             product_name=str(variant or product)[:240],
             quantity_ordered=qty, unit_cost=cost, line_total=line_total,
         )
-    purchase.subtotal = money(subtotal)
-    purchase.total = money(subtotal - purchase.discount_amount +
-                           purchase.shipping_cost + purchase.other_charges)
-    if purchase.total < 0:
-        raise ValidationError("Purchase total cannot be negative.")
-    purchase.save()
     audit.log("purchase.created", business=business, user=user, request=request,
               module="purchases", obj=purchase,
               description=f"Purchase order {purchase.purchase_number} created "
@@ -118,26 +634,55 @@ def create_purchase(*, business, supplier, branch, warehouse, rows, user,
 
 
 @transaction.atomic
-def receive_purchase(*, purchase, quantities, user, request=None):
+def receive_purchase(
+    *, purchase, quantities, user, membership=None, request=None
+):
     """quantities: {purchase_item_id: qty_to_receive_now}. Partial receiving
     supported; stock and supplier payable increase by the received value."""
-    purchase = (
-        Purchase.objects.select_for_update()
-        .select_related("supplier", "warehouse")
-        .get(pk=purchase.pk, business=purchase.business)
+    purchase, context = _authorized_purchase(
+        purchase=purchase,
+        user=user,
+        membership=membership,
+        request=request,
+        lock_business=True,
     )
     if purchase.status == Purchase.Status.CANCELLED:
         raise ValidationError("Cancelled purchases cannot be received.")
     received_value = ZERO
     any_received = False
-    locked_items = (
-        PurchaseItem.objects.select_for_update()
-        .select_related("product__unit", "variant")
-        .filter(purchase=purchase, business=purchase.business)
-        .order_by("pk")
+    locked_items = _locked_purchase_items(purchase)
+    locked_item_ids = {item.pk for item in locked_items}
+    requested_item_ids = _positive_requested_ids(quantities)
+    if not requested_item_ids.issubset(locked_item_ids):
+        raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=purchase.business,
+        branch=purchase.branch,
+        warehouse=purchase.warehouse,
+        tenant_objects=(
+            purchase.supplier,
+            *(item.product for item in locked_items),
+            *(item.variant for item in locked_items if item.variant is not None),
+        ),
     )
+    if any(
+        item.pk in requested_item_ids and item.product.is_tailoring_item
+        for item in locked_items
+    ):
+        require_actor_access(
+            user,
+            purchase.business,
+            "tailoring",
+            permission_code="purchases.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
     for item in locked_items:
-        qty = D(quantities.get(item.pk, 0))
+        qty = _validated_decimal(
+            quantities.get(item.pk, 0), "Receive quantity"
+        )
         if qty <= 0:
             continue
         if qty > item.quantity_pending:
@@ -168,7 +713,9 @@ def receive_purchase(*, purchase, quantities, user, request=None):
             target.save(update_fields=["purchase_price"])
         item.quantity_received = item.quantity_received + qty
         item.save(update_fields=["quantity_received"])
-        received_value += money(qty * item.unit_cost)
+        received_value += _validated_money(
+            qty * item.unit_cost, "Received value"
+        )
         any_received = True
     if not any_received:
         raise ValidationError("Enter at least one quantity to receive.")
@@ -182,7 +729,10 @@ def receive_purchase(*, purchase, quantities, user, request=None):
     if fully:
         extra = (purchase.shipping_cost + purchase.other_charges
                  - purchase.discount_amount)
-    Supplier.objects.filter(pk=purchase.supplier_id).update(
+    Supplier.objects.filter(
+        pk=purchase.supplier_id,
+        business=purchase.business,
+    ).update(
         balance=F("balance") + received_value + extra
     )
     purchase.status = Purchase.Status.RECEIVED if fully else Purchase.Status.PARTIAL
@@ -225,7 +775,7 @@ def _normalise_payment_row(*, business, row):
     if method not in allowed:
         raise ValidationError("Select Cash, Bank Transfer, Card or Cheque.")
 
-    amount = money(row.get("amount"))
+    amount = _validated_money(row.get("amount"), "Payment amount")
     if amount <= 0:
         raise ValidationError("Payment amount must be greater than zero.")
 
@@ -282,11 +832,24 @@ def _normalise_payment_row(*, business, row):
     payment_method = row.get("payment_method")
     expected_kind = IMMEDIATE_METHOD_KINDS[method]
     if payment_method is not None:
-        if (
-            payment_method.business_id != business.pk
-            or payment_method.kind != expected_kind
-            or not payment_method.is_active
-        ):
+        payment_method_pk = getattr(payment_method, "pk", None)
+        canonical_business_id = (
+            PaymentMethod.objects.filter(pk=payment_method_pk)
+            .values_list("business_id", flat=True)
+            .first()
+        )
+        if canonical_business_id != business.pk:
+            raise Http404
+        payment_method = (
+            PaymentMethod.objects.for_business(business)
+            .filter(
+                pk=payment_method_pk,
+                kind=expected_kind,
+                is_active=True,
+            )
+            .first()
+        )
+        if payment_method is None:
             raise ValidationError("Invalid payment method for this business.")
     else:
         payment_method = (
@@ -304,17 +867,31 @@ def _normalise_payment_row(*, business, row):
 
 
 @transaction.atomic
-def record_purchase_payments(*, purchase, rows, user, request=None):
+def record_purchase_payments(
+    *, purchase, rows, user, membership=None, request=None
+):
     """Record one or more immediate or post-dated purchase payments safely."""
-    locked_purchase = (
-        Purchase.objects.select_for_update()
-        .select_related("supplier")
-        .get(pk=purchase.pk, business=purchase.business)
+    locked_purchase, context = _authorized_purchase(
+        purchase=purchase,
+        user=user,
+        membership=membership,
+        request=request,
+        lock_business=True,
     )
     if locked_purchase.status == Purchase.Status.CANCELLED:
         raise ValidationError("Payments cannot be added to a cancelled purchase.")
-    Supplier.objects.select_for_update().get(
+    _locked_purchase_payments(locked_purchase)
+    locked_supplier = Supplier.objects.select_for_update().filter(
         pk=locked_purchase.supplier_id, business=locked_purchase.business,
+    ).first()
+    if locked_supplier is None:
+        raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=locked_purchase.business,
+        branch=locked_purchase.branch,
+        warehouse=locked_purchase.warehouse,
+        tenant_objects=(locked_supplier,),
     )
 
     normalised_rows = [
@@ -371,17 +948,23 @@ def record_purchase_payments(*, purchase, rows, user, request=None):
         )
 
     if settled_total:
-        Purchase.objects.filter(pk=locked_purchase.pk).update(
+        Purchase.objects.filter(
+            pk=locked_purchase.pk,
+            business=locked_purchase.business,
+        ).update(
             amount_paid=F("amount_paid") + settled_total,
         )
-        Supplier.objects.filter(pk=locked_purchase.supplier_id).update(
+        Supplier.objects.filter(
+            pk=locked_purchase.supplier_id,
+            business=locked_purchase.business,
+        ).update(
             balance=F("balance") - settled_total,
         )
     return created
 
 
 def pay_purchase(*, purchase, amount, method, user, reference="", notes="",
-                 request=None):
+                 membership=None, request=None):
     """Backward-compatible entry point for an immediate supplier payment."""
     kind_to_method = {value: key for key, value in IMMEDIATE_METHOD_KINDS.items()}
     payment_kind = kind_to_method.get(getattr(method, "kind", None))
@@ -397,20 +980,74 @@ def pay_purchase(*, purchase, amount, method, user, reference="", notes="",
             "notes": notes,
         }],
         user=user,
+        membership=membership,
         request=request,
     )[0]
 
 
 @transaction.atomic
-def update_cheque_status(*, payment, status, user, request=None):
-    locked_payment = (
-        SupplierPayment.objects.select_for_update()
-        .select_related("purchase", "supplier")
-        .get(pk=payment.pk, business=payment.business)
+def update_cheque_status(
+    *, payment, status, user, membership=None, request=None
+):
+    candidate = (
+        SupplierPayment.objects.select_related("business")
+        .filter(pk=getattr(payment, "pk", None))
+        .first()
     )
-    if not locked_payment.is_cheque or locked_payment.purchase_id is None:
+    if candidate is None:
+        raise Http404
+    business = _business_for_canonical_object(
+        candidate,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    context = require_purchases_write(
+        business=business,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    business = context.business
+    if not candidate.is_cheque or candidate.purchase_id is None:
         raise ValidationError("Only purchase cheques have a cheque status.")
 
+    purchase = (
+        Purchase.objects.select_for_update(of=("self",))
+        .select_related("supplier", "branch", "warehouse")
+        .filter(pk=candidate.purchase_id, business=business)
+        .first()
+    )
+    if purchase is None:
+        raise Http404
+    locked_payment = (
+        SupplierPayment.objects.select_for_update(of=("self",))
+        .select_related("supplier")
+        .filter(
+            pk=candidate.pk,
+            business=business,
+            purchase=purchase,
+        )
+        .first()
+    )
+    if locked_payment is None:
+        raise Http404
+    supplier = Supplier.objects.select_for_update().filter(
+        pk=locked_payment.supplier_id, business=business,
+    ).first()
+    if (
+        supplier is None
+        or purchase.supplier_id != supplier.pk
+        or locked_payment.supplier_id != purchase.supplier_id
+    ):
+        raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=business,
+        branch=purchase.branch,
+        warehouse=purchase.warehouse,
+        tenant_objects=(purchase.supplier, supplier),
+    )
     allowed = {choice for choice, _label in SupplierPayment.ChequeStatus.choices}
     if status not in allowed:
         raise ValidationError("Invalid cheque status.")
@@ -421,18 +1058,14 @@ def update_cheque_status(*, payment, status, user, request=None):
         raise ValidationError("This cheque status can no longer be changed.")
     if status == SupplierPayment.ChequeStatus.PENDING:
         raise ValidationError("The cheque is already Pending.")
-
-    purchase = Purchase.objects.select_for_update().get(
-        pk=locked_payment.purchase_id, business=locked_payment.business,
-    )
-    Supplier.objects.select_for_update().get(
-        pk=locked_payment.supplier_id, business=locked_payment.business,
-    )
     if status == SupplierPayment.ChequeStatus.CLEARED:
-        Purchase.objects.filter(pk=purchase.pk).update(
+        Purchase.objects.filter(pk=purchase.pk, business=business).update(
             amount_paid=F("amount_paid") + locked_payment.amount,
         )
-        Supplier.objects.filter(pk=locked_payment.supplier_id).update(
+        Supplier.objects.filter(
+            pk=locked_payment.supplier_id,
+            business=business,
+        ).update(
             balance=F("balance") - locked_payment.amount,
         )
         locked_payment.cleared_at = timezone.now()
@@ -457,31 +1090,43 @@ def update_cheque_status(*, payment, status, user, request=None):
 
 
 @transaction.atomic
-def return_purchase(*, purchase, quantities, user, reason="", request=None):
+def return_purchase(
+    *, purchase, quantities, user, reason="", membership=None, request=None
+):
     """quantities: {purchase_item_id: qty_to_return}. Reduces stock and
     supplier payable."""
-    purchase = (
-        Purchase.objects.select_for_update()
-        .select_related("supplier", "warehouse")
-        .get(pk=purchase.pk, business=purchase.business)
+    purchase, context = _authorized_purchase(
+        purchase=purchase,
+        user=user,
+        membership=membership,
+        request=request,
+        lock_business=True,
     )
     items = []
     total = ZERO
-    locked_items = (
-        PurchaseItem.objects.select_for_update()
-        .select_related("product__unit", "variant")
-        .filter(purchase=purchase, business=purchase.business)
-        .order_by("pk")
+    locked_items = _locked_purchase_items(purchase)
+    locked_item_ids = {item.pk for item in locked_items}
+    if not _positive_requested_ids(quantities).issubset(locked_item_ids):
+        raise Http404
+    _ensure_purchases_scope(
+        context,
+        business=purchase.business,
+        branch=purchase.branch,
+        warehouse=purchase.warehouse,
+        tenant_objects=(
+            purchase.supplier,
+            *(item.product for item in locked_items),
+            *(item.variant for item in locked_items if item.variant is not None),
+        ),
     )
+    returned_quantities = _locked_returned_quantities(purchase, locked_items)
     for item in locked_items:
-        qty = D(quantities.get(item.pk, 0))
+        qty = _validated_decimal(
+            quantities.get(item.pk, 0), "Return quantity"
+        )
         if qty <= 0:
             continue
-        already_returned = (
-            PurchaseReturnItem.objects.for_business(purchase.business)
-            .filter(purchase_item=item)
-            .aggregate(t=Sum("quantity"))["t"] or ZERO
-        )
+        already_returned = returned_quantities.get(item.pk, ZERO)
         returnable = item.quantity_received - already_returned
         if qty > returnable:
             raise ValidationError(
@@ -489,9 +1134,19 @@ def return_purchase(*, purchase, quantities, user, reason="", request=None):
                 f"{returnable} were received and not yet returned."
             )
         items.append((item, qty))
-        total += money(qty * item.unit_cost)
+        total += _validated_money(qty * item.unit_cost, "Purchase return value")
     if not items:
         raise ValidationError("Enter at least one quantity to return.")
+    if any(item.product.is_tailoring_item for item, _qty in items):
+        require_actor_access(
+            user,
+            purchase.business,
+            "tailoring",
+            permission_code="purchases.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
 
     purchase_return = PurchaseReturn.objects.create(
         business=purchase.business,
@@ -505,7 +1160,9 @@ def return_purchase(*, purchase, quantities, user, reason="", request=None):
         PurchaseReturnItem.objects.create(
             business=purchase.business, purchase_return=purchase_return,
             purchase_item=item, quantity=qty, unit_cost=item.unit_cost,
-            line_total=money(qty * item.unit_cost),
+            line_total=_validated_money(
+                qty * item.unit_cost, "Purchase return line total"
+            ),
         )
         if item.product.is_stocked:
             inventory.record_movement(
@@ -515,7 +1172,10 @@ def return_purchase(*, purchase, quantities, user, reason="", request=None):
                 unit_cost=item.unit_cost, reference_type="PurchaseReturn",
                 reference_id=purchase_return.return_number, user=user,
             )
-    Supplier.objects.filter(pk=purchase.supplier_id).update(
+    Supplier.objects.filter(
+        pk=purchase.supplier_id,
+        business=purchase.business,
+    ).update(
         balance=F("balance") - total)
     audit.log("purchase.returned", business=purchase.business, user=user,
               request=request, module="purchases", obj=purchase_return,
@@ -525,28 +1185,29 @@ def return_purchase(*, purchase, quantities, user, reason="", request=None):
 
 
 @transaction.atomic
-def cancel_purchase(*, purchase, user, request=None):
+def cancel_purchase(*, purchase, user, membership=None, request=None):
     """Cancel an untouched purchase while serialized with receive/payment paths."""
-    locked_purchase = Purchase.objects.select_for_update().get(
-        pk=purchase.pk, business=purchase.business
+    locked_purchase, _context = _authorized_purchase(
+        purchase=purchase,
+        user=user,
+        membership=membership,
+        request=request,
     )
     if locked_purchase.status == Purchase.Status.CANCELLED:
         raise ValidationError("Purchase is already cancelled.")
-    locked_items = PurchaseItem.objects.select_for_update().filter(
-        purchase=locked_purchase, business=locked_purchase.business
-    )
-    if locked_items.filter(quantity_received__gt=0).exists():
+    locked_items = _locked_purchase_items(locked_purchase)
+    _locked_returned_quantities(locked_purchase, locked_items)
+    locked_payments = _locked_purchase_payments(locked_purchase)
+    if any(item.quantity_received > 0 for item in locked_items):
         raise ValidationError(
             "Purchases with received goods cannot be cancelled — use a "
             "purchase return instead."
         )
-    has_pending_cheque = SupplierPayment.objects.for_business(
-        locked_purchase.business
-    ).filter(
-        purchase=locked_purchase,
-        method=SupplierPayment.Method.CHEQUE,
-        cheque_status=SupplierPayment.ChequeStatus.PENDING,
-    ).exists()
+    has_pending_cheque = any(
+        payment.method == SupplierPayment.Method.CHEQUE
+        and payment.cheque_status == SupplierPayment.ChequeStatus.PENDING
+        for payment in locked_payments
+    )
     if locked_purchase.amount_paid > 0 or has_pending_cheque:
         raise ValidationError(
             "Purchases with Paid or Pending Cheques cannot be cancelled."

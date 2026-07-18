@@ -1,10 +1,8 @@
-import logging
 from datetime import date as date_cls
 from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib import messages
-from django.core.exceptions import PermissionDenied
 from django.db.models import Avg, Count, F, Q, Sum
 from django.db.models.functions import ExtractHour, TruncDate
 from django.http import Http404
@@ -16,27 +14,23 @@ from apps.core.date_ranges import (
     date_range_querystring,
     resolve_date_range,
 )
-from apps.core.decorators import business_required, require_permission
-from apps.expenses.services import (
-    RecurringExpenseGenerationError,
-    RecurringExpenseRangeError,
-    ensure_recurring_expenses_for_range,
+from apps.core.decorators import business_required
+from apps.subscriptions.access import (
+    AccessAction,
+    evaluate_access,
+    require_access,
 )
-from apps.subscriptions.access import AccessAction, evaluate_access
+from apps.subscriptions.decorators import module_permission_required
 
 from . import exports
-from .queries import REPORT_GROUPS, REPORTS, current_year_financial_summary
+from .queries import (
+    REPORT_GROUPS,
+    REPORT_REQUIRED_MODULES,
+    REPORTS,
+    current_year_financial_summary,
+)
 
 ZERO = Decimal("0")
-logger = logging.getLogger(__name__)
-
-EXPENSE_AWARE_REPORTS = {
-    "expenses",
-    "profit",
-    "profit_loss",
-    "cash_flow",
-    "expense_analysis",
-}
 
 
 def _parse_filters(request):
@@ -73,7 +67,11 @@ def _parse_filters(request):
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
-@require_permission("dashboard.view")
+@module_permission_required(
+    "pos_core",
+    "dashboard.view",
+    action=AccessAction.READ,
+)
 def dashboard(request):
     from apps.core.money import money
     from apps.customers.models import Customer
@@ -91,6 +89,41 @@ def dashboard(request):
         action=AccessAction.READ,
     )
     inventory_access = inventory_decision.allowed
+    suppliers_access = evaluate_access(
+        request,
+        "suppliers",
+        permission_code="suppliers.view",
+        action=AccessAction.READ,
+    ).allowed
+    purchases_access = evaluate_access(
+        request,
+        "purchases",
+        permission_code="purchases.view",
+        action=AccessAction.READ,
+    ).allowed
+    expenses_access = evaluate_access(
+        request,
+        "expenses",
+        permission_code="expenses.view",
+        action=AccessAction.READ,
+    ).allowed
+    customer_credit_access = evaluate_access(
+        request,
+        "customer_credit",
+        permission_code="customers.view",
+        action=AccessAction.READ,
+    ).allowed and request.membership.allowed_branch_ids is None
+    tailoring_access = evaluate_access(
+        request,
+        "tailoring",
+        action=AccessAction.READ,
+    ).allowed
+    advanced_reports_access = evaluate_access(
+        request,
+        "advanced_reports",
+        permission_code="reports.view",
+        action=AccessAction.READ,
+    ).allowed
     inventory_warehouse_ids = (
         inventory_decision.context.membership.allowed_warehouse_ids
         if inventory_access
@@ -102,8 +135,17 @@ def dashboard(request):
     date_from, date_to = resolve_date_range(request.GET, business)
     branch_id = request.GET.get("branch", "")
 
-    sales = Sale.objects.for_business(business).exclude(
-        status__in=["draft", "voided"])
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    allowed_warehouse_ids = request.membership.allowed_warehouse_ids
+    sales = (
+        Sale.objects.for_business(business)
+        .exclude(status__in=["draft", "voided"])
+        .filter(warehouse__business=business)
+    )
+    if allowed_branch_ids is not None:
+        sales = sales.filter(branch_id__in=allowed_branch_ids)
+    if allowed_warehouse_ids is not None:
+        sales = sales.filter(warehouse_id__in=allowed_warehouse_ids)
     period = sales.filter(sale_date__date__gte=date_from,
                           sale_date__date__lte=date_to)
     if branch_id.isdigit():
@@ -121,6 +163,13 @@ def dashboard(request):
             payment_date__lte=end,
         )
         qs = qs.exclude(sale__status__in=["draft", "voided"])
+        qs = qs.filter(sale__warehouse__business=business)
+        if allowed_branch_ids is not None:
+            qs = qs.filter(sale__branch_id__in=allowed_branch_ids)
+        if allowed_warehouse_ids is not None:
+            qs = qs.filter(sale__warehouse_id__in=allowed_warehouse_ids)
+        if not customer_credit_access:
+            qs = qs.exclude(method__kind=PaymentMethod.Kind.CUSTOMER_CREDIT)
         if branch_id.isdigit():
             qs = qs.filter(sale__branch_id=branch_id)
         return qs
@@ -147,12 +196,22 @@ def dashboard(request):
     today_sales_qs = sales.filter(sale_date__date=today)
     today_returns_qs = SaleReturn.objects.for_business(business).filter(
         created_at__date=today)
+    if allowed_branch_ids is not None:
+        today_returns_qs = today_returns_qs.filter(branch_id__in=allowed_branch_ids)
+    if allowed_warehouse_ids is not None:
+        today_returns_qs = today_returns_qs.filter(
+            warehouse_id__in=allowed_warehouse_ids
+        )
     if branch_id.isdigit():
         today_sales_qs = today_sales_qs.filter(branch_id=branch_id)
         today_returns_qs = today_returns_qs.filter(branch_id=branch_id)
     today_sales = today_sales_qs.aggregate(t=Sum("total"))["t"] or ZERO
     today_returns = today_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
-    today_receivable = sum((sale.balance for sale in today_sales_qs), ZERO)
+    today_receivable = (
+        sum((sale.balance for sale in today_sales_qs), ZERO)
+        if customer_credit_access
+        else None
+    )
     today_payments = payment_totals(payments_for_range(today, today))
     period_payments = payment_totals(payments_for_range(date_from, date_to))
 
@@ -164,6 +223,8 @@ def dashboard(request):
         branch_id=selected_branch_id,
         today=today,
         include_profit=show_profit,
+        include_expenses=expenses_access,
+        include_customer_credit=customer_credit_access,
     )
     agg = period.aggregate(
         sum_total=Sum("total"), count=Count("id"), avg=Avg("total"),
@@ -172,20 +233,37 @@ def dashboard(request):
     )
     agg["total"] = agg.pop("sum_total")
     agg["subtotal"] = agg.pop("sum_subtotal")
-    credit_outstanding = (
-        Customer.objects.for_business(business).aggregate(t=Sum("balance"))["t"] or ZERO
-    )
-    payables = (
-        Supplier.objects.for_business(business).aggregate(t=Sum("balance"))["t"] or ZERO
-    )
-    expenses_qs = Expense.objects.for_business(business).exclude(
-        status__in=["rejected", "cancelled"]
-    ).filter(expense_date__gte=date_from, expense_date__lte=date_to)
-    if branch_id.isdigit():
-        expenses_qs = expenses_qs.filter(branch_id=branch_id)
-    expenses_total = expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
+    credit_outstanding = None
+    if customer_credit_access:
+        credit_outstanding = (
+            Customer.objects.for_business(business).aggregate(t=Sum("balance"))["t"]
+            or ZERO
+        )
+    payables = ZERO
+    if suppliers_access:
+        payables = (
+            Supplier.objects.for_business(business).aggregate(t=Sum("balance"))["t"]
+            or ZERO
+        )
+    expenses_qs = Expense.objects.none()
+    expenses_total = None
+    if expenses_access:
+        expenses_qs = Expense.objects.for_business(business).exclude(
+            status__in=["rejected", "cancelled"]
+        ).filter(expense_date__gte=date_from, expense_date__lte=date_to)
+        if branch_id.isdigit():
+            expenses_qs = expenses_qs.filter(branch_id=branch_id)
+        if allowed_branch_ids is not None:
+            expenses_qs = expenses_qs.filter(branch_id__in=allowed_branch_ids)
+        expenses_total = expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
     period_returns_qs = SaleReturn.objects.for_business(business).filter(
         created_at__date__gte=date_from, created_at__date__lte=date_to)
+    if allowed_branch_ids is not None:
+        period_returns_qs = period_returns_qs.filter(branch_id__in=allowed_branch_ids)
+    if allowed_warehouse_ids is not None:
+        period_returns_qs = period_returns_qs.filter(
+            warehouse_id__in=allowed_warehouse_ids
+        )
     if branch_id.isdigit():
         period_returns_qs = period_returns_qs.filter(branch_id=branch_id)
     returns_total = period_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
@@ -194,6 +272,8 @@ def dashboard(request):
             product__reorder_level__gt=0,
             quantity__lte=F("product__reorder_level"),
         )
+        if not tailoring_access:
+            low_stock_qs = low_stock_qs.filter(product__is_tailoring_item=False)
         if inventory_warehouse_ids is not None:
             low_stock_qs = low_stock_qs.filter(
                 warehouse_id__in=inventory_warehouse_ids
@@ -205,6 +285,7 @@ def dashboard(request):
             inventory.stock_value(
                 business,
                 allowed_warehouse_ids=inventory_warehouse_ids,
+                include_tailoring=tailoring_access,
             )
             if show_profit
             else None
@@ -216,19 +297,34 @@ def dashboard(request):
     gross = agg["profit"] or ZERO
     margin = (gross / agg["subtotal"] * 100) if (agg["subtotal"] or 0) > 0 else ZERO
 
-    delivery_counts = {
-        "booked": period.count(),
-        "in_process": period.filter(delivery_status=Sale.DeliveryStatus.IN_PRODUCTION).count(),
-        "finished": period.filter(delivery_status=Sale.DeliveryStatus.READY).count(),
-        "ready": period.filter(delivery_status=Sale.DeliveryStatus.READY).count(),
-        "pending_delivery": period.filter(
-            delivery_status__in=[
-                Sale.DeliveryStatus.PENDING,
-                Sale.DeliveryStatus.IN_PRODUCTION,
-                Sale.DeliveryStatus.READY,
-            ]
-        ).count(),
-    }
+    if tailoring_access:
+        delivery_counts = {
+            "booked": period.count(),
+            "in_process": period.filter(
+                delivery_status=Sale.DeliveryStatus.IN_PRODUCTION
+            ).count(),
+            "finished": period.filter(
+                delivery_status=Sale.DeliveryStatus.READY
+            ).count(),
+            "ready": period.filter(
+                delivery_status=Sale.DeliveryStatus.READY
+            ).count(),
+            "pending_delivery": period.filter(
+                delivery_status__in=[
+                    Sale.DeliveryStatus.PENDING,
+                    Sale.DeliveryStatus.IN_PRODUCTION,
+                    Sale.DeliveryStatus.READY,
+                ]
+            ).count(),
+        }
+    else:
+        delivery_counts = {
+            "booked": 0,
+            "in_process": 0,
+            "finished": 0,
+            "ready": 0,
+            "pending_delivery": 0,
+        }
 
     # ---- chart datasets (real data) ---------------------------------------
     trend = (
@@ -282,28 +378,33 @@ def dashboard(request):
         ("Cash", period_payments["cash"]),
         ("Card", period_payments["card"]),
         ("Bank Transfer", period_payments["bank"]),
-        ("Customer Credit", period_payments["credit"]),
     ]
+    if customer_credit_access:
+        method_rows.append(("Customer Credit", period_payments["credit"]))
     chart_methods = {
         "labels": [name for name, _amount in method_rows],
         "data": [float(amount or 0) for _name, amount in method_rows],
     }
     top_products = []
-    for item in (
-        SaleItem.objects.for_business(business)
-        .filter(sale__in=period)
-        .values("product_name", "sku")
-        .annotate(qty=Sum("quantity"), sales=Sum("line_total"),
-                  profit=Sum("gross_profit"))
-        .order_by("-sales")[:8]
-    ):
-        top_products.append({
-            "product": item["product_name"],
-            "sku": item["sku"] or "-",
-            "qty": item["qty"] or ZERO,
-            "sales": item["sales"] or ZERO,
-            "profit": item["profit"] or ZERO,
-        })
+    if advanced_reports_access:
+        for item in (
+            SaleItem.objects.for_business(business)
+            .filter(sale__in=period)
+            .values("product_name", "sku")
+            .annotate(
+                qty=Sum("quantity"),
+                sales=Sum("line_total"),
+                profit=Sum("gross_profit"),
+            )
+            .order_by("-sales")[:8]
+        ):
+            top_products.append({
+                "product": item["product_name"],
+                "sku": item["sku"] or "-",
+                "qty": item["qty"] or ZERO,
+                "sales": item["sales"] or ZERO,
+                "profit": item["profit"] or ZERO,
+            })
     chart_products = {
         "labels": [r["product"][:24] for r in top_products],
         "data": [float(r["sales"] or 0) for r in top_products],
@@ -328,10 +429,18 @@ def dashboard(request):
     if branch_id.isdigit():
         prev = prev.filter(branch_id=branch_id)
     prev_agg = prev.aggregate(t=Sum("total"), p=Sum("gross_profit"), c=Count("id"))
-    prev_expenses = Expense.objects.for_business(business).exclude(
-        status__in=["rejected", "cancelled"]
-    ).filter(expense_date__gte=prev_from, expense_date__lte=prev_to).aggregate(
-        t=Sum("amount"))["t"] or ZERO
+    prev_expenses = None
+    if expenses_access:
+        prev_expenses_qs = Expense.objects.for_business(business).exclude(
+            status__in=["rejected", "cancelled"]
+        ).filter(expense_date__gte=prev_from, expense_date__lte=prev_to)
+        if branch_id.isdigit():
+            prev_expenses_qs = prev_expenses_qs.filter(branch_id=branch_id)
+        if allowed_branch_ids is not None:
+            prev_expenses_qs = prev_expenses_qs.filter(
+                branch_id__in=allowed_branch_ids
+            )
+        prev_expenses = prev_expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
     prev_total = prev_agg["t"] or ZERO
     prev_profit = prev_agg["p"] or ZERO
     yesterday_sales = sales.filter(
@@ -341,18 +450,24 @@ def dashboard(request):
         "today_sales": _pct(today_sales, yesterday_sales),
         "period_sales": _pct(agg["total"] or ZERO, prev_total),
         "gross_profit": _pct(gross, prev_profit),
-        "net_profit": _pct(gross - expenses_total, prev_profit - prev_expenses),
+        "net_profit": (
+            _pct(gross - expenses_total, prev_profit - prev_expenses)
+            if expenses_access
+            else None
+        ),
         "invoices": _pct(Decimal(agg["count"] or 0), Decimal(prev_agg["c"] or 0)),
     }
 
     # ---- sparklines (daily series for the period) --------------------------
     spark_sales = chart_trend["sales"]
     spark_profit = chart_trend["profit"]
-    exp_daily = {
-        str(r["expense_date"]): float(r["t"] or 0)
-        for r in expenses_qs.values("expense_date").annotate(t=Sum("amount"))
-    }
-    spark_expenses = [exp_daily.get(label, 0) for label in iso_labels]
+    spark_expenses = []
+    if expenses_access:
+        exp_daily = {
+            str(r["expense_date"]): float(r["t"] or 0)
+            for r in expenses_qs.values("expense_date").annotate(t=Sum("amount"))
+        }
+        spark_expenses = [exp_daily.get(label, 0) for label in iso_labels]
 
     # ---- extra interactive charts ------------------------------------------
     hourly = (
@@ -371,6 +486,8 @@ def dashboard(request):
         movements = StockMovement.objects.for_business(business).filter(
             created_at__date__gte=move_start
         )
+        if not tailoring_access:
+            movements = movements.filter(product__is_tailoring_item=False)
         if inventory_warehouse_ids is not None:
             movements = movements.filter(
                 warehouse_id__in=inventory_warehouse_ids
@@ -390,21 +507,22 @@ def dashboard(request):
             "stock_out": [abs(float(r["qout"] or 0)) for r in movements],
         }
     top_customers = []
-    for customer in (
-        period.exclude(customer__is_walk_in=True)
-        .values("customer__full_name", "customer__mobile")
-        .annotate(sales=Sum("total"), paid=Sum("amount_paid"))
-        .order_by("-sales")[:8]
-    ):
-        sales_total = customer["sales"] or ZERO
-        paid_total = customer["paid"] or ZERO
-        top_customers.append({
-            "customer": customer["customer__full_name"],
-            "phone": customer["customer__mobile"] or "-",
-            "sales": sales_total,
-            "paid": paid_total,
-            "receivable": money(sales_total - paid_total),
-        })
+    if advanced_reports_access:
+        for customer in (
+            period.exclude(customer__is_walk_in=True)
+            .values("customer__full_name", "customer__mobile")
+            .annotate(sales=Sum("total"), paid=Sum("amount_paid"))
+            .order_by("-sales")[:8]
+        ):
+            sales_total = customer["sales"] or ZERO
+            paid_total = customer["paid"] or ZERO
+            top_customers.append({
+                "customer": customer["customer__full_name"],
+                "phone": customer["customer__mobile"] or "-",
+                "sales": sales_total,
+                "paid": paid_total,
+                "receivable": money(sales_total - paid_total),
+            })
     chart_customers = {
         "labels": [r["customer"][:22] for r in top_customers],
         "data": [float(r["sales"] or 0) for r in top_customers],
@@ -415,19 +533,57 @@ def dashboard(request):
     from apps.purchases.models import Purchase
     from apps.suppliers.models import Supplier as SupplierModel
 
+    pending_payables = ()
+    if suppliers_access:
+        pending_payables = SupplierModel.objects.for_business(business).filter(
+            balance__gt=0
+        ).order_by("-balance")[:5]
+    awaiting_pos = ()
+    if purchases_access:
+        awaiting_pos = Purchase.objects.for_business(business).filter(
+            status__in=["order", "partially_received"]
+        )
+        allowed_purchase_branches = request.membership.allowed_branch_ids
+        allowed_purchase_warehouses = request.membership.allowed_warehouse_ids
+        if allowed_purchase_branches is not None:
+            awaiting_pos = awaiting_pos.filter(branch_id__in=allowed_purchase_branches)
+        if allowed_purchase_warehouses is not None:
+            awaiting_pos = awaiting_pos.filter(
+                warehouse_id__in=allowed_purchase_warehouses
+            )
+        awaiting_pos = awaiting_pos.select_related("supplier").order_by(
+            "-purchase_date"
+        )[:5]
+
+    recent_expenses = ()
+    if expenses_access:
+        recent_expenses = (
+            Expense.objects.for_business(business)
+            .exclude(status__in=["rejected", "cancelled"])
+            .select_related("category")
+        )
+        if allowed_branch_ids is not None:
+            recent_expenses = recent_expenses.filter(
+                branch_id__in=allowed_branch_ids
+            )
+        recent_expenses = recent_expenses.order_by(
+            "-expense_date", "-created_at"
+        )[:5]
+    pending_receivables = ()
+    if customer_credit_access:
+        pending_receivables = (
+            CustomerModel.objects.for_business(business)
+            .filter(balance__gt=0)
+            .order_by("-balance")[:5]
+        )
+
     widgets = {
         "recent_sales": sales.select_related("customer").order_by("-sale_date")[:8],
-        "recent_expenses": Expense.objects.for_business(business)
-            .exclude(status__in=["rejected", "cancelled"])
-            .select_related("category").order_by("-expense_date", "-created_at")[:5],
-        "pending_receivables": CustomerModel.objects.for_business(business)
-            .filter(balance__gt=0).order_by("-balance")[:5],
-        "pending_payables": SupplierModel.objects.for_business(business)
-            .filter(balance__gt=0).order_by("-balance")[:5],
+        "recent_expenses": recent_expenses,
+        "pending_receivables": pending_receivables,
+        "pending_payables": pending_payables,
         "low_stock_items": low_stock_qs.select_related("product", "warehouse")[:8],
-        "awaiting_pos": Purchase.objects.for_business(business)
-            .filter(status__in=["order", "partially_received"])
-            .select_related("supplier").order_by("-purchase_date")[:5],
+        "awaiting_pos": awaiting_pos,
     }
 
     from apps.branches.models import Branch
@@ -439,6 +595,12 @@ def dashboard(request):
 
     return render(request, "dashboard/index.html", {
         "active_nav": "dashboard",
+        "suppliers_access": suppliers_access,
+        "purchases_access": purchases_access,
+        "expenses_access": expenses_access,
+        "customer_credit_access": customer_credit_access,
+        "advanced_reports_access": advanced_reports_access,
+        "tailoring_access": tailoring_access,
         "date_from": date_from, "date_to": date_to,
         "range_presets": {
             "today": {"from": str(today), "to": str(today)},
@@ -450,7 +612,9 @@ def dashboard(request):
         "kpis": {
             "today_sales": today_sales,
             "today_income": today_payments["income"],
-            "today_receivable": money(today_receivable),
+            "today_receivable": (
+                money(today_receivable) if today_receivable is not None else None
+            ),
             "today_returns": today_returns,
             "today_net_sales": money(today_sales - today_returns),
             "cash": today_payments["cash"],
@@ -458,14 +622,20 @@ def dashboard(request):
             "bank": today_payments["bank"],
             "period_sales": agg["total"] or ZERO,
             "period_income": period_payments["income"],
-            "period_credit": period_payments["credit"],
+            "period_credit": (
+                period_payments["credit"] if customer_credit_access else None
+            ),
             "invoices": agg["count"] or 0,
             "avg_invoice": agg["avg"] or ZERO,
             "collected": agg["paid"] or ZERO,
             "gross_profit": gross if show_profit else None,
             "margin": margin if show_profit else None,
             "expenses": expenses_total,
-            "net_profit": (gross - expenses_total) if show_profit else None,
+            "net_profit": (
+                (gross - expenses_total)
+                if show_profit and expenses_total is not None
+                else None
+            ),
             "receivables": credit_outstanding,
             "payables": payables,
             "stock_value": stock_value,
@@ -492,14 +662,24 @@ def dashboard(request):
 # ---------------------------------------------------------------------------
 # Reports center
 # ---------------------------------------------------------------------------
-@require_permission("reports.view")
+@module_permission_required(
+    "pos_core",
+    "reports.view",
+    action=AccessAction.READ,
+)
 def index(request):
     groups = []
     for group_name, keys in REPORT_GROUPS:
         items = []
         for key in keys:
             title, _fn, perm = REPORTS[key]
-            if request.membership.has_perm(perm):
+            decision = evaluate_access(
+                request,
+                REPORT_REQUIRED_MODULES[key],
+                permission_code=perm,
+                action=AccessAction.READ,
+            )
+            if decision.allowed:
                 items.append({"key": key, "title": title})
         if items:
             groups.append({"name": group_name, "items": items})
@@ -511,27 +691,22 @@ def _run_report(request, key):
     if key not in REPORTS:
         raise Http404
     title, fn, perm = REPORTS[key]
-    if not request.membership.has_perm(perm):
-        raise PermissionDenied
+    require_access(
+        request,
+        REPORT_REQUIRED_MODULES[key],
+        permission_code=perm,
+        action=AccessAction.READ,
+    )
     filters = _parse_filters(request)
     filters["allowed_branch_ids"] = request.membership.allowed_branch_ids
-    if key in EXPENSE_AWARE_REPORTS:
-        try:
-            ensure_recurring_expenses_for_range(
-                request.business,
-                filters["date_from"],
-                filters["date_to"],
-            )
-        except RecurringExpenseRangeError:
-            raise
-        except RecurringExpenseGenerationError as exc:
-            logger.warning(
-                "Fixed-expense generation skipped for business %s and "
-                "report %s: %s",
-                request.business.pk,
-                key,
-                exc,
-            )
+    if key in {"sales_detailed", "current_stock", "low_stock", "stock_movements"}:
+        filters["tailoring_enabled"] = evaluate_access(
+            request, "tailoring", action=AccessAction.READ
+        ).allowed
+    if key == "sales_detailed":
+        filters["customer_credit_enabled"] = evaluate_access(
+            request, "customer_credit", action=AccessAction.READ
+        ).allowed
     data = fn(request.business, filters)
     return title, data, filters
 
@@ -542,15 +717,18 @@ def report_view(request, key):
     from apps.catalog.models import Brand, Product
     from apps.suppliers.models import Supplier, SupplierPayment
 
-    try:
-        title, data, filters = _run_report(request, key)
-    except RecurringExpenseRangeError as exc:
-        messages.error(request, str(exc))
-        return redirect("reports:view", key=key)
     export = request.GET.get("export", "")
+    if key not in REPORTS:
+        raise Http404
     if export:
-        if not request.membership.has_perm("reports.export"):
-            raise PermissionDenied
+        require_access(
+            request,
+            REPORT_REQUIRED_MODULES[key],
+            permission_code="reports.export",
+            action=AccessAction.READ,
+        )
+    title, data, filters = _run_report(request, key)
+    if export:
         audit.log("report.exported", request=request, module="reports",
                   description=f"Exported report '{key}' as {export}.")
         label = f"{filters.get('date_from') or ''} → {filters.get('date_to') or ''}"
@@ -590,7 +768,16 @@ def report_view(request, key):
             if key == "supplier_payments_cheques" else []
         ),
         "products": (
-            Product.objects.for_business(request.business).only("id", "name").order_by("name")
+            Product.objects.for_business(request.business)
+            .filter(
+                **(
+                    {}
+                    if filters.get("tailoring_enabled", True)
+                    else {"is_tailoring_item": False}
+                )
+            )
+            .only("id", "name")
+            .order_by("name")
             if key == "sales_detailed" else []
         ),
         "brands": (

@@ -1,19 +1,20 @@
 from django.conf import settings
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db import transaction
 from django.db.models import Avg, Count, Max, Q, Sum
+from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
+from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
-from apps.core.money import money
 from apps.registers import services as register_services
 from apps.reports.pdf import render_pdf
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, evaluate_access, require_access
 from apps.subscriptions.decorators import module_permission_required
 
 from . import services
@@ -28,6 +29,24 @@ def _qs_without_page(request):
     return f"{encoded}&" if encoded else ""
 
 
+def _credit_decision(request, *, permission_code=None, action=AccessAction.READ):
+    return evaluate_access(
+        request,
+        "customer_credit",
+        permission_code=permission_code,
+        action=action,
+    )
+
+
+def _scope_to_membership_branches(request, queryset, field_name="branch_id"):
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        queryset = queryset.filter(
+            **{f"{field_name}__in": allowed_branch_ids}
+        )
+    return queryset
+
+
 @module_permission_required("pos_core", "customers.view")
 def customer_list(request):
     qs = Customer.objects.for_business(request.business).select_related("group")
@@ -36,20 +55,37 @@ def customer_list(request):
         qs = qs.filter(Q(full_name__icontains=q) | Q(mobile__icontains=q) |
                        Q(code__icontains=q) | Q(email__icontains=q))
     flt = request.GET.get("filter", "")
+    credit_access = _credit_decision(
+        request, permission_code="customers.view"
+    ).allowed
+    credit_balance_access = (
+        credit_access and request.membership.allowed_branch_ids is None
+    )
     if flt == "credit":
+        if not credit_balance_access:
+            require_access(
+                request,
+                "customer_credit",
+                permission_code="customers.view",
+                action=AccessAction.READ,
+                scope_allowed=False,
+            )
         qs = qs.filter(balance__gt=0)
     elif flt == "inactive":
         qs = qs.filter(is_active=False)
-    receivables = (
-        Customer.objects.for_business(request.business)
-        .filter(balance__gt=0).aggregate(t=Sum("balance"))["t"] or 0
-    )
+    receivables = None
+    if credit_balance_access:
+        receivables = (
+            Customer.objects.for_business(request.business)
+            .filter(balance__gt=0).aggregate(t=Sum("balance"))["t"] or 0
+        )
     paginator = Paginator(qs.order_by("-is_walk_in", "full_name"), 25)
     page_obj = paginator.get_page(request.GET.get("page"))
     c_cur, c_lim, _ = subscriptions.limit_state(request.business, "customers")
     return render(request, "customers/list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "customers",
         "receivables": receivables, "customer_count": c_cur, "customer_limit": c_lim,
+        "credit_access": credit_balance_access,
         "querystring": _qs_without_page(request),
     })
 
@@ -65,7 +101,17 @@ def customer_form(request, public_id=None):
         blocked = guard_limit(request, "customers")
         if blocked:
             return blocked
-    form = CustomerForm(request.business, request.POST or None, instance=instance)
+    credit_write = _credit_decision(
+        request,
+        permission_code="customers.manage",
+        action=AccessAction.WRITE,
+    ).allowed
+    form = CustomerForm(
+        request.business,
+        request.POST or None,
+        instance=instance,
+        include_credit=credit_write,
+    )
     if request.method == "POST" and form.is_valid():
         customer = form.save(commit=False)
         if not customer.code:
@@ -81,7 +127,8 @@ def customer_form(request, public_id=None):
         messages.success(request, "Customer saved.")
         return redirect("customers:detail", public_id=customer.public_id)
     return render(request, "customers/form.html",
-                  {"form": form, "customer": instance, "active_nav": "customers"})
+                  {"form": form, "customer": instance, "active_nav": "customers",
+                   "credit_write": credit_write})
 
 
 @module_permission_required("pos_core", "customers.view")
@@ -89,12 +136,13 @@ def customer_detail(request, public_id):
     from apps.sales.models import Sale, SaleReturn
 
     customer = get_tenant_object(Customer, request.business, public_id=public_id)
-    sales = (
+    sales = _scope_to_membership_branches(
+        request,
         Sale.objects.for_business(request.business)
         .filter(customer=customer)
         .exclude(status=Sale.Status.DRAFT)
         .select_related("branch")
-        .order_by("-sale_date")
+        .order_by("-sale_date"),
     )
     # Aggregate aliases must not shadow field names ("total" would break
     # Avg("total") with "Cannot compute Avg('total'): 'total' is an aggregate").
@@ -103,74 +151,82 @@ def customer_detail(request, public_id):
         avg=Avg("total"), last=Max("sale_date"),
     )
     stats["total"] = stats.pop("sum_total")
-    payments = (
-        CustomerPayment.objects.for_business(request.business)
-        .filter(customer=customer).select_related("payment_method", "received_by")
-        .order_by("-created_at")
+    credit_access = _credit_decision(
+        request, permission_code="customers.view"
+    ).allowed
+    credit_balance_access = (
+        credit_access and request.membership.allowed_branch_ids is None
     )
-    returns = (
+    payments = CustomerPayment.objects.none()
+    if credit_access:
+        payments = _scope_to_membership_branches(
+            request,
+            CustomerPayment.objects.for_business(request.business)
+            .filter(customer=customer)
+            .select_related("payment_method", "received_by")
+            .order_by("-created_at"),
+        )
+    returns = _scope_to_membership_branches(
+        request,
         SaleReturn.objects.for_business(request.business)
         .filter(customer=customer).select_related("sale")
-        .order_by("-created_at")[:20]
+        .order_by("-created_at"),
     )
-    payment_form = CustomerPaymentForm(request.business)
+    if not credit_access:
+        returns = returns.exclude(
+            refund_method__in=["customer_account", "store_credit"]
+        )
+    can_collect = _credit_decision(
+        request,
+        permission_code="customers.payments",
+        action=AccessAction.WRITE,
+    ).allowed and request.membership.allowed_branch_ids is None
+    payment_form = CustomerPaymentForm(request.business) if can_collect else None
     return render(request, "customers/detail.html", {
         "customer": customer, "sales": sales[:25], "stats": stats,
-        "payments": payments[:25], "returns": returns,
+        "payments": payments[:25], "returns": returns[:20],
         "payment_form": payment_form, "active_nav": "customers",
-        "can_collect": request.membership.has_perm("customers.payments"),
+        "can_collect": can_collect,
+        "credit_access": credit_access,
+        "credit_balance_access": credit_balance_access,
         "more_options": services.more_option_values(request.business, customer),
     })
 
 
-@require_permission("customers.payments")
+@require_POST
+@module_permission_required(
+    "customer_credit", "customers.payments", action=AccessAction.WRITE
+)
 def customer_payment(request, public_id):
     customer = get_tenant_object(Customer, request.business, public_id=public_id)
-    if request.method != "POST":
-        return redirect("customers:detail", public_id=public_id)
     form = CustomerPaymentForm(request.business, request.POST)
     if form.is_valid():
-        amount = money(form.cleaned_data["amount"])
         try:
-            subscriptions.require_operational(request.business)
-        except subscriptions.SubscriptionInactive as exc:
-            messages.error(request, str(exc))
-            return redirect("customers:detail", public_id=public_id)
-        if amount > customer.balance:
-            messages.error(request, "Payment exceeds the customer's outstanding "
-                                    "balance. Use store credit for overpayments.")
-            return redirect("customers:detail", public_id=public_id)
-        with transaction.atomic():
-            n = CustomerPayment.objects.for_business(request.business).count() + 1
-            while CustomerPayment.objects.for_business(request.business).filter(
-                receipt_number=f"RCV-{n:06d}"
-            ).exists():
-                n += 1
             shift = register_services.get_open_shift(request.business, request.user)
-            payment = CustomerPayment.objects.create(
+            payment = services.record_customer_payment(
                 business=request.business,
-                receipt_number=f"RCV-{n:06d}",
                 customer=customer,
-                kind=CustomerPayment.Kind.COLLECTION,
-                amount=amount,
+                amount=form.cleaned_data["amount"],
                 payment_method=form.cleaned_data["payment_method"],
                 reference=form.cleaned_data["reference"],
                 notes=form.cleaned_data["notes"],
-                received_by=request.user,
+                user=request.user,
                 shift=shift,
+                membership=request.membership,
+                request=request,
             )
-            services.apply_balance_change(customer.id, -amount)
-            audit.log("customer.payment", request=request, module="customers",
-                      obj=payment,
-                      description=f"Collected {amount} from {customer.full_name} "
-                                  f"({payment.receipt_number}).")
-        messages.success(request, f"Payment {payment.receipt_number} recorded.")
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+        else:
+            messages.success(request, f"Payment {payment.receipt_number} recorded.")
     else:
         messages.error(request, "Invalid payment details.")
     return redirect("customers:detail", public_id=public_id)
 
 
-def _statement_entries(business, customer, branch_id=None):
+def _statement_entries(
+    business, customer, branch_id=None, *, allowed_branch_ids=None
+):
     """Full chronological ledger for one customer.
 
     Debits: opening balance, the unpaid (credit) portion of each sale.
@@ -180,7 +236,7 @@ def _statement_entries(business, customer, branch_id=None):
     from apps.sales.models import Sale, SaleReturn
 
     entries = []
-    if customer.opening_balance:
+    if branch_id is None and allowed_branch_ids is None and customer.opening_balance:
         entries.append({"date": customer.created_at, "type": "Opening balance",
                         "ref": "", "debit": customer.opening_balance,
                         "credit": 0, "notes": ""})
@@ -189,6 +245,8 @@ def _statement_entries(business, customer, branch_id=None):
     ).exclude(status__in=[Sale.Status.DRAFT, Sale.Status.VOIDED])
     if branch_id:
         sales_qs = sales_qs.filter(branch_id=branch_id)
+    elif allowed_branch_ids is not None:
+        sales_qs = sales_qs.filter(branch_id__in=allowed_branch_ids)
     NON_CASH_KINDS = ("customer_credit", "store_credit")
     for s in sales_qs.prefetch_related("payments__method"):
         # Debit = the credit extended at sale time: total minus real money
@@ -220,6 +278,8 @@ def _statement_entries(business, customer, branch_id=None):
         customer=customer, kind=CustomerPayment.Kind.COLLECTION)
     if branch_id:
         pay_qs = pay_qs.filter(branch_id=branch_id)
+    elif allowed_branch_ids is not None:
+        pay_qs = pay_qs.filter(branch_id__in=allowed_branch_ids)
     for p in pay_qs:
         entries.append({"date": p.created_at, "type": "Payment received",
                         "ref": p.receipt_number, "debit": 0, "credit": p.amount,
@@ -228,6 +288,8 @@ def _statement_entries(business, customer, branch_id=None):
         customer=customer, refund_method="customer_account")
     if branch_id:
         ret_qs = ret_qs.filter(branch_id=branch_id)
+    elif allowed_branch_ids is not None:
+        ret_qs = ret_qs.filter(branch_id__in=allowed_branch_ids)
     for r in ret_qs:
         entries.append({"date": r.created_at, "type": "Return credited",
                         "ref": r.return_number, "debit": 0,
@@ -251,11 +313,29 @@ def customer_export(request):
         qs = qs.filter(Q(full_name__icontains=q) | Q(mobile__icontains=q) |
                        Q(code__icontains=q) | Q(email__icontains=q))
     flt = request.GET.get("filter", "")
+    credit_access = _credit_decision(
+        request, permission_code="customers.export"
+    ).allowed
+    credit_balance_access = (
+        credit_access and request.membership.allowed_branch_ids is None
+    )
     if flt == "credit":
+        if not credit_balance_access:
+            require_access(
+                request,
+                "customer_credit",
+                permission_code="customers.export",
+                action=AccessAction.READ,
+                scope_allowed=False,
+            )
         qs = qs.filter(balance__gt=0)
     elif flt == "inactive":
         qs = qs.filter(is_active=False)
-    data = services.export_dataset(request.business, qs.order_by("full_name"))
+    data = services.export_dataset(
+        request.business,
+        qs.order_by("full_name"),
+        include_credit=credit_balance_access,
+    )
     if request.GET.get("format") == "xlsx":
         return exports.export_xlsx("customers", data)
     return exports.export_csv("customers", data)
@@ -265,10 +345,23 @@ def customer_export(request):
 def customer_import_template(request):
     from apps.reports import exports
 
-    columns = [c.title() for c in services.import_columns(request.business)]
+    credit_write = _credit_decision(
+        request,
+        permission_code="customers.import",
+        action=AccessAction.WRITE,
+    ).allowed
+    columns = [
+        c.title()
+        for c in services.import_columns(
+            request.business, include_credit=credit_write
+        )
+    ]
     sample = ["CUST-00001", "Sample Customer", "99000000", "99000000",
               "sample@example.com", "123 Market St", "Muscat", "Oman",
-              "Retail", "100.000", "0.000", "VIP notes", "Active"]
+              "Retail"]
+    if credit_write:
+        sample += ["100.000", "0.000"]
+    sample += ["VIP notes", "Active"]
     sample += ["Sample value" for _ in request.business.settings.more_option_labels]
     data = {
         "columns": columns,
@@ -322,23 +415,50 @@ def customer_import(request):
                                        f"{summary['updated']} updated, "
                                        f"{summary['skipped']} skipped, "
                                        f"{summary['failed']} failed."))
+    credit_write = _credit_decision(
+        request,
+        permission_code="customers.import",
+        action=AccessAction.WRITE,
+    ).allowed
     return render(request, "customers/import.html", {
         "results": results, "import_error": import_error,
         "active_nav": "customers",
-        "columns": [c.title() for c in services.import_columns(request.business)],
+        "columns": [
+            c.title()
+            for c in services.import_columns(
+                request.business, include_credit=credit_write
+            )
+        ],
     })
 
 
-@require_permission("customers.view")
+@module_permission_required(
+    "customer_credit", "customers.view", action=AccessAction.READ
+)
 def customer_statement(request, public_id):
     """Date-filterable statement with running balance and exports."""
     import datetime as _dt
 
     customer = get_tenant_object(Customer, request.business, public_id=public_id)
+    from apps.branches.models import Branch
+
+    branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        branches = branches.filter(id__in=allowed_branch_ids)
     branch_raw = request.GET.get("branch", "")
     branch_id = int(branch_raw) if branch_raw.isdigit() else None
+    branch = None
+    if branch_id is not None:
+        branch = branches.filter(id=branch_id).first()
+        if branch is None:
+            raise Http404
     entries, closing_balance = _statement_entries(
-        request.business, customer, branch_id=branch_id)
+        request.business,
+        customer,
+        branch_id=branch_id,
+        allowed_branch_ids=allowed_branch_ids,
+    )
 
     # Period slice with brought-forward balance
     date_from, date_to = resolve_date_range(request.GET, request.business)
@@ -387,12 +507,6 @@ def customer_statement(request, public_id):
             return exports.export_csv(title, data)
 
         # Dedicated professional landscape statement PDF
-        branch = None
-        if branch_id:
-            from apps.branches.models import Branch as _Branch
-
-            branch = _Branch.objects.for_business(request.business).filter(
-                id=branch_id).first()
         pdf = render_pdf("invoices/customer_statement_pdf.html", {
             "business": request.business, "customer": customer, "branch": branch,
             "entries": entries, "opening_balance": opening_balance,
@@ -409,8 +523,6 @@ def customer_statement(request, public_id):
         response["Content-Disposition"] = f'attachment; filename="{title}.pdf"'
         return response
 
-    from apps.branches.models import Branch
-
     filter_querystring = date_range_querystring(
         request.GET,
         date_from,
@@ -422,8 +534,7 @@ def customer_statement(request, public_id):
                            else (brought_forward or 0),
         "brought_forward": brought_forward,
         "date_from": date_from, "date_to": date_to,
-        "branches": Branch.objects.for_business(request.business).filter(
-            is_active=True),
+        "branches": branches,
         "branch_id": branch_id,
         "filter_querystring": filter_querystring,
     })

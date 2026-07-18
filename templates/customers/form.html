@@ -24,7 +24,7 @@
         </div>
         <div class="row">
           <div class="col-md-6">{% include "components/form_field.html" with field=form.tax_number %}</div>
-          <div class="col-md-6">{% include "components/form_field.html" with field=form.credit_limit %}</div>
+          {% if credit_write %}<div class="col-md-6">{% include "components/form_field.html" with field=form.credit_limit %}</div>{% endif %}
         </div>
         {% include "components/form_field.html" with field=form.notes %}
         {% if form.more_option_fields %}

@@ -4,7 +4,8 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
-from django.contrib.auth import update_session_auth_hash, views as auth_views
+from django.contrib.auth import update_session_auth_hash
+from django.contrib.auth import views as auth_views
 from django.db import transaction
 from django.shortcuts import redirect, render
 from django.urls import reverse_lazy
@@ -13,9 +14,9 @@ from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
 from apps.audit.services import client_ip
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, get_access_context, require_access
 from apps.subscriptions.decorators import module_permission_required
 
 from .forms import (
@@ -30,6 +31,32 @@ from .models import LoginHistory, Membership, Role, User
 from .services import post_login_redirect, resolve_user_home_route
 
 security_log = logging.getLogger("nexapos.security")
+
+
+def _custom_roles_enabled(request):
+    return get_access_context(request).has_module("custom_roles")
+
+
+def _require_custom_role_assignment(request, *, current_role=None):
+    """Gate only selecting a new custom role; preserve existing assignments."""
+
+    if request.method != "POST":
+        return
+    selected = Role.objects.for_business(request.business).filter(
+        pk=request.POST.get("role")
+    ).first()
+    if (
+        selected is not None
+        and not selected.is_system
+        and not selected.is_owner
+        and (current_role is None or selected.pk != current_role.pk)
+    ):
+        require_access(
+            request,
+            "custom_roles",
+            permission_code="users.manage",
+            action=AccessAction.WRITE,
+        )
 
 
 def login_view(request):
@@ -175,7 +202,13 @@ def user_create(request):
     if blocked:
         return blocked
 
-    form = EmployeeForm(request.business, request.POST or None)
+    _require_custom_role_assignment(request)
+    custom_roles_enabled = _custom_roles_enabled(request)
+    form = EmployeeForm(
+        request.business,
+        request.POST or None,
+        custom_roles_enabled=custom_roles_enabled,
+    )
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             email = form.cleaned_data["email"]
@@ -206,6 +239,8 @@ def user_create(request):
 @module_permission_required("pos_core", "users.manage")
 def user_edit(request, public_id):
     membership = get_tenant_object(Membership, request.business, public_id=public_id)
+    _require_custom_role_assignment(request, current_role=membership.role)
+    custom_roles_enabled = _custom_roles_enabled(request)
     initial = {
         "full_name": membership.user.full_name,
         "email": membership.user.email,
@@ -215,7 +250,8 @@ def user_edit(request, public_id):
         "is_active": membership.is_active,
     }
     form = EmployeeForm(request.business, request.POST or None,
-                        editing=membership, initial=initial)
+                        editing=membership, initial=initial,
+                        custom_roles_enabled=custom_roles_enabled)
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             user = membership.user
@@ -240,15 +276,16 @@ def user_edit(request, public_id):
                   {"form": form, "active_nav": "users", "membership": membership})
 
 
-@require_permission("users.manage")
+@module_permission_required("pos_core", "users.manage")
 def role_list(request):
     roles = Role.objects.for_business(request.business).order_by("-is_owner", "name")
-    can_custom = subscriptions.has_feature(request.business, "custom_roles")
+    context = get_access_context(request)
+    can_custom = context.has_module("custom_roles") and context.can_write
     return render(request, "accounts/role_list.html",
                   {"roles": roles, "active_nav": "users", "can_custom": can_custom})
 
 
-@require_permission("users.manage")
+@module_permission_required("pos_core", "users.manage", action=AccessAction.WRITE)
 def role_form(request, public_id=None):
     instance = None
     if public_id:
@@ -256,9 +293,20 @@ def role_form(request, public_id=None):
         if instance.is_owner:
             messages.error(request, "The owner role cannot be edited.")
             return redirect("accounts:role_list")
-    elif not subscriptions.has_feature(request.business, "custom_roles"):
-        messages.warning(request, "Custom roles are not included in your plan.")
-        return redirect("accounts:role_list")
+        if not instance.is_system:
+            require_access(
+                request,
+                "custom_roles",
+                permission_code="users.manage",
+                action=AccessAction.WRITE,
+            )
+    else:
+        require_access(
+            request,
+            "custom_roles",
+            permission_code="users.manage",
+            action=AccessAction.WRITE,
+        )
 
     form = RoleForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():

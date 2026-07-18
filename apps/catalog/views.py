@@ -11,10 +11,10 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.inventory import services as inventory
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction, get_access_context, require_access
 from apps.subscriptions.decorators import module_permission_required
 
 from .forms import (
@@ -34,6 +34,22 @@ def _allowed_warehouse_ids(request):
     return request.membership.allowed_warehouse_ids
 
 
+def _tailoring_enabled(request):
+    return get_access_context(request).has_module("tailoring")
+
+
+def _require_tailoring_product_access(
+    request, product, *, permission_code, action=AccessAction.READ
+):
+    if product.is_tailoring_item:
+        require_access(
+            request,
+            "tailoring",
+            permission_code=permission_code,
+            action=action,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Products
 # ---------------------------------------------------------------------------
@@ -43,6 +59,8 @@ def product_list(request):
         Product.objects.for_business(request.business)
         .select_related("category", "brand", "unit", "tax_rate")
     )
+    if not _tailoring_enabled(request):
+        qs = qs.filter(is_tailoring_item=False)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(name__icontains=q) | Q(sku__icontains=q) |
@@ -130,6 +148,7 @@ def product_export(request):
         "branch_id": branch_id,
         "warehouse_id": warehouse_id,
         "status": request.GET.get("status", ""),
+        "include_tailoring": _tailoring_enabled(request),
     }
     data = catalog_services.product_export_dataset(
         request.business,
@@ -149,6 +168,12 @@ def product_form(request, public_id=None):
     instance = None
     if public_id:
         instance = get_tenant_object(Product, request.business, public_id=public_id)
+        _require_tailoring_product_access(
+            request,
+            instance,
+            permission_code="products.manage",
+            action=AccessAction.WRITE,
+        )
     else:
         from apps.subscriptions.helpers import guard_limit
 
@@ -156,12 +181,14 @@ def product_form(request, public_id=None):
         if blocked:
             return blocked
 
+    tailoring_enabled = _tailoring_enabled(request)
     form = ProductForm(
         request.business,
         request.POST or None,
         request.FILES or None,
         instance=instance,
         allowed_warehouse_ids=_allowed_warehouse_ids(request),
+        tailoring_enabled=tailoring_enabled,
     )
     if request.method == "POST" and form.is_valid():
         auto_sku = form.cleaned_data.get("auto_generate_sku")
@@ -186,7 +213,8 @@ def product_form(request, public_id=None):
                 messages.error(request, err)
             return render(request, "catalog/product_form.html",
                           {"form": form, "product": instance,
-                           "active_nav": "products"})
+                           "active_nav": "products",
+                           "tailoring_enabled": tailoring_enabled})
 
         with transaction.atomic():
             if instance is not None:
@@ -213,6 +241,7 @@ def product_form(request, public_id=None):
                             "form": form,
                             "product": instance,
                             "active_nav": "products",
+                            "tailoring_enabled": tailoring_enabled,
                         },
                     )
             # A concurrent ledger write may have appeared after form.clean().
@@ -263,7 +292,8 @@ def product_form(request, public_id=None):
             return redirect("catalog:product_detail", public_id=product.public_id)
         return redirect("catalog:product_list")
     return render(request, "catalog/product_form.html",
-                  {"form": form, "product": instance, "active_nav": "products"})
+                  {"form": form, "product": instance, "active_nav": "products",
+                   "tailoring_enabled": tailoring_enabled})
 
 
 VARIANT_DECIMAL_MAX = Decimal("99999999999.999")
@@ -409,6 +439,9 @@ def product_detail(request, public_id):
         Product.objects.select_related("category", "brand", "unit", "tax_rate"),
         request.business, public_id=public_id,
     )
+    _require_tailoring_product_access(
+        request, product, permission_code="products.view"
+    )
     variants = product.variants.all()
     levels = (
         inventory.StockLevel.objects.for_business(request.business)
@@ -428,6 +461,12 @@ def product_detail(request, public_id):
 @module_permission_required("pos_core", "products.archive")
 def product_archive(request, public_id):
     product = get_tenant_object(Product, request.business, public_id=public_id)
+    _require_tailoring_product_access(
+        request,
+        product,
+        permission_code="products.archive",
+        action=AccessAction.WRITE,
+    )
     if request.method == "POST":
         # Products referenced by invoices are archived, never deleted.
         from . import services as catalog_services
@@ -447,6 +486,12 @@ def product_restore(request, public_id):
     from . import services as catalog_services
 
     product = get_tenant_object(Product, request.business, public_id=public_id)
+    _require_tailoring_product_access(
+        request,
+        product,
+        permission_code="products.archive",
+        action=AccessAction.WRITE,
+    )
     if request.method == "POST":
         product = catalog_services.restore_product(
             product, user=request.user, membership=request.membership,
@@ -463,6 +508,12 @@ def product_delete(request, public_id):
     from . import services as catalog_services
 
     product = get_tenant_object(Product, request.business, public_id=public_id)
+    _require_tailoring_product_access(
+        request,
+        product,
+        permission_code="products.delete",
+        action=AccessAction.WRITE,
+    )
     if request.method == "POST":
         name, ref = product.name, str(product.public_id)
         try:
@@ -484,6 +535,12 @@ def product_delete(request, public_id):
 @module_permission_required("pos_core", "products.manage")
 def variant_form(request, product_id, public_id=None):
     product = get_tenant_object(Product, request.business, public_id=product_id)
+    _require_tailoring_product_access(
+        request,
+        product,
+        permission_code="products.manage",
+        action=AccessAction.WRITE,
+    )
     instance = None
     if public_id:
         instance = get_tenant_object(ProductVariant, request.business, public_id=public_id)
@@ -554,22 +611,28 @@ def variant_form(request, product_id, public_id=None):
 # ---------------------------------------------------------------------------
 # Barcode generation / labels
 # ---------------------------------------------------------------------------
-@require_permission("products.view")
+@module_permission_required("barcode_printing", "products.view")
 def product_barcode_svg(request, public_id):
     """Server-generated Code128 barcode as SVG."""
     import barcode
     from barcode.writer import SVGWriter
 
     product = get_tenant_object(Product, request.business, public_id=public_id)
+    _require_tailoring_product_access(
+        request, product, permission_code="products.view"
+    )
     code = product.barcode or product.sku or f"P{product.pk:08d}"
     buffer = io.BytesIO()
     barcode.get("code128", code, writer=SVGWriter()).write(buffer)
     return HttpResponse(buffer.getvalue(), content_type="image/svg+xml")
 
 
-@require_permission("products.view")
+@module_permission_required("barcode_printing", "products.view")
 def product_labels(request, public_id):
     product = get_tenant_object(Product, request.business, public_id=public_id)
+    _require_tailoring_product_access(
+        request, product, permission_code="products.view"
+    )
     try:
         count = max(1, min(int(request.GET.get("count", 12)), 120))
     except ValueError:

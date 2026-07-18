@@ -1,5 +1,3 @@
-import logging
-
 from django import forms
 from django.contrib import messages
 from django.core.paginator import Paginator
@@ -8,26 +6,19 @@ from django.db.models import Count, Q, Sum
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
 from apps.branches.forms import TenantStyledModelForm
 from apps.branches.models import Branch
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.registers import services as register_services
-from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import AccessAction
+from apps.subscriptions.decorators import module_permission_required
 
 from .models import Expense, ExpenseCategory, RecurringExpenseTemplate
-from .services import (
-    RecurringExpenseGenerationError,
-    ensure_recurring_expenses_for_month,
-    next_expense_number,
-)
-
-logger = logging.getLogger(__name__)
+from .services import next_expense_number
 
 
 class ExpenseForm(TenantStyledModelForm):
@@ -41,12 +32,15 @@ class ExpenseForm(TenantStyledModelForm):
             "description": forms.Textarea(attrs={"rows": 2}),
         }
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, membership=None, **kwargs):
         super().__init__(business, *args, **kwargs)
         from apps.sales.models import PaymentMethod
         from apps.suppliers.models import Supplier
 
-        self.fields["branch"].queryset = Branch.objects.for_business(business).filter(is_active=True)
+        branches = Branch.objects.for_business(business).filter(is_active=True)
+        if membership is not None and membership.allowed_branch_ids is not None:
+            branches = branches.filter(id__in=membership.allowed_branch_ids)
+        self.fields["branch"].queryset = branches
         self.fields["category"].queryset = ExpenseCategory.objects.for_business(business).filter(is_active=True)
         self.fields["supplier"].queryset = Supplier.objects.for_business(business).filter(is_active=True)
         self.fields["supplier"].required = False
@@ -96,7 +90,7 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
             "due_day": forms.NumberInput(attrs={"min": 1, "max": 31}),
         }
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, membership=None, **kwargs):
         super().__init__(business, *args, **kwargs)
         categories = ExpenseCategory.objects.for_business(business)
         if self.instance.pk and self.instance.category_id:
@@ -128,24 +122,21 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
         return cleaned_data
 
 
-@require_permission("expenses.view")
+def _expenses_for_request(request, queryset=None):
+    queryset = queryset if queryset is not None else Expense.objects.all()
+    queryset = queryset.for_business(request.business)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        queryset = queryset.filter(branch_id__in=allowed_branch_ids)
+    return queryset
+
+
+@module_permission_required(
+    "expenses", "expenses.view", action=AccessAction.READ
+)
 def expense_list(request):
-    if not subscriptions.has_feature(request.business, "expenses"):
-        return render(request, "inventory/feature_locked.html",
-                      {"feature": "Expenses", "active_nav": "expenses"})
-    try:
-        ensure_recurring_expenses_for_month(
-            request.business,
-            timezone.localdate(),
-        )
-    except RecurringExpenseGenerationError as exc:
-        logger.warning(
-            "Fixed-expense generation skipped for business %s: %s",
-            request.business.pk,
-            exc,
-        )
     qs = (
-        Expense.objects.for_business(request.business)
+        _expenses_for_request(request)
         .filter(recurring_template__isnull=True)
         .select_related(
             "category", "branch", "created_by", "payment_method",
@@ -189,11 +180,17 @@ def expense_list(request):
     })
 
 
-@require_permission("expenses.manage")
+@module_permission_required(
+    "expenses", "expenses.manage", action=AccessAction.WRITE
+)
 def expense_create(request, public_id=None):
     instance = None
     if public_id:
-        instance = get_tenant_object(Expense, request.business, public_id=public_id)
+        instance = get_tenant_object(
+            _expenses_for_request(request),
+            request.business,
+            public_id=public_id,
+        )
         editable_statuses = (
             Expense.Status.DRAFT,
             Expense.Status.SUBMITTED,
@@ -206,14 +203,14 @@ def expense_create(request, public_id=None):
         if instance.status not in editable_statuses and not recurring_approved:
             messages.error(request, "Approved or paid expenses cannot be edited.")
             return redirect("expenses:list")
-    form = ExpenseForm(request.business, request.POST or None,
-                       request.FILES or None, instance=instance)
+    form = ExpenseForm(
+        request.business,
+        request.POST or None,
+        request.FILES or None,
+        instance=instance,
+        membership=request.membership,
+    )
     if request.method == "POST" and form.is_valid():
-        try:
-            subscriptions.require_operational(request.business)
-        except subscriptions.SubscriptionInactive as exc:
-            messages.error(request, str(exc))
-            return redirect("expenses:list")
         expense = form.save(commit=False)
         expense.business = request.business
         if instance is None:
@@ -250,40 +247,36 @@ def expense_create(request, public_id=None):
                   {"form": form, "expense": instance, "active_nav": "expenses"})
 
 
-@require_permission("expenses.approve")
+@require_POST
+@module_permission_required(
+    "expenses", "expenses.approve", action=AccessAction.WRITE
+)
 def expense_action(request, public_id, action):
-    expense = get_tenant_object(Expense, request.business, public_id=public_id)
-    if request.method == "POST":
-        if action == "approve" and expense.status == Expense.Status.SUBMITTED:
-            expense.status = Expense.Status.APPROVED
-            expense.approved_by = request.user
-            expense.save(update_fields=["status", "approved_by", "updated_at"])
-            messages.success(request, "Expense approved.")
-        elif action == "reject" and expense.status == Expense.Status.SUBMITTED:
-            expense.status = Expense.Status.REJECTED
-            expense.approved_by = request.user
-            expense.save(update_fields=["status", "approved_by", "updated_at"])
-            messages.success(request, "Expense rejected.")
-        elif action == "cancel" and expense.status in (
-            Expense.Status.DRAFT, Expense.Status.SUBMITTED, Expense.Status.APPROVED
-        ):
-            expense.status = Expense.Status.CANCELLED
-            expense.save(update_fields=["status", "updated_at"])
-            messages.success(request, "Expense cancelled.")
-        audit.log(f"expense.{action}", request=request, module="expenses",
-                  obj=expense,
-                  description=f"Expense {expense.expense_number} {action}d.")
-    return redirect("expenses:list")
-
-
-def _recurring_feature_lock(request):
-    if subscriptions.has_feature(request.business, "expenses"):
-        return None
-    return render(
-        request,
-        "inventory/feature_locked.html",
-        {"feature": "Expenses", "active_nav": "expenses"},
+    expense = get_tenant_object(
+        _expenses_for_request(request), request.business, public_id=public_id
     )
+    if action == "approve" and expense.status == Expense.Status.SUBMITTED:
+        expense.status = Expense.Status.APPROVED
+        expense.approved_by = request.user
+        expense.save(update_fields=["status", "approved_by", "updated_at"])
+        messages.success(request, "Expense approved.")
+    elif action == "reject" and expense.status == Expense.Status.SUBMITTED:
+        expense.status = Expense.Status.REJECTED
+        expense.approved_by = request.user
+        expense.save(update_fields=["status", "approved_by", "updated_at"])
+        messages.success(request, "Expense rejected.")
+    elif action == "cancel" and expense.status in (
+        Expense.Status.DRAFT,
+        Expense.Status.SUBMITTED,
+        Expense.Status.APPROVED,
+    ):
+        expense.status = Expense.Status.CANCELLED
+        expense.save(update_fields=["status", "updated_at"])
+        messages.success(request, "Expense cancelled.")
+    audit.log(f"expense.{action}", request=request, module="expenses",
+              obj=expense,
+              description=f"Expense {expense.expense_number} {action}d.")
+    return redirect("expenses:list")
 
 
 def _fixed_expenses_url():
@@ -294,19 +287,17 @@ def _fixed_expenses_redirect():
     return redirect(_fixed_expenses_url())
 
 
-@require_permission("expenses.view")
+@module_permission_required(
+    "expenses", "expenses.view", action=AccessAction.READ
+)
 def recurring_template_list(request):
-    locked = _recurring_feature_lock(request)
-    if locked is not None:
-        return locked
     return _fixed_expenses_redirect()
 
 
-@require_permission("expenses.manage")
+@module_permission_required(
+    "expenses", "expenses.manage", action=AccessAction.WRITE
+)
 def recurring_template_form(request, public_id=None):
-    locked = _recurring_feature_lock(request)
-    if locked is not None:
-        return locked
     instance = None
     if public_id:
         instance = get_tenant_object(
@@ -320,11 +311,6 @@ def recurring_template_form(request, public_id=None):
         instance=instance,
     )
     if request.method == "POST" and form.is_valid():
-        try:
-            subscriptions.require_operational(request.business)
-        except subscriptions.SubscriptionInactive as exc:
-            messages.error(request, str(exc))
-            return _fixed_expenses_redirect()
         template = form.save(commit=False)
         template.business = request.business
         template.save()
@@ -345,12 +331,11 @@ def recurring_template_form(request, public_id=None):
     })
 
 
-@require_permission("expenses.manage")
 @require_POST
+@module_permission_required(
+    "expenses", "expenses.manage", action=AccessAction.WRITE
+)
 def recurring_template_action(request, public_id, action):
-    locked = _recurring_feature_lock(request)
-    if locked is not None:
-        return locked
     template = get_tenant_object(
         RecurringExpenseTemplate,
         request.business,
@@ -379,11 +364,10 @@ def recurring_template_action(request, public_id, action):
     return _fixed_expenses_redirect()
 
 
-@require_permission("expenses.manage")
+@module_permission_required(
+    "expenses", "expenses.manage", action=AccessAction.WRITE
+)
 def recurring_template_delete(request, public_id):
-    locked = _recurring_feature_lock(request)
-    if locked is not None:
-        return locked
     template = get_tenant_object(
         RecurringExpenseTemplate,
         request.business,
@@ -433,7 +417,9 @@ def recurring_template_delete(request, public_id):
     return _fixed_expenses_redirect()
 
 
-@require_permission("expenses.manage")
+@module_permission_required(
+    "expenses", "expenses.manage", action=AccessAction.WRITE
+)
 def category_manage(request):
     instance = None
     edit_id = request.GET.get("edit")

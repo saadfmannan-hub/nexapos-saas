@@ -11,6 +11,7 @@ from apps.inventory.services import InsufficientStock
 from apps.sales import services as sales
 from apps.sales.models import Sale, SaleReturn
 from apps.sales.services import SaleError
+from apps.subscriptions.exceptions import DenialCode, ModuleAccessDenied
 
 from .base import TenantTestCase
 
@@ -123,7 +124,7 @@ class SaleServiceTests(TenantTestCase):
         cashier_membership = Membership.objects.get(
             business=self.business_a, user=self.cashier_a)
         # Cashier role lacks sales.credit → blocked
-        with self.assertRaises(SaleError):
+        with self.assertRaises(ModuleAccessDenied) as caught:
             sales.complete_sale(
                 business=self.business_a, branch=self.branch_a,
                 warehouse=self.warehouse_a, cashier=self.cashier_a,
@@ -133,6 +134,7 @@ class SaleServiceTests(TenantTestCase):
                 payments=[{"method": self.credit_a, "amount": D("10.500")}],
                 membership=cashier_membership,
             )
+        self.assertEqual(caught.exception.denial.code, DenialCode.PERMISSION_DENIED)
 
     def test_discount_permission_enforced(self):
         from apps.accounts.models import Membership, Role

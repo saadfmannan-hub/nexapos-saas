@@ -181,17 +181,38 @@ class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
         }
 
     def __init__(
-        self, business, *args, allowed_warehouse_ids=None, **kwargs
+        self,
+        business,
+        *args,
+        allowed_warehouse_ids=None,
+        tailoring_enabled=True,
+        **kwargs,
     ):
         super().__init__(business, *args, **kwargs)
         from apps.suppliers.models import Supplier
 
+        self.tailoring_enabled = bool(tailoring_enabled)
         self.fields["category"].queryset = Category.objects.for_business(business).filter(is_active=True)
         self.fields["brand"].queryset = Brand.objects.for_business(business).filter(is_active=True)
         unit_qs = Unit.objects.for_business(business).filter(is_active=True)
         if self.instance.pk and self.instance.unit_id:
             unit_qs = Unit.objects.for_business(business).filter(
                 Q(is_active=True) | Q(pk=self.instance.unit_id)
+            )
+        if not self.tailoring_enabled:
+            # Meter is the canonical trigger for the locked tailoring workflow.
+            # Preserve an existing historical Meter retail product, but never
+            # offer Meter as a way to activate Tailoring on a retail-only plan.
+            legacy_meter_retail_id = (
+                self.instance.unit_id
+                if self.instance.pk
+                and self.instance.unit_id
+                and self.instance.unit.is_meter
+                and not self.instance.is_tailoring_item
+                else None
+            )
+            unit_qs = unit_qs.filter(
+                Q(is_meter=False) | Q(pk=legacy_meter_retail_id)
             )
         self.fields["unit"].queryset = unit_qs
         self.fields["tax_rate"].queryset = TaxRate.objects.for_business(business).filter(is_active=True)
@@ -254,6 +275,10 @@ class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
         self.fields["sku"].widget.attrs["x-bind:placeholder"] = (
             "autoSku ? 'Auto-generated on save' : ''"
         )
+        if not self.tailoring_enabled:
+            self.fields.pop("is_tailoring_item", None)
+            self.fields.pop("estimated_adult_fabric", None)
+            self.fields.pop("estimated_child_fabric", None)
         if self.instance.pk:  # parent opening stock only at creation
             del self.fields["opening_stock"]
             selected_type = (
@@ -444,12 +469,15 @@ class QuickProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
             ]),
         }
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, tailoring_enabled=True, **kwargs):
         super().__init__(business, *args, **kwargs)
+        self.tailoring_enabled = bool(tailoring_enabled)
         self.fields["category"].queryset = Category.objects.for_business(
             business).filter(is_active=True)
-        self.fields["unit"].queryset = Unit.objects.for_business(
-            business).filter(is_active=True)
+        unit_qs = Unit.objects.for_business(business).filter(is_active=True)
+        if not self.tailoring_enabled:
+            unit_qs = unit_qs.filter(is_meter=False)
+        self.fields["unit"].queryset = unit_qs
         self.fields["tax_rate"].queryset = TaxRate.objects.for_business(
             business).filter(is_active=True)
         self.fields["category"].required = False

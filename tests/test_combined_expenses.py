@@ -1,4 +1,4 @@
-"""Focused coverage for the combined Expenses screen and report generation."""
+"""Focused coverage for the combined Expenses screen and recurring rows."""
 from datetime import date
 from decimal import Decimal as D
 from io import BytesIO
@@ -11,6 +11,10 @@ from django.utils import timezone
 
 from apps.accounts.models import Membership, Role, User
 from apps.expenses.models import Expense, RecurringExpenseTemplate
+from apps.expenses.services import (
+    ensure_recurring_expenses_for_month,
+    ensure_recurring_expenses_for_range,
+)
 from tests.base import TenantTestCase
 from tests.test_recurring_expenses import RecurringExpenseTestMixin
 
@@ -99,7 +103,7 @@ class CombinedExpensesPageTests(RecurringExpenseTestMixin, TenantTestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, self.fixed_anchor)
 
-    def test_page_access_generates_current_month_once(self):
+    def test_page_access_never_generates_recurring_expenses(self):
         today = timezone.localdate()
         month_start = today.replace(day=1)
         template = self.make_template(start_date=month_start)
@@ -109,16 +113,22 @@ class CombinedExpensesPageTests(RecurringExpenseTestMixin, TenantTestCase):
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(template.generated_expenses.count(), 1)
-        expense = template.generated_expenses.get()
-        self.assertEqual(expense.generated_for_month, month_start)
+        self.assertFalse(template.generated_expenses.exists())
 
-    def test_page_generation_does_not_create_other_months(self):
+    def test_page_access_preserves_only_explicitly_generated_months(self):
         today = timezone.localdate()
         template = self.make_template(start_date=today.replace(day=1))
+        ensure_recurring_expenses_for_month(self.business_a, today)
+        before = list(
+            template.generated_expenses.values_list(
+                "generated_for_month",
+                flat=True,
+            )
+        )
 
-        self.client.get(reverse("expenses:list"))
+        response = self.client.get(reverse("expenses:list"))
 
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(
             list(
                 template.generated_expenses.values_list(
@@ -126,8 +136,9 @@ class CombinedExpensesPageTests(RecurringExpenseTestMixin, TenantTestCase):
                     flat=True,
                 )
             ),
-            [today.replace(day=1)],
+            before,
         )
+        self.assertEqual(before, [today.replace(day=1)])
 
     def test_current_expense_filters_remain_scoped_to_top_section(self):
         matching = self.make_manual_expense(
@@ -284,12 +295,14 @@ class AutomaticFixedExpenseReportTests(
             params["branch"] = branch
         return f"{reverse('reports:view', args=[key])}?{urlencode(params)}"
 
-    def test_one_month_report_generates_applicable_fixed_expense_once(self):
+    def test_one_month_report_reads_explicit_fixed_expense_without_mutation(self):
         template = self.make_template(
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
             due_day=12,
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_before = template.generated_expenses.count()
         url = self.report_url(date(2026, 7, 1), date(2026, 7, 31))
 
         first = self.client.get(url)
@@ -297,16 +310,23 @@ class AutomaticFixedExpenseReportTests(
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(template.generated_expenses.count(), 1)
+        self.assertEqual(generated_before, 1)
+        self.assertEqual(template.generated_expenses.count(), generated_before)
         self.assertEqual(len(first.context["data"]["rows"]), 1)
         self.assertEqual(first.context["data"]["rows"][0][3], "Fixed")
 
-    def test_multi_month_report_generates_each_applicable_month_once(self):
+    def test_multi_month_report_reads_explicit_months_without_mutation(self):
         template = self.make_template(
             start_date=date(2026, 1, 1),
             end_date=date(2026, 3, 31),
             default_amount=D("20.000"),
         )
+        ensure_recurring_expenses_for_range(
+            self.business_a,
+            date(2026, 1, 1),
+            date(2026, 3, 31),
+        )
+        generated_before = template.generated_expenses.count()
         url = self.report_url(date(2026, 1, 1), date(2026, 3, 31))
 
         first = self.client.get(url)
@@ -314,7 +334,8 @@ class AutomaticFixedExpenseReportTests(
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(template.generated_expenses.count(), 3)
+        self.assertEqual(generated_before, 3)
+        self.assertEqual(template.generated_expenses.count(), generated_before)
         self.assertEqual(
             set(
                 template.generated_expenses.values_list(
@@ -328,11 +349,19 @@ class AutomaticFixedExpenseReportTests(
 
     def test_report_does_not_generate_unrequested_future_months(self):
         template = self.make_template(start_date=date(2026, 1, 1))
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 1, 1))
+        generated_before = list(
+            template.generated_expenses.values_list(
+                "generated_for_month",
+                flat=True,
+            )
+        )
 
-        self.client.get(
+        response = self.client.get(
             self.report_url(date(2026, 1, 1), date(2026, 1, 31))
         )
 
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(
             list(
                 template.generated_expenses.values_list(
@@ -340,8 +369,9 @@ class AutomaticFixedExpenseReportTests(
                     flat=True,
                 )
             ),
-            [date(2026, 1, 1)],
+            generated_before,
         )
+        self.assertEqual(generated_before, [date(2026, 1, 1)])
 
     def test_inactive_and_out_of_range_fixed_expenses_are_not_generated(self):
         inactive = self.make_template(
@@ -353,6 +383,7 @@ class AutomaticFixedExpenseReportTests(
             name="Future rent",
             start_date=date(2026, 4, 1),
         )
+        expense_count_before = Expense.objects.count()
 
         response = self.client.get(
             self.report_url(date(2026, 1, 1), date(2026, 3, 31))
@@ -361,6 +392,7 @@ class AutomaticFixedExpenseReportTests(
         self.assertEqual(response.status_code, 200)
         self.assertFalse(inactive.generated_expenses.exists())
         self.assertFalse(future.generated_expenses.exists())
+        self.assertEqual(Expense.objects.count(), expense_count_before)
         self.assertEqual(response.context["data"]["rows"], [])
 
     def test_report_has_current_and_fixed_rows_with_one_combined_total(self):
@@ -373,6 +405,8 @@ class AutomaticFixedExpenseReportTests(
             end_date=date(2026, 7, 31),
             default_amount=D("250.000"),
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_before = template.generated_expenses.count()
 
         response = self.client.get(
             self.report_url(date(2026, 7, 1), date(2026, 7, 31))
@@ -382,7 +416,8 @@ class AutomaticFixedExpenseReportTests(
         self.assertEqual({row[3] for row in data["rows"]}, {"Current", "Fixed"})
         self.assertEqual(data["totals"][6], D("255.000"))
         self.assertEqual(len(data["rows"]), 2)
-        self.assertEqual(template.generated_expenses.count(), 1)
+        self.assertEqual(generated_before, 1)
+        self.assertEqual(template.generated_expenses.count(), generated_before)
         self.assertIn(manual.expense_number, {row[0] for row in data["rows"]})
 
     def test_expense_report_date_and_branch_filters_still_apply(self):
@@ -395,6 +430,8 @@ class AutomaticFixedExpenseReportTests(
             end_date=date(2026, 7, 31),
             due_day=20,
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_before = template.generated_expenses.count()
 
         included = self.client.get(
             self.report_url(
@@ -421,7 +458,8 @@ class AutomaticFixedExpenseReportTests(
         self.assertEqual(len(included.context["data"]["rows"]), 2)
         self.assertEqual(len(excluded_by_date.context["data"]["rows"]), 1)
         self.assertEqual(excluded_by_branch.context["data"]["rows"], [])
-        self.assertEqual(template.generated_expenses.count(), 1)
+        self.assertEqual(generated_before, 1)
+        self.assertEqual(template.generated_expenses.count(), generated_before)
 
     def test_csv_xlsx_and_pdf_include_current_and_fixed_rows(self):
         self.make_manual_expense(
@@ -433,6 +471,8 @@ class AutomaticFixedExpenseReportTests(
             end_date=date(2026, 7, 31),
             default_amount=D("250.000"),
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_before = template.generated_expenses.count()
         start, end = date(2026, 7, 1), date(2026, 7, 31)
 
         csv_response = self.client.get(
@@ -468,14 +508,17 @@ class AutomaticFixedExpenseReportTests(
         pdf_data = export_pdf.call_args.args[1]
         self.assertEqual({row[3] for row in pdf_data["rows"]}, {"Current", "Fixed"})
         self.assertEqual(pdf_data["totals"][6], D("255.000"))
-        self.assertEqual(template.generated_expenses.count(), 1)
+        self.assertEqual(generated_before, 1)
+        self.assertEqual(template.generated_expenses.count(), generated_before)
 
-    def test_other_financial_reports_reuse_the_same_generated_row(self):
+    def test_other_financial_reports_read_same_row_without_mutation(self):
         template = self.make_template(
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
             default_amount=D("20.000"),
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_before = template.generated_expenses.count()
         for key in ("profit", "profit_loss", "cash_flow", "expense_analysis"):
             with self.subTest(key=key):
                 response = self.client.get(
@@ -486,20 +529,25 @@ class AutomaticFixedExpenseReportTests(
                     )
                 )
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(template.generated_expenses.count(), 1)
+                self.assertEqual(generated_before, 1)
+                self.assertEqual(
+                    template.generated_expenses.count(),
+                    generated_before,
+                )
 
-    def test_oversized_report_range_is_rejected_without_generation(self):
+    def test_oversized_report_range_is_read_only(self):
         template = self.make_template(start_date=date(2000, 1, 1))
+        expense_count_before = Expense.objects.count()
 
         response = self.client.get(
             self.report_url(date(2000, 1, 1), date(2010, 1, 31))
         )
 
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("reports:view", args=["expenses"]))
+        self.assertEqual(response.status_code, 200)
         self.assertFalse(template.generated_expenses.exists())
+        self.assertEqual(Expense.objects.count(), expense_count_before)
 
-    def test_report_generation_is_tenant_isolated(self):
+    def test_report_reads_only_explicit_rows_for_current_tenant(self):
         template_a = self.make_template(
             name="Alpha rent",
             start_date=date(2026, 7, 1),
@@ -511,13 +559,18 @@ class AutomaticFixedExpenseReportTests(
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 31),
         )
+        ensure_recurring_expenses_for_month(self.business_a, date(2026, 7, 1))
+        generated_a_before = template_a.generated_expenses.count()
+        generated_b_before = template_b.generated_expenses.count()
 
         response = self.client.get(
             self.report_url(date(2026, 7, 1), date(2026, 7, 31))
         )
 
-        self.assertEqual(template_a.generated_expenses.count(), 1)
-        self.assertFalse(template_b.generated_expenses.exists())
+        self.assertEqual(generated_a_before, 1)
+        self.assertEqual(generated_b_before, 0)
+        self.assertEqual(template_a.generated_expenses.count(), generated_a_before)
+        self.assertEqual(template_b.generated_expenses.count(), generated_b_before)
         numbers = {row[0] for row in response.context["data"]["rows"]}
         self.assertIn(template_a.generated_expenses.get().expense_number, numbers)
         self.assertNotIn(f"REC-202607-{template_b.pk}", numbers)

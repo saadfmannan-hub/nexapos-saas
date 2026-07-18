@@ -6,7 +6,6 @@ movements, customer balance changes and an invoice number.
 """
 from decimal import Decimal, InvalidOperation
 
-from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
 from django.utils import timezone
@@ -97,6 +96,26 @@ def _require_pos_write(
             scope_allowed=False,
         )
     return context
+
+
+def _require_tailoring_write(
+    *, business, user, permission_code, membership=None, request=None
+):
+    """Apply Tailoring on top of POS Core for Tailoring-only mutations."""
+
+    return require_actor_access(
+        user,
+        business,
+        "tailoring",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+
+
+def sale_has_tailoring_lines(sale):
+    return any(item.is_tailoring_line for item in sale.items.all())
 
 
 def _deny_pos_scope(*, business, user, permission_code, membership, request=None):
@@ -372,6 +391,29 @@ def hold_sale(
         raise SaleError("Invalid branch.")
     if not isinstance(cart, dict):
         raise SaleError("Invalid cart.")
+    cart_items = cart.get("items", [])
+    product_ids = {
+        line.get("product_id")
+        for line in cart_items
+        if isinstance(line, dict) and line.get("product_id")
+    }
+    has_tailoring_product = Product.objects.for_business(business).filter(
+        pk__in=product_ids,
+        is_tailoring_item=True,
+    ).exists()
+    has_tailoring_metadata = bool(
+        cart.get("delivery_date")
+        or str(cart.get("priority") or Sale.Priority.NORMAL).strip().lower()
+        != Sale.Priority.NORMAL
+    )
+    if has_tailoring_product or has_tailoring_metadata:
+        _require_tailoring_write(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
     return HeldSale.objects.create(
         business=business,
         branch=branch,
@@ -399,13 +441,39 @@ def delete_held_sale(
         membership=membership,
         request=request,
     )
-    held_sales = HeldSale.objects.for_business(business).filter(
+    held_sales = HeldSale.objects.select_for_update().for_business(business).filter(
         pk=held_id,
         cashier=cashier,
     )
     allowed = context.membership.allowed_branch_ids
     if allowed is not None:
         held_sales = held_sales.filter(branch_id__in=allowed)
+    held_sale = held_sales.first()
+    if held_sale is None:
+        return False
+    raw_cart = held_sale.cart if isinstance(held_sale.cart, dict) else {}
+    product_ids = {
+        line.get("product_id")
+        for line in raw_cart.get("items", [])
+        if isinstance(line, dict) and line.get("product_id")
+    }
+    has_tailoring_product = Product.objects.for_business(business).filter(
+        pk__in=product_ids,
+        is_tailoring_item=True,
+    ).exists()
+    has_tailoring_metadata = bool(
+        raw_cart.get("delivery_date")
+        or str(raw_cart.get("priority") or Sale.Priority.NORMAL).strip().lower()
+        != Sale.Priority.NORMAL
+    )
+    if has_tailoring_product or has_tailoring_metadata:
+        _require_tailoring_write(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=context.membership,
+            request=request,
+        )
     deleted, _ = held_sales.delete()
     return bool(deleted)
 
@@ -694,6 +762,41 @@ def complete_sale(
             .first()
         )
         if existing is not None:
+            if (
+                sale_has_tailoring_lines(existing)
+                or existing.delivery_date is not None
+                or existing.priority != Sale.Priority.NORMAL
+            ):
+                _require_tailoring_write(
+                    business=business,
+                    user=cashier,
+                    permission_code="sales.create",
+                    membership=membership,
+                    request=request,
+                )
+            replay_payment_kinds = set(
+                existing.payments.values_list("method__kind", flat=True)
+            )
+            if PaymentMethod.Kind.CUSTOMER_CREDIT in replay_payment_kinds:
+                require_actor_access(
+                    cashier,
+                    business,
+                    "customer_credit",
+                    permission_code="sales.credit",
+                    action=AccessAction.WRITE,
+                    membership=membership,
+                    request=request,
+                )
+            elif PaymentMethod.Kind.STORE_CREDIT in replay_payment_kinds:
+                require_actor_access(
+                    cashier,
+                    business,
+                    "customer_credit",
+                    permission_code="sales.create",
+                    action=AccessAction.WRITE,
+                    membership=membership,
+                    request=request,
+                )
             return _validate_checkout_replay(
                 existing,
                 cashier=cashier,
@@ -738,11 +841,27 @@ def complete_sale(
         .filter(pk__in=variant_ids, business=business)
         .order_by("pk")
     }
+    if any(product.is_tailoring_item for product in locked_products.values()):
+        _require_tailoring_write(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=membership,
+            request=request,
+        )
 
     priority = str(priority or Sale.Priority.NORMAL).strip().lower()
     if priority not in dict(Sale.Priority.choices):
         message = "Select a valid order priority."
         raise SaleError(message, errors={"priority": message})
+    if priority != Sale.Priority.NORMAL or delivery_date is not None:
+        _require_tailoring_write(
+            business=business,
+            user=cashier,
+            permission_code="sales.create",
+            membership=membership,
+            request=request,
+        )
 
     settings_obj = business.settings
     invoice_discount = money(invoice_discount)
@@ -949,6 +1068,27 @@ def complete_sale(
     cash_tendered = payment_totals["cash_tendered"]
     precision_total = totals["total"]
 
+    if credit_amount > 0:
+        require_actor_access(
+            cashier,
+            business,
+            "customer_credit",
+            permission_code="sales.credit",
+            action=AccessAction.WRITE,
+            membership=membership,
+            request=request,
+        )
+    elif store_credit_amount > 0:
+        require_actor_access(
+            cashier,
+            business,
+            "customer_credit",
+            permission_code="sales.create",
+            action=AccessAction.WRITE,
+            membership=membership,
+            request=request,
+        )
+
     change_due = ZERO
     if pay_total > precision_total:
         overpay = pay_total - precision_total
@@ -1127,6 +1267,15 @@ def add_sale_payment(
         membership=membership,
         request=request,
     )
+    require_actor_access(
+        user,
+        sale.business,
+        "customer_credit",
+        permission_code="customers.payments",
+        action=AccessAction.WRITE,
+        membership=context.membership,
+        request=request,
+    )
     method = PaymentMethod.objects.select_for_update().filter(
         pk=getattr(method, "pk", None), business=sale.business
     ).first()
@@ -1243,11 +1392,18 @@ def delete_sale(*, sale, user, membership=None, request=None):
 
 @transaction.atomic
 def set_delivery_status(*, sale, status, user, membership=None, request=None):
-    sale, _context = _locked_sale_for_write(
+    sale, context = _locked_sale_for_write(
         sale=sale,
         user=user,
         permission_code="sales.create",
         membership=membership,
+        request=request,
+    )
+    _require_tailoring_write(
+        business=sale.business,
+        user=user,
+        permission_code="sales.create",
+        membership=context.membership,
         request=request,
     )
     if status not in dict(Sale.DeliveryStatus.choices):
@@ -1270,22 +1426,30 @@ def set_delivery_status(*, sale, status, user, membership=None, request=None):
 def update_actual_fabric(
     *, sale_item, actual_fabric_used, user, membership, request=None
 ):
-    if (
-        membership is None
-        or not membership.is_active
-        or membership.business_id != sale_item.business_id
-        or membership.user_id != user.id
-        or not membership.has_perm("workshop.fabric_actual")
-    ):
-        raise PermissionDenied
+    context = _require_tailoring_write(
+        business=sale_item.business,
+        user=user,
+        permission_code="workshop.fabric_actual",
+        membership=membership,
+        request=request,
+    )
 
     item = (
         SaleItem.objects.select_for_update()
         .select_related("sale__branch", "product")
-        .get(pk=sale_item.pk, business_id=membership.business_id)
+        .get(pk=sale_item.pk, business_id=context.membership.business_id)
     )
-    if not membership.can_access_branch(item.sale.branch):
-        raise PermissionDenied
+    if not context.membership.can_access_branch(item.sale.branch):
+        require_actor_access(
+            user,
+            item.business,
+            "tailoring",
+            permission_code="workshop.fabric_actual",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
     if not item.is_tailoring_line:
         raise SaleError("Actual fabric can only be recorded for tailoring items.")
     if item.fabric_meter_used is not None:
@@ -1317,7 +1481,7 @@ def update_actual_fabric(
 
 @transaction.atomic
 def void_sale(*, sale, user, reason, membership=None, request=None):
-    sale, _context = _locked_sale_for_write(
+    sale, context = _locked_sale_for_write(
         sale=sale,
         user=user,
         permission_code="sales.void",
@@ -1329,6 +1493,29 @@ def void_sale(*, sale, user, reason, membership=None, request=None):
         raise SaleError("Sale is already voided.")
     if sale.returns.exists():
         raise SaleError("A sale with returns cannot be voided.")
+    if sale_has_tailoring_lines(sale):
+        _require_tailoring_write(
+            business=sale.business,
+            user=user,
+            permission_code="sales.void",
+            membership=context.membership,
+            request=request,
+        )
+
+    credit_paid = sale.total - sale.amount_paid
+    store_credit_used = sale.payments.filter(
+        method__kind=PaymentMethod.Kind.STORE_CREDIT
+    ).aggregate(t=Sum("amount"))["t"] or ZERO
+    if credit_paid > 0 or store_credit_used > 0:
+        require_actor_access(
+            user,
+            sale.business,
+            "customer_credit",
+            permission_code="sales.void",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
 
     # Restore stock
     items = list(
@@ -1354,12 +1541,8 @@ def void_sale(*, sale, user, reason, membership=None, request=None):
                 notes=f"Void: {reason}"[:300],
             )
     # Reverse customer balance effects
-    credit_paid = sale.total - sale.amount_paid
     if credit_paid > 0:
         customer_services.apply_balance_change(sale.customer_id, -credit_paid)
-    store_credit_used = sale.payments.filter(
-        method__kind=PaymentMethod.Kind.STORE_CREDIT
-    ).aggregate(t=Sum("amount"))["t"] or ZERO
     if store_credit_used > 0:
         customer_services.apply_store_credit_change(sale.customer_id, store_credit_used)
 
@@ -1398,6 +1581,21 @@ def process_return(
         request=request,
         related=("customer", "warehouse"),
     )
+    if refund_method not in dict(SaleReturn.RefundMethod.choices):
+        raise SaleError("Choose a valid refund method.")
+    if refund_method in (
+        SaleReturn.RefundMethod.STORE_CREDIT,
+        SaleReturn.RefundMethod.CUSTOMER_ACCOUNT,
+    ):
+        require_actor_access(
+            user,
+            sale.business,
+            "customer_credit",
+            permission_code="sales.refund",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+        )
 
     if shift is not None:
         from apps.registers.models import Shift
@@ -1453,6 +1651,14 @@ def process_return(
     }
     if len(locked_items) != len(set(requested_ids)):
         raise SaleError("Return item does not belong to this sale.")
+    if any(item.is_tailoring_line for item in locked_items.values()):
+        _require_tailoring_write(
+            business=sale.business,
+            user=user,
+            permission_code="sales.refund",
+            membership=context.membership,
+            request=request,
+        )
 
     settings_obj = business.settings
     if settings_obj.return_window_days:

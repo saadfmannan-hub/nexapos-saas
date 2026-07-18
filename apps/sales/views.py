@@ -10,7 +10,6 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D, money
 from apps.customers import services as customer_services
@@ -18,7 +17,14 @@ from apps.customers.models import Customer
 from apps.inventory.models import StockLevel
 from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.access import (
+    AccessAction,
+    evaluate_access,
+    get_access_context,
+    require_access,
+)
 from apps.subscriptions.decorators import module_permission_required
+from apps.subscriptions.exceptions import ModuleAccessDenied
 
 from . import calculations, services
 from .forms import ActualFabricForm
@@ -62,6 +68,50 @@ def _held_sales_for_request(request):
     qs = HeldSale.objects.for_business(request.business).filter(cashier=request.user)
     allowed = request.membership.allowed_branch_ids
     return qs if allowed is None else qs.filter(branch_id__in=allowed)
+
+
+def _tailoring_enabled(request):
+    return get_access_context(request).has_module("tailoring")
+
+
+def _visible_held_sales(request, held_sales):
+    """Hide Tailoring carts after downgrade without affecting retail carts."""
+
+    held_sales = list(held_sales)
+    if _tailoring_enabled(request):
+        return held_sales
+
+    from apps.catalog.models import Product
+
+    product_ids = {
+        line.get("product_id")
+        for held in held_sales
+        for line in (
+            (held.cart or {}).get("items", [])
+            if isinstance(held.cart, dict)
+            else []
+        )
+        if isinstance(line, dict) and line.get("product_id") is not None
+    }
+    tailoring_ids = {
+        str(product_id)
+        for product_id in Product.objects.for_business(request.business)
+        .filter(pk__in=product_ids, is_tailoring_item=True)
+        .values_list("pk", flat=True)
+    }
+    return [
+        held
+        for held in held_sales
+        if not any(
+            str(line.get("product_id")) in tailoring_ids
+            for line in (
+                (held.cart or {}).get("items", [])
+                if isinstance(held.cart, dict)
+                else []
+            )
+            if isinstance(line, dict) and line.get("product_id") is not None
+        )
+    ]
 
 
 def _branch_warehouse(branch):
@@ -155,10 +205,28 @@ def pos_view(request):
         return post_login_redirect(request, excluded_routes={"sales:pos"})
 
     categories = Category.objects.for_business(request.business).filter(is_active=True)
+    credit_module_write = evaluate_access(
+        request, "customer_credit", action=AccessAction.WRITE
+    ).allowed
+    can_credit = credit_module_write and request.membership.has_perm("sales.credit")
     payment_methods = PaymentMethod.objects.for_business(request.business).filter(
         is_active=True
     )
-    held_sales = _held_sales_for_request(request)[:20]
+    if not credit_module_write:
+        payment_methods = payment_methods.exclude(
+            kind__in=[
+                PaymentMethod.Kind.CUSTOMER_CREDIT,
+                PaymentMethod.Kind.STORE_CREDIT,
+            ]
+        )
+    elif not can_credit:
+        payment_methods = payment_methods.exclude(
+            kind=PaymentMethod.Kind.CUSTOMER_CREDIT
+        )
+    held_sales = _visible_held_sales(
+        request,
+        _held_sales_for_request(request).order_by("-created_at")[:20],
+    )
     walk_in = Customer.objects.for_business(request.business).filter(
         is_walk_in=True
     ).first()
@@ -181,11 +249,13 @@ def pos_view(request):
         "max_discount": settings_obj.max_discount_percent,
         "can_discount": request.membership.has_perm("sales.discount"),
         "can_override_price": request.membership.has_perm("sales.price_override"),
-        "can_credit": request.membership.has_perm("sales.credit"),
+        "can_credit": can_credit,
+        "credit_module_write": credit_module_write,
         "vat_enabled": settings_obj.vat_enabled,
         "vat_rate": vat_rate,
         "show_vat_on_invoice_receipt": settings_obj.show_vat_on_invoice_receipt,
         "today": timezone.localdate(),
+        "tailoring_enabled": _tailoring_enabled(request),
     })
 
 
@@ -203,6 +273,8 @@ def pos_products(request):
         .select_related("brand", "tax_rate", "unit")
         .prefetch_related("variants")
     )
+    if not _tailoring_enabled(request):
+        qs = qs.filter(is_tailoring_item=False)
     if q:
         qs = qs.filter(
             Q(name__icontains=q)
@@ -298,12 +370,15 @@ def pos_barcode(request):
     code = request.GET.get("code", "").strip()
     if not code:
         return JsonResponse({"found": False})
+    tailoring_enabled = _tailoring_enabled(request)
     variant = (
         ProductVariant.objects.for_business(request.business)
         .filter(Q(barcode=code) | Q(sku=code), is_active=True)
         .select_related("product__tax_rate", "product__unit", "product")
         .first()
     )
+    if variant and variant.product.is_tailoring_item and not tailoring_enabled:
+        variant = None
     if variant and variant.product.is_active and not variant.product.is_archived:
         p = variant.product
         tax_rate = calculations.resolve_tax_rate(request.business, p)
@@ -329,6 +404,8 @@ def pos_barcode(request):
         .select_related("tax_rate", "unit")
         .first()
     )
+    if product and product.is_tailoring_item and not tailoring_enabled:
+        product = None
     if product and not product.has_variants:
         tax_rate = calculations.resolve_tax_rate(request.business, product)
         return JsonResponse({"found": True, "item": {
@@ -353,10 +430,18 @@ def pos_customers(request):
     if q:
         qs = qs.filter(Q(full_name__icontains=q) | Q(mobile__icontains=q) |
                        Q(code__icontains=q) | Q(email__icontains=q))
+    credit_access = (
+        evaluate_access(
+            request, "customer_credit", action=AccessAction.READ
+        ).allowed
+        and request.membership.allowed_branch_ids is None
+    )
     results = [{
         "id": c.id, "name": c.full_name, "mobile": c.mobile,
-        "balance": str(c.balance), "store_credit": str(c.store_credit),
-        "credit_limit": str(c.credit_limit), "is_walk_in": c.is_walk_in,
+        "balance": str(c.balance) if credit_access else "0",
+        "store_credit": str(c.store_credit) if credit_access else "0",
+        "credit_limit": str(c.credit_limit) if credit_access else "0",
+        "is_walk_in": c.is_walk_in,
         "more_options": customer_services.more_option_values(request.business, c),
     } for c in qs.order_by("-is_walk_in", "full_name")[:15]]
     return JsonResponse({"results": results})
@@ -455,6 +540,34 @@ def pos_checkout(request):
                 {"ok": False, "error": "Invalid checkout token."},
                 status=400,
             )
+        if (
+            services.sale_has_tailoring_lines(existing_sale)
+            or existing_sale.delivery_date is not None
+            or existing_sale.priority != Sale.Priority.NORMAL
+        ):
+            require_access(
+                request,
+                "tailoring",
+                permission_code="sales.create",
+                action=AccessAction.WRITE,
+            )
+        replay_payment_kinds = set(
+            existing_sale.payments.values_list("method__kind", flat=True)
+        )
+        if PaymentMethod.Kind.CUSTOMER_CREDIT in replay_payment_kinds:
+            require_access(
+                request,
+                "customer_credit",
+                permission_code="sales.credit",
+                action=AccessAction.WRITE,
+            )
+        elif PaymentMethod.Kind.STORE_CREDIT in replay_payment_kinds:
+            require_access(
+                request,
+                "customer_credit",
+                permission_code="sales.create",
+                action=AccessAction.WRITE,
+            )
         held_id = payload.get("held_id")
         if held_id:
             # Only clean the held cart that originally carried this token. A
@@ -518,6 +631,14 @@ def pos_checkout(request):
         if "fabric_meter_used" in raw:
             line["fabric_meter_used"] = raw.get("fabric_meter_used")
         items.append(line)
+
+    if any(line["product"].is_tailoring_item for line in items):
+        require_access(
+            request,
+            "tailoring",
+            permission_code="sales.create",
+            action=AccessAction.WRITE,
+        )
 
     raw_payments = payload.get("payments", [])
     if not isinstance(raw_payments, list):
@@ -608,6 +729,8 @@ def pos_checkout(request):
                 )
             if held is not None:
                 held.delete()
+    except ModuleAccessDenied:
+        raise
     except (SaleError, subscriptions.LimitExceeded,
             subscriptions.SubscriptionInactive) as exc:
         return _sale_error_response(exc)
@@ -695,21 +818,29 @@ def pos_held_list(request):
         if isinstance(line, dict) and line.get("product_id")
     }
     products = {
-        product.id: product
+        str(product.id): product
         for product in Product.objects.for_business(request.business).filter(
             id__in=product_ids
         ).select_related("unit")
     }
     payload = []
+    tailoring_enabled = _tailoring_enabled(request)
     for h in held:
         raw_cart = h.cart if isinstance(h.cart, dict) else {}
+        if not tailoring_enabled and any(
+            products.get(str(line.get("product_id"))) is not None
+            and products[str(line.get("product_id"))].is_tailoring_item
+            for line in raw_cart.get("items", [])
+            if isinstance(line, dict)
+        ):
+            continue
         cart = dict(raw_cart)
         cart_items = []
         for raw_line in raw_cart.get("items", []):
             if not isinstance(raw_line, dict):
                 continue
             line = dict(raw_line)
-            product = products.get(line.get("product_id"))
+            product = products.get(str(line.get("product_id")))
             if product is not None:
                 line["is_tailoring_item"] = product.is_tailoring_item
                 line["is_meter_tailoring"] = product.is_meter_tailoring
@@ -780,16 +911,18 @@ def sale_list(request):
     from django.utils import timezone as _tz
 
     today = _tz.localdate()
-    delivery = request.GET.get("delivery", "")
-    open_delivery = ~Q(delivery_status__in=["delivered", "cancelled"])
-    if delivery == "today":
-        qs = qs.filter(open_delivery, delivery_date=today)
-    elif delivery == "upcoming":
-        qs = qs.filter(open_delivery, delivery_date__gt=today)
-    elif delivery == "overdue":
-        qs = qs.filter(open_delivery, delivery_date__lt=today)
-    elif delivery == "scheduled":
-        qs = qs.filter(delivery_date__isnull=False)
+    tailoring_enabled = _tailoring_enabled(request)
+    if tailoring_enabled:
+        delivery = request.GET.get("delivery", "")
+        open_delivery = ~Q(delivery_status__in=["delivered", "cancelled"])
+        if delivery == "today":
+            qs = qs.filter(open_delivery, delivery_date=today)
+        elif delivery == "upcoming":
+            qs = qs.filter(open_delivery, delivery_date__gt=today)
+        elif delivery == "overdue":
+            qs = qs.filter(open_delivery, delivery_date__lt=today)
+        elif delivery == "scheduled":
+            qs = qs.filter(delivery_date__isnull=False)
 
     totals = qs.aggregate(
         total=Sum("total"),
@@ -802,6 +935,7 @@ def sale_list(request):
         "page_obj": page_obj, "q": q, "active_nav": "sales",
         "statuses": Sale.Status.choices, "branches": _user_branches(request),
         "totals": totals, "date_from": date_from, "date_to": date_to,
+        "tailoring_enabled": tailoring_enabled,
         "querystring": _qs_without_page(request, date_from, date_to),
     })
 
@@ -818,25 +952,65 @@ def sale_detail(request, public_id):
     items = _invoice_display_items(list(
         sale.items.select_related("product__unit", "variant")
     ))
-    has_tailoring_jobs = any(item.is_tailoring_line for item in items)
+    access_context = get_access_context(request)
+    show_tailoring = access_context.has_module("tailoring")
+    has_tailoring_jobs = show_tailoring and any(
+        item.is_tailoring_line for item in items
+    )
+    credit_access = evaluate_access(
+        request, "customer_credit", action=AccessAction.READ
+    ).allowed
     payments = sale.payments.select_related("method", "received_by")
-    returns = _invoice_display_returns(list(sale.returns.prefetch_related("items")))
+    if not credit_access:
+        payments = payments.exclude(
+            method__kind__in=[
+                PaymentMethod.Kind.CUSTOMER_CREDIT,
+                PaymentMethod.Kind.STORE_CREDIT,
+            ]
+        )
+    return_records = list(sale.returns.prefetch_related("items"))
+    has_returns = bool(return_records)
+    if not credit_access:
+        return_records = [
+            sale_return
+            for sale_return in return_records
+            if sale_return.refund_method
+            not in {
+                SaleReturn.RefundMethod.CUSTOMER_ACCOUNT,
+                SaleReturn.RefundMethod.STORE_CREDIT,
+            }
+        ]
+    returns = _invoice_display_returns(return_records)
     settings_obj = request.business.settings
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
     show_profit = request.membership.has_perm("profit.view")
     can_edit_actual_fabric = (
-        request.membership.has_perm("workshop.fabric_actual")
+        show_tailoring
+        and access_context.can_write
+        and request.membership.has_perm("workshop.fabric_actual")
         and request.membership.can_access_branch(sale.branch)
     )
-    collect_methods = PaymentMethod.objects.for_business(request.business).filter(
-        is_active=True
-    ).exclude(kind__in=["customer_credit", "store_credit"])
+    can_collect_credit = evaluate_access(
+        request,
+        "customer_credit",
+        permission_code="customers.payments",
+        action=AccessAction.WRITE,
+    ).allowed
+    collect_methods = PaymentMethod.objects.none()
+    if can_collect_credit:
+        collect_methods = PaymentMethod.objects.for_business(request.business).filter(
+            is_active=True
+        ).exclude(kind__in=["customer_credit", "store_credit"])
     return render(request, "sales/detail.html", {
         "sale": sale, "items": items, "payments": payments, "returns": returns,
         "active_nav": "sales", "show_profit": show_profit,
         "collect_methods": collect_methods,
+        "credit_access": credit_access,
+        "has_returns": has_returns,
+        "can_collect_credit": can_collect_credit,
         "has_tailoring_jobs": has_tailoring_jobs,
+        "show_tailoring": show_tailoring,
         "can_edit_actual_fabric": can_edit_actual_fabric,
         "max_fabric_total": MAX_FABRIC_TOTAL,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
@@ -847,7 +1021,9 @@ def sale_detail(request, public_id):
 
 
 @require_POST
-@require_permission("workshop.fabric_actual")
+@module_permission_required(
+    "tailoring", "workshop.fabric_actual", action=AccessAction.WRITE
+)
 def sale_item_update_fabric(request, public_id, item_id):
     sale = get_tenant_object(
         _sales_for_request(
@@ -1013,18 +1189,49 @@ def _job_card_context(
     return {**card, "job_cards": [card]}
 
 
-def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprint=False,
-                     pdf_mode=False):
+def _invoice_context(
+    sale,
+    *,
+    items=None,
+    payments=None,
+    returns=None,
+    is_reprint=False,
+    pdf_mode=False,
+    show_tailoring=True,
+    show_credit=True,
+):
     item_source = items if items is not None else sale.items.select_related(
         "product__unit", "variant"
     )
     items = _invoice_display_items(list(item_source))
-    payments = payments if payments is not None else sale.payments.select_related(
+    payment_source = payments if payments is not None else sale.payments.select_related(
         "method", "received_by"
     )
-    returns = _invoice_display_returns(list(
+    payments = list(payment_source)
+    if not show_credit:
+        payments = [
+            payment
+            for payment in payments
+            if payment.method.kind
+            not in {
+                PaymentMethod.Kind.CUSTOMER_CREDIT,
+                PaymentMethod.Kind.STORE_CREDIT,
+            }
+        ]
+    returns = list(
         returns if returns is not None else sale.returns.prefetch_related("items")
-    ))
+    )
+    if not show_credit:
+        returns = [
+            sale_return
+            for sale_return in returns
+            if sale_return.refund_method
+            not in {
+                SaleReturn.RefundMethod.CUSTOMER_ACCOUNT,
+                SaleReturn.RefundMethod.STORE_CREDIT,
+            }
+        ]
+    returns = _invoice_display_returns(returns)
     settings_obj = sale.business.settings
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
@@ -1041,12 +1248,25 @@ def _invoice_context(sale, *, items=None, payments=None, returns=None, is_reprin
         "pdf_mode": pdf_mode, "vat_rate": vat_rate,
         "show_vat": show_vat, "vat_number": settings_obj.vat_number,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
+        "show_tailoring": show_tailoring,
+        "show_credit": show_credit,
     }
 
 
 def _render_invoice(request, sale, template):
     is_reprint = sale.reprint_count > 0
-    return render(request, template, _invoice_context(sale, is_reprint=is_reprint))
+    return render(
+        request,
+        template,
+        _invoice_context(
+            sale,
+            is_reprint=is_reprint,
+            show_tailoring=_tailoring_enabled(request),
+            show_credit=evaluate_access(
+                request, "customer_credit", action=AccessAction.READ
+            ).allowed,
+        ),
+    )
 
 
 @module_permission_required("pos_core", "sales.view")
@@ -1093,8 +1313,17 @@ def sale_invoice_pdf(request, public_id):
     payments = sale.payments.select_related("method", "received_by")
     pdf = render_pdf(
         "invoices/invoice_a4.html",
-        _invoice_context(sale, items=items, payments=payments, is_reprint=False,
-                         pdf_mode=True),
+        _invoice_context(
+            sale,
+            items=items,
+            payments=payments,
+            is_reprint=False,
+            pdf_mode=True,
+            show_tailoring=_tailoring_enabled(request),
+            show_credit=evaluate_access(
+                request, "customer_credit", action=AccessAction.READ
+            ).allowed,
+        ),
     )
     response = HttpResponse(pdf, content_type="application/pdf")
     response["Content-Disposition"] = (
@@ -1103,7 +1332,7 @@ def sale_invoice_pdf(request, public_id):
     return response
 
 
-@require_permission("sales.view")
+@module_permission_required("tailoring", "sales.view")
 def sale_workshop_job_card_pdf(request, public_id):
     from apps.reports.pdf import render_pdf
 
@@ -1141,7 +1370,7 @@ def sale_workshop_job_card_pdf(request, public_id):
     return response
 
 
-@require_permission("sales.view")
+@module_permission_required("tailoring", "sales.view")
 def sale_item_workshop_job_card_pdf(request, public_id, item_id):
     from apps.reports.pdf import render_pdf
 
@@ -1183,7 +1412,9 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
 
 
 @require_POST
-@module_permission_required("pos_core", "customers.payments")
+@module_permission_required(
+    "customer_credit", "customers.payments", action=AccessAction.WRITE
+)
 def sale_payment_add(request, public_id):
     """Record a later payment against a credit/partially-paid sale."""
     sale = get_tenant_object(
@@ -1246,7 +1477,7 @@ def sale_delete(request, public_id):
 
 
 @require_POST
-@module_permission_required("pos_core", "sales.create")
+@module_permission_required("tailoring", "sales.create")
 def sale_set_delivery(request, public_id):
     sale = get_tenant_object(
         _sales_for_request(request), request.business, public_id=public_id,
@@ -1333,6 +1564,23 @@ def return_create(request, public_id):
     )
     items = list(sale.items.select_related("product", "variant"))
     returnable = [i for i in items if i.returnable_quantity > 0]
+    credit_refund_write = evaluate_access(
+        request,
+        "customer_credit",
+        permission_code="sales.refund",
+        action=AccessAction.WRITE,
+    ).allowed
+    refund_methods = list(SaleReturn.RefundMethod.choices)
+    if not credit_refund_write:
+        refund_methods = [
+            choice
+            for choice in refund_methods
+            if choice[0]
+            not in (
+                SaleReturn.RefundMethod.STORE_CREDIT,
+                SaleReturn.RefundMethod.CUSTOMER_ACCOUNT,
+            )
+        ]
     if request.method == "POST":
         selected = []
         for item in items:
@@ -1381,5 +1629,5 @@ def return_create(request, public_id):
                 messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "sales/return_form.html", {
         "sale": sale, "items": returnable, "active_nav": "returns",
-        "refund_methods": SaleReturn.RefundMethod.choices,
+        "refund_methods": refund_methods,
     })

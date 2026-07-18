@@ -53,7 +53,7 @@
   <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:24 }}</td></tr>
   {% if sale.customer.mobile %}<tr><td>Phone</td><td class="r">{{ sale.customer.mobile|truncatechars:20 }}</td></tr>{% endif %}
   {% endif %}
-  {% if sale.delivery_date %}
+  {% if show_tailoring and sale.delivery_date %}
   <tr><td>Delivery</td><td class="r">{{ sale.delivery_date|date:"d-M-Y" }}</td></tr>
   <tr><td>Status</td><td class="r">{{ sale.get_delivery_status_display }}</td></tr>
   {% endif %}
@@ -66,7 +66,7 @@
 </table>
 {% for item in items %}
 <div class="item-name">{{ item.product_name|truncatechars:38 }}</div>
-{% if item.is_tailoring_line %}
+{% if show_tailoring and item.is_tailoring_line %}
 <div class="xs">Garment: {{ item.garment_classification_label }}</div>
 <div class="xs">Collection: {{ item.collection_type_label }}</div>
 {% endif %}
@@ -106,7 +106,7 @@
   <tr class="b"><td>NET PAID</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
   {% endif %}
   {% if sale.change_due > 0 %}<tr class="b"><td>CHANGE</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
-  {% if sale.balance > 0 %}<tr class="b"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
+  {% if show_credit and sale.balance > 0 %}<tr class="b"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
 </table>
 {% if returns %}
 <hr>
