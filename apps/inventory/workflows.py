@@ -75,7 +75,31 @@ def _validate_warehouse(business, warehouse):
 # Transfers
 # ---------------------------------------------------------------------------
 @transaction.atomic
-def create_transfer(*, business, from_warehouse, to_warehouse, rows, user, notes=""):
+def create_transfer(
+    *,
+    business,
+    from_warehouse,
+    to_warehouse,
+    rows,
+    user,
+    notes="",
+    membership=None,
+    request=None,
+):
+    services.require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+        warehouses=(from_warehouse, to_warehouse),
+        tenant_objects=tuple(
+            obj
+            for row in rows
+            for obj in (row.get("product"), row.get("variant"))
+            if obj is not None
+        ),
+    )
     _validate_warehouse(business, from_warehouse)
     _validate_warehouse(business, to_warehouse)
     if from_warehouse.pk == to_warehouse.pk:
@@ -105,7 +129,15 @@ def create_transfer(*, business, from_warehouse, to_warehouse, rows, user, notes
 
 
 @transaction.atomic
-def dispatch_transfer(*, transfer, user, request=None):
+def dispatch_transfer(*, transfer, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=transfer.business,
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+        warehouses=(transfer.from_warehouse, transfer.to_warehouse),
+    )
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
@@ -130,7 +162,15 @@ def dispatch_transfer(*, transfer, user, request=None):
 
 
 @transaction.atomic
-def receive_transfer(*, transfer, user, request=None):
+def receive_transfer(*, transfer, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=transfer.business,
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+        warehouses=(transfer.from_warehouse, transfer.to_warehouse),
+    )
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
@@ -155,7 +195,15 @@ def receive_transfer(*, transfer, user, request=None):
 
 
 @transaction.atomic
-def cancel_transfer(*, transfer, user, request=None):
+def cancel_transfer(*, transfer, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=transfer.business,
+        user=user,
+        permission_code="inventory.transfer",
+        membership=membership,
+        request=request,
+        warehouses=(transfer.from_warehouse, transfer.to_warehouse),
+    )
     transfer = StockTransfer.objects.select_for_update().get(
         pk=transfer.pk, business=transfer.business
     )
@@ -196,7 +244,21 @@ ADJUST_MOVEMENT = {
 
 @transaction.atomic
 def create_adjustment(*, business, warehouse, reason, rows, user, notes="",
-                      requires_approval=False, request=None):
+                      requires_approval=False, membership=None, request=None):
+    services.require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.adjust",
+        membership=membership,
+        request=request,
+        warehouses=(warehouse,),
+        tenant_objects=tuple(
+            obj
+            for row in rows
+            for obj in (row.get("product"), row.get("variant"))
+            if obj is not None
+        ),
+    )
     _validate_warehouse(business, warehouse)
     rows = _lock_inventory_rows(
         business, rows, allow_parent_meter_repair=True
@@ -260,7 +322,15 @@ def _apply_adjustment(adjustment, user):
 
 
 @transaction.atomic
-def approve_adjustment(*, adjustment, user, request=None):
+def approve_adjustment(*, adjustment, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=adjustment.business,
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+        warehouses=(adjustment.warehouse,),
+    )
     adjustment = StockAdjustment.objects.select_for_update().get(
         pk=adjustment.pk, business=adjustment.business
     )
@@ -277,7 +347,15 @@ def approve_adjustment(*, adjustment, user, request=None):
 
 
 @transaction.atomic
-def reject_adjustment(*, adjustment, user, request=None):
+def reject_adjustment(*, adjustment, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=adjustment.business,
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+        warehouses=(adjustment.warehouse,),
+    )
     adjustment = StockAdjustment.objects.select_for_update().get(
         pk=adjustment.pk, business=adjustment.business
     )
@@ -296,8 +374,18 @@ def reject_adjustment(*, adjustment, user, request=None):
 # Physical counts
 # ---------------------------------------------------------------------------
 @transaction.atomic
-def start_count(*, business, warehouse, user, notes=""):
+def start_count(
+    *, business, warehouse, user, notes="", membership=None, request=None
+):
     """Snapshot expected stock for every stocked product in the warehouse."""
+    services.require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.count",
+        membership=membership,
+        request=request,
+        warehouses=(warehouse,),
+    )
     _validate_warehouse(business, warehouse)
     count = StockCount.objects.create(
         business=business,
@@ -316,7 +404,15 @@ def start_count(*, business, warehouse, user, notes=""):
 
 
 @transaction.atomic
-def approve_count(*, count, user, request=None):
+def approve_count(*, count, user, membership=None, request=None):
+    services.require_inventory_write(
+        business=count.business,
+        user=user,
+        permission_code="inventory.adjust_approve",
+        membership=membership,
+        request=request,
+        warehouses=(count.warehouse,),
+    )
     count = StockCount.objects.select_for_update().get(
         pk=count.pk, business=count.business
     )

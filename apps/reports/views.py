@@ -22,6 +22,7 @@ from apps.expenses.services import (
     RecurringExpenseRangeError,
     ensure_recurring_expenses_for_range,
 )
+from apps.subscriptions.access import AccessAction, evaluate_access
 
 from . import exports
 from .queries import REPORT_GROUPS, REPORTS, current_year_financial_summary
@@ -83,6 +84,18 @@ def dashboard(request):
     from apps.suppliers.models import Supplier
 
     business = request.business
+    inventory_decision = evaluate_access(
+        request,
+        "inventory",
+        permission_code="inventory.view",
+        action=AccessAction.READ,
+    )
+    inventory_access = inventory_decision.allowed
+    inventory_warehouse_ids = (
+        inventory_decision.context.membership.allowed_warehouse_ids
+        if inventory_access
+        else frozenset()
+    )
     today = business_localdate(business)
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
@@ -176,14 +189,30 @@ def dashboard(request):
     if branch_id.isdigit():
         period_returns_qs = period_returns_qs.filter(branch_id=branch_id)
     returns_total = period_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
-    low_stock_qs = StockLevel.objects.for_business(business).filter(
-        product__reorder_level__gt=0,
-        quantity__lte=F("product__reorder_level"),
-    )
-    if branch_id.isdigit():
-        low_stock_qs = low_stock_qs.filter(warehouse__branch_id=branch_id)
-    low_stock_count = low_stock_qs.count()
-    stock_value = inventory.stock_value(business) if show_profit else None
+    if inventory_access:
+        low_stock_qs = StockLevel.objects.for_business(business).filter(
+            product__reorder_level__gt=0,
+            quantity__lte=F("product__reorder_level"),
+        )
+        if inventory_warehouse_ids is not None:
+            low_stock_qs = low_stock_qs.filter(
+                warehouse_id__in=inventory_warehouse_ids
+            )
+        if branch_id.isdigit():
+            low_stock_qs = low_stock_qs.filter(warehouse__branch_id=branch_id)
+        low_stock_count = low_stock_qs.count()
+        stock_value = (
+            inventory.stock_value(
+                business,
+                allowed_warehouse_ids=inventory_warehouse_ids,
+            )
+            if show_profit
+            else None
+        )
+    else:
+        low_stock_qs = StockLevel.objects.none()
+        low_stock_count = 0
+        stock_value = None
     gross = agg["profit"] or ZERO
     margin = (gross / agg["subtotal"] * 100) if (agg["subtotal"] or 0) > 0 else ZERO
 
@@ -334,22 +363,32 @@ def dashboard(request):
     chart_hourly = {"labels": [f"{h:02d}" for h in range(24)],
                     "data": [hour_map.get(h, 0) for h in range(24)]}
 
-    from apps.inventory.models import StockMovement
+    chart_movement = {"labels": [], "stock_in": [], "stock_out": []}
+    if inventory_access:
+        from apps.inventory.models import StockMovement
 
-    move_start = today - timedelta(days=13)
-    movements = (
-        StockMovement.objects.for_business(business)
-        .filter(created_at__date__gte=move_start)
-        .annotate(day=TruncDate("created_at")).values("day")
-        .annotate(qin=Sum("quantity", filter=Q(quantity__gt=0)),
-                  qout=Sum("quantity", filter=Q(quantity__lt=0)))
-        .order_by("day")
-    )
-    chart_movement = {
-        "labels": [str(r["day"]) for r in movements],
-        "stock_in": [float(r["qin"] or 0) for r in movements],
-        "stock_out": [abs(float(r["qout"] or 0)) for r in movements],
-    }
+        move_start = today - timedelta(days=13)
+        movements = StockMovement.objects.for_business(business).filter(
+            created_at__date__gte=move_start
+        )
+        if inventory_warehouse_ids is not None:
+            movements = movements.filter(
+                warehouse_id__in=inventory_warehouse_ids
+            )
+        movements = (
+            movements.annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(
+                qin=Sum("quantity", filter=Q(quantity__gt=0)),
+                qout=Sum("quantity", filter=Q(quantity__lt=0)),
+            )
+            .order_by("day")
+        )
+        chart_movement = {
+            "labels": [str(r["day"]) for r in movements],
+            "stock_in": [float(r["qin"] or 0) for r in movements],
+            "stock_out": [abs(float(r["qout"] or 0)) for r in movements],
+        }
     top_customers = []
     for customer in (
         period.exclude(customer__is_walk_in=True)
@@ -444,6 +483,7 @@ def dashboard(request):
         "sparks": {"sales": spark_sales, "profit": spark_profit,
                    "expenses": spark_expenses},
         "widgets": widgets,
+        "inventory_access": inventory_access,
         "show_profit": show_profit,
         "onboarding_pending": not request.business.onboarding_completed,
     })

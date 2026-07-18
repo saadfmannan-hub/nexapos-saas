@@ -7,10 +7,10 @@ from django.http import JsonResponse
 from django.shortcuts import redirect, render
 
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
-from apps.core.decorators import require_permission
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D
 from apps.subscriptions import services as subscriptions
+from apps.subscriptions.decorators import module_permission_required
 
 from . import services, workflows
 from .forms import AdjustmentForm, CountForm, TransferForm, parse_item_rows
@@ -79,7 +79,7 @@ def _transfer_scoped(request, queryset):
     return queryset.filter(from_allowed & to_allowed)
 
 
-@require_permission("inventory.view")
+@module_permission_required("inventory", "inventory.view")
 def stock_list(request):
     qs = (
         _warehouse_scoped(
@@ -132,7 +132,7 @@ def stock_list(request):
     })
 
 
-@require_permission("inventory.export")
+@module_permission_required("inventory", "inventory.export")
 def inventory_export(request):
     from apps.audit import services as audit
     from apps.reports import exports
@@ -155,7 +155,7 @@ def inventory_export(request):
     return exports.export_csv("inventory", data)
 
 
-@require_permission("inventory.import")
+@module_permission_required("inventory", "inventory.import")
 def inventory_import_template(request):
     from apps.reports import exports
 
@@ -171,7 +171,7 @@ def inventory_import_template(request):
     return exports.export_csv("inventory_import_template", data)
 
 
-@require_permission("inventory.import")
+@module_permission_required("inventory", "inventory.import")
 def inventory_import(request):
     from apps.audit import services as audit
     from apps.core.imports import error_report_response, parse_tabular_file
@@ -206,6 +206,8 @@ def inventory_import(request):
                     business=request.business, rows=rows, mode=mode,
                     user=request.user,
                     allowed_warehouse_ids=_allowed_warehouse_ids(request),
+                    membership=request.membership,
+                    request=request,
                 )
                 request.session["inventory_import_errors"] = errors
                 results = {"summary": summary, "errors": errors,
@@ -226,7 +228,7 @@ def inventory_import(request):
     })
 
 
-@require_permission("inventory.view")
+@module_permission_required("inventory", "inventory.view")
 def movement_list(request):
     qs = (
         StockMovement.objects.for_business(request.business)
@@ -262,7 +264,7 @@ def movement_list(request):
 # ---------------------------------------------------------------------------
 # Item search endpoint (used by transfer/adjustment/purchase forms)
 # ---------------------------------------------------------------------------
-@require_permission("inventory.view")
+@module_permission_required("inventory", "inventory.view")
 def item_search(request):
     from apps.catalog.models import Product
 
@@ -304,7 +306,7 @@ def item_search(request):
 # ---------------------------------------------------------------------------
 # Transfers
 # ---------------------------------------------------------------------------
-@require_permission("inventory.transfer")
+@module_permission_required("inventory", "inventory.transfer")
 def transfer_list(request):
     if not subscriptions.has_feature(request.business, "transfers"):
         return render(request, "inventory/feature_locked.html",
@@ -324,7 +326,7 @@ def transfer_list(request):
                    "querystring": _qs_without_page(request)})
 
 
-@require_permission("inventory.transfer")
+@module_permission_required("inventory", "inventory.transfer")
 def transfer_create(request):
     if not subscriptions.has_feature(request.business, "transfers"):
         messages.warning(request, "Stock transfers are not included in your plan.")
@@ -344,6 +346,8 @@ def transfer_create(request):
                 to_warehouse=form.cleaned_data["to_warehouse"],
                 rows=rows, user=request.user,
                 notes=form.cleaned_data["notes"],
+                membership=request.membership,
+                request=request,
             )
             messages.success(request, f"Transfer {transfer.transfer_number} created as draft.")
             return redirect("inventory:transfer_list")
@@ -354,7 +358,7 @@ def transfer_create(request):
                   {"form": form, "active_nav": "inventory"})
 
 
-@require_permission("inventory.transfer")
+@module_permission_required("inventory", "inventory.transfer")
 def transfer_action(request, public_id, action):
     transfer = get_tenant_object(
         _transfer_scoped(request, StockTransfer.objects.all()),
@@ -366,13 +370,28 @@ def transfer_action(request, public_id, action):
     try:
         subscriptions.require_operational(request.business)
         if action == "dispatch":
-            workflows.dispatch_transfer(transfer=transfer, user=request.user, request=request)
+            workflows.dispatch_transfer(
+                transfer=transfer,
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
             messages.success(request, "Transfer dispatched — stock left the source warehouse.")
         elif action == "receive":
-            workflows.receive_transfer(transfer=transfer, user=request.user, request=request)
+            workflows.receive_transfer(
+                transfer=transfer,
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
             messages.success(request, "Transfer received — stock added to destination.")
         elif action == "cancel":
-            workflows.cancel_transfer(transfer=transfer, user=request.user, request=request)
+            workflows.cancel_transfer(
+                transfer=transfer,
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
             messages.success(request, "Transfer cancelled.")
     except (ValidationError, subscriptions.SubscriptionInactive) as exc:
         messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
@@ -382,7 +401,7 @@ def transfer_action(request, public_id, action):
 # ---------------------------------------------------------------------------
 # Adjustments
 # ---------------------------------------------------------------------------
-@require_permission("inventory.adjust")
+@module_permission_required("inventory", "inventory.adjust")
 def adjustment_list(request):
     qs = (
         _warehouse_scoped(
@@ -399,7 +418,7 @@ def adjustment_list(request):
                    "querystring": _qs_without_page(request)})
 
 
-@require_permission("inventory.adjust")
+@module_permission_required("inventory", "inventory.adjust")
 def adjustment_create(request):
     form = AdjustmentForm(
         request.business,
@@ -425,7 +444,9 @@ def adjustment_create(request):
                 reason=form.cleaned_data["reason"],
                 rows=rows, user=request.user,
                 notes=form.cleaned_data["notes"],
-                requires_approval=requires_approval, request=request,
+                requires_approval=requires_approval,
+                membership=request.membership,
+                request=request,
             )
             if adjustment.status == StockAdjustment.Status.PENDING:
                 messages.info(request, f"Adjustment {adjustment.adjustment_number} "
@@ -444,7 +465,7 @@ def adjustment_create(request):
                   })
 
 
-@require_permission("inventory.adjust_approve")
+@module_permission_required("inventory", "inventory.adjust_approve")
 def adjustment_action(request, public_id, action):
     adjustment = get_tenant_object(
         _warehouse_scoped(request, StockAdjustment.objects.all()),
@@ -454,12 +475,20 @@ def adjustment_action(request, public_id, action):
     if request.method == "POST":
         try:
             if action == "approve":
-                workflows.approve_adjustment(adjustment=adjustment, user=request.user,
-                                             request=request)
+                workflows.approve_adjustment(
+                    adjustment=adjustment,
+                    user=request.user,
+                    membership=request.membership,
+                    request=request,
+                )
                 messages.success(request, "Adjustment approved and applied.")
             elif action == "reject":
-                workflows.reject_adjustment(adjustment=adjustment, user=request.user,
-                                            request=request)
+                workflows.reject_adjustment(
+                    adjustment=adjustment,
+                    user=request.user,
+                    membership=request.membership,
+                    request=request,
+                )
                 messages.success(request, "Adjustment rejected.")
         except ValidationError as exc:
             messages.error(request, "; ".join(exc.messages))
@@ -469,7 +498,7 @@ def adjustment_action(request, public_id, action):
 # ---------------------------------------------------------------------------
 # Physical counts
 # ---------------------------------------------------------------------------
-@require_permission("inventory.count")
+@module_permission_required("inventory", "inventory.count")
 def count_list(request):
     qs = (
         _warehouse_scoped(
@@ -490,6 +519,8 @@ def count_list(request):
                 business=request.business,
                 warehouse=form.cleaned_data["warehouse"],
                 user=request.user, notes=form.cleaned_data["notes"],
+                membership=request.membership,
+                request=request,
             )
             messages.success(request, f"Count session {count.count_number} started — "
                                       "expected quantities frozen.")
@@ -503,7 +534,7 @@ def count_list(request):
                    "querystring": _qs_without_page(request)})
 
 
-@require_permission("inventory.count")
+@module_permission_required("inventory", "inventory.count")
 def count_detail(request, public_id):
     count = get_tenant_object(
         _warehouse_scoped(request, StockCount.objects.all()),
@@ -525,7 +556,12 @@ def count_detail(request, public_id):
                 messages.error(request, "You need approval permission to apply a count.")
             else:
                 try:
-                    workflows.approve_count(count=count, user=request.user, request=request)
+                    workflows.approve_count(
+                        count=count,
+                        user=request.user,
+                        membership=request.membership,
+                        request=request,
+                    )
                     messages.success(request, "Count approved — variances applied to stock.")
                 except ValidationError as exc:
                     messages.error(request, "; ".join(exc.messages))

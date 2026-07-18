@@ -42,7 +42,7 @@
       <a class="nav-link {% if active_nav == 'customers' %}active{% endif %}" href="{% url 'customers:list' %}"><i class="bi bi-people"></i> Customers</a>
       {% endif %}
 
-      {% if "inventory.view" in business_perms %}
+      {% if module_capabilities.inventory.enabled and "inventory.view" in business_perms %}
       <div class="nav-section">Catalog &amp; Stock</div>
       {% elif module_capabilities.pos_core.enabled and "products.view" in business_perms %}
       <div class="nav-section">Catalog &amp; Stock</div>
@@ -51,7 +51,7 @@
       <a class="nav-link {% if active_nav == 'products' %}active{% endif %}" href="{% url 'catalog:product_list' %}"><i class="bi bi-box-seam"></i> Products</a>
       <a class="nav-link {% if active_nav == 'catalog_setup' %}active{% endif %}" href="{% url 'catalog:category_list' %}"><i class="bi bi-tags"></i> Categories &amp; Setup</a>
       {% endif %}
-      {% if "inventory.view" in business_perms %}
+      {% if module_capabilities.inventory.enabled and "inventory.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'inventory' %}active{% endif %}" href="{% url 'inventory:stock_list' %}"><i class="bi bi-clipboard-data"></i> Inventory</a>
       {% endif %}
 

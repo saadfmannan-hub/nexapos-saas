@@ -12,6 +12,7 @@ from django.db.models import Max, Sum
 
 from apps.core.money import D, money
 from apps.core.money import qty as q3
+from apps.subscriptions.access import AccessAction, require_actor_access
 
 from .models import StockLevel, StockMovement
 
@@ -26,6 +27,53 @@ METER_PARENT_REPAIR_TYPES = {
 
 class InsufficientStock(ValidationError):
     pass
+
+
+def require_inventory_write(
+    *,
+    business,
+    user,
+    permission_code,
+    membership=None,
+    request=None,
+    warehouses=(),
+    tenant_objects=(),
+):
+    """Authorize an Inventory mutation and its warehouse scope centrally."""
+    warehouses = tuple(warehouse for warehouse in warehouses if warehouse is not None)
+    initial_context = require_actor_access(
+        user,
+        business,
+        "inventory",
+        permission_code=permission_code,
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+    )
+    allowed_ids = initial_context.membership.allowed_warehouse_ids
+    warehouse_scope_allowed = all(
+        warehouse.business_id == business.id
+        and (allowed_ids is None or warehouse.id in allowed_ids)
+        for warehouse in warehouses
+    )
+    tenant_scope_allowed = all(
+        obj.business_id == business.id
+        for obj in tenant_objects
+        if obj is not None
+    )
+    scope_allowed = warehouse_scope_allowed and tenant_scope_allowed
+    if not scope_allowed:
+        require_actor_access(
+            user,
+            business,
+            "inventory",
+            permission_code=permission_code,
+            action=AccessAction.WRITE,
+            membership=initial_context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    return initial_context
 
 
 def get_stock(business, warehouse, product, variant=None):
@@ -189,7 +237,27 @@ def _low_stock_alert(business, product, variant, current):
     )
 
 
-def set_opening_stock(*, business, warehouse, product, variant=None, quantity, unit_cost, user=None):
+def set_opening_stock(
+    *,
+    business,
+    warehouse,
+    product,
+    variant=None,
+    quantity,
+    unit_cost,
+    user,
+    membership=None,
+    request=None,
+):
+    require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.adjust",
+        membership=membership,
+        request=request,
+        warehouses=(warehouse,),
+        tenant_objects=(product, variant),
+    )
     return record_movement(
         business=business, warehouse=warehouse, product=product, variant=variant,
         movement_type="opening", quantity=quantity, unit_cost=unit_cost,
@@ -271,13 +339,36 @@ def inventory_export_dataset(business, filters, *, allowed_warehouse_ids=None):
 
 @transaction.atomic
 def import_inventory(
-    *, business, rows, mode, user, allowed_warehouse_ids=None
+    *,
+    business,
+    rows,
+    mode,
+    user,
+    allowed_warehouse_ids=None,
+    membership=None,
+    request=None,
 ):
     """Bulk stock import. mode in {add, replace, opening, minimum}.
 
     Returns (summary, errors). Each stock change flows through
     record_movement so the ledger stays the single source of truth.
     """
+    access_context = require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.import",
+        membership=membership,
+        request=request,
+    )
+    membership_warehouse_ids = access_context.membership.allowed_warehouse_ids
+    if membership_warehouse_ids is not None:
+        if allowed_warehouse_ids is None:
+            allowed_warehouse_ids = membership_warehouse_ids
+        else:
+            allowed_warehouse_ids = frozenset(allowed_warehouse_ids).intersection(
+                membership_warehouse_ids
+            )
+
     from apps.branches.models import Warehouse
     from apps.catalog.models import Product, ProductVariant
     from apps.core.imports import normalize_row

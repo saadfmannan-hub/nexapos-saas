@@ -1328,7 +1328,7 @@ class PosCoreEnforcementTests(TenantTestCase):
     def test_import_products_derives_canonical_scope_when_ids_are_omitted(self):
         other_branch, other_warehouse, central = self.make_secondary_locations()
         user, _membership = self.make_staff(
-            ["products.import"],
+            ["products.import", "inventory.adjust"],
             email="phase2a-import-derived-scope@example.com",
             branches=[self.branch_a],
         )
@@ -1502,7 +1502,7 @@ class PosCoreEnforcementTests(TenantTestCase):
                 with self.subTest(url=url):
                     self.assertEqual(self.client.get(url).status_code, 404)
 
-    def test_disabled_nav_hides_pos_core_and_dashboard_shortcuts_but_keeps_inventory(self):
+    def test_disabled_nav_hides_pos_core_and_dependent_inventory_surfaces(self):
         sale = self.make_sale()
         self.set_plan(feature_sales=False, feature_inventory=True)
         self.client.force_login(self.owner_a)
@@ -1517,16 +1517,16 @@ class PosCoreEnforcementTests(TenantTestCase):
             reverse("registers:shift_list"),
             reverse("branches:list"),
             reverse("accounts:user_list"),
+            reverse("inventory:stock_list"),
             reverse("sales:detail", args=[sale.public_id]),
         )
         for url in hidden_routes:
             with self.subTest(url=url):
                 self.assertNotContains(response, f'href="{url}"')
-        self.assertContains(response, f'href="{reverse("inventory:stock_list")}"')
         self.assertNotContains(response, "Recent Sales")
-        self.assertEqual(self.client.get(reverse("inventory:stock_list")).status_code, 200)
+        self.assertEqual(self.client.get(reverse("inventory:stock_list")).status_code, 403)
 
-    def test_disabled_pos_routes_are_skipped_by_login_redirect(self):
+    def test_disabled_pos_and_dependent_inventory_routes_are_skipped_at_login(self):
         user, _membership = self.make_staff(
             ["sales.view", "inventory.view"],
             email="phase2a-disabled-redirect@example.com",
@@ -1536,7 +1536,7 @@ class PosCoreEnforcementTests(TenantTestCase):
         response = self.login(user)
         self.assertRedirects(
             response,
-            reverse("inventory:stock_list"),
+            reverse("subscriptions:status"),
             fetch_redirect_response=False,
         )
 
@@ -1594,7 +1594,7 @@ class PosCoreEnforcementTests(TenantTestCase):
             fetch_redirect_response=False,
         )
 
-    def test_inventory_customer_credit_barcode_tailoring_and_api_boundaries_are_unchanged(self):
+    def test_inventory_dependency_and_other_phase_boundaries_remain_explicit(self):
         sale = self.make_sale()
         sale_item = sale.items.get()
         sale_item.tailoring_details = {"customer_notes": "Boundary job"}
@@ -1607,8 +1607,8 @@ class PosCoreEnforcementTests(TenantTestCase):
         )
         self.client.force_login(self.owner_a)
 
-        # Inventory stays outside this phase.
-        self.assertEqual(self.client.get(reverse("inventory:stock_list")).status_code, 200)
+        # Phase 2B now enforces Inventory's declared POS Core dependency.
+        self.assertEqual(self.client.get(reverse("inventory:stock_list")).status_code, 403)
 
         # Custom-role enforcement remains on its existing feature and
         # permission guards rather than being absorbed into POS Core.

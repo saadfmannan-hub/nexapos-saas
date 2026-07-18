@@ -39,11 +39,14 @@ class TenantTestCase(TestCase):
 
         # These are controlled test tenants.  Production seed-plan data stays
         # untouched while legacy POS/catalog/customer/register suites exercise
-        # the explicitly enabled POS Core capability.
+        # the explicitly enabled POS Core and Inventory capabilities.
         plan_ids = Subscription.objects.filter(
             business__in=(cls.business_a, cls.business_b)
         ).values_list("plan_id", flat=True)
-        Plan.objects.filter(pk__in=plan_ids).update(feature_sales=True)
+        Plan.objects.filter(pk__in=plan_ids).update(
+            feature_sales=True,
+            feature_inventory=True,
+        )
         cls.business_a.refresh_from_db()
         cls.business_b.refresh_from_db()
 

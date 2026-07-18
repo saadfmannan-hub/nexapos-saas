@@ -129,7 +129,7 @@
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0f766e,#5eead4)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Cash</div><div class="kpi-value">{% money kpis.cash %}</div></div><div class="kpi-icon" style="background:#ccfbf1;color:#0f766e"><i class="bi bi-cash-stack"></i></div></div></div></div>
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#2563eb,#93c5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Card</div><div class="kpi-value">{% money kpis.card %}</div></div><div class="kpi-icon" style="background:#dbeafe;color:#2563eb"><i class="bi bi-credit-card"></i></div></div></div></div>
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#7c3aed,#c4b5fd)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Bank Transfer</div><div class="kpi-value">{% money kpis.bank %}</div></div><div class="kpi-icon" style="background:#ede9fe;color:#7c3aed"><i class="bi bi-bank"></i></div></div></div></div>
-  <div class="col-6 col-xl-2"><a href="{% url 'reports:view' 'low_stock' %}" class="text-reset"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#ef4444,#fecaca)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Low Stock Items</div><div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock|intcomma }}</div></div><div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div></div></div></a></div>
+  {% if inventory_access %}<div class="col-6 col-xl-2"><a href="{% url 'reports:view' 'low_stock' %}" class="text-reset"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#ef4444,#fecaca)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Low Stock Items</div><div class="kpi-value {% if kpis.low_stock %}text-danger{% endif %}">{{ kpis.low_stock|intcomma }}</div></div><div class="kpi-icon" style="background:#fee2e2;color:#dc2626"><i class="bi bi-exclamation-triangle"></i></div></div></div></a></div>{% endif %}
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#334155,#94a3b8)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Orders Booked</div><div class="kpi-value">{{ delivery_counts.booked|intcomma }}</div></div><div class="kpi-icon" style="background:#e2e8f0;color:#334155"><i class="bi bi-clipboard-check"></i></div></div></div></div>
   <div class="col-6 col-xl-2"><div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0891b2,#67e8f9)"><div class="d-flex justify-content-between align-items-start"><div><div class="kpi-label">Ready for Delivery</div><div class="kpi-value">{{ delivery_counts.ready|intcomma }}</div></div><div class="kpi-icon" style="background:#cffafe;color:#0891b2"><i class="bi bi-bag-check"></i></div></div></div></div>
 </div>
@@ -146,7 +146,7 @@
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Gross Profit</span><strong class="text-success">{% money kpis.gross_profit %}</strong></div></div></div>
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Est. Net Profit</span><strong class="{% if kpis.net_profit < 0 %}text-danger{% endif %}">{% money kpis.net_profit %}</strong></div></div></div>
   <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Period Credit</span><strong class="text-warning">{% money kpis.period_credit %}</strong></div></div></div>
-  <div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Inventory Value</span><strong>{% if kpis.stock_value is not None %}{% money kpis.stock_value %}{% else %}-{% endif %}</strong></div></div></div>
+  {% if inventory_access %}<div class="col-6 col-xl-3"><div class="card h-100"><div class="card-body py-3 d-flex justify-content-between align-items-center"><span class="text-secondary small fw-semibold text-uppercase">Inventory Value</span><strong>{% if kpis.stock_value is not None %}{% money kpis.stock_value %}{% else %}-{% endif %}</strong></div></div></div>{% endif %}
 </div>
 {% endif %}
 
@@ -256,14 +256,14 @@
     <div class="card chart-card"><div class="card-header">Sales by branch</div>
       <div class="card-body"><div class="chart-frame chart-frame-branches"><canvas id="branchChart"></canvas></div></div></div>
   </div>
-  <div class="col-lg-6">
+  <div class="{% if inventory_access %}col-lg-6{% else %}col-12{% endif %}">
     <div class="card chart-card"><div class="card-header">Hourly sales pattern</div>
       <div class="card-body"><div class="chart-frame chart-frame-compact"><canvas id="hourlyChart"></canvas></div></div></div>
   </div>
-  <div class="col-lg-6">
+  {% if inventory_access %}<div class="col-lg-6">
     <div class="card chart-card"><div class="card-header">Inventory movement (14 days)</div>
       <div class="card-body"><div class="chart-frame chart-frame-compact"><canvas id="movementChart"></canvas></div></div></div>
-  </div>
+  </div>{% endif %}
 </div>
 
 <div class="row g-3">
@@ -302,7 +302,7 @@
     </div>
   </div>
   {% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}
-  <div class="col-xl-7">
+  <div class="{% if inventory_access %}col-xl-7{% else %}col-12{% endif %}">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Recent Sales</span><a class="small" href="{% url 'sales:list' %}">View all</a>
@@ -328,7 +328,7 @@
     </div>
   </div>
   {% endif %}
-  <div class="{% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}col-xl-5{% else %}col-12{% endif %}">
+  {% if inventory_access %}<div class="{% if module_capabilities.pos_core.enabled and "sales.view" in business_perms %}col-xl-5{% else %}col-12{% endif %}">
     <div class="card h-100">
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Low Stock</span><a class="small" href="{% url 'reports:view' 'low_stock' %}">Reorder report</a>
@@ -344,7 +344,7 @@
         </table>
       </div>
     </div>
-  </div>
+  </div>{% endif %}
 </div>
 </div>
 {% endblock %}
@@ -356,7 +356,7 @@
 {{ chart_branches|json_script:"branch-data" }}
 {{ chart_customers|json_script:"customer-data" }}
 {{ chart_hourly|json_script:"hourly-data" }}
-{{ chart_movement|json_script:"movement-data" }}
+{% if inventory_access %}{{ chart_movement|json_script:"movement-data" }}{% endif %}
 {{ sparks|json_script:"spark-data" }}
 <script src="{% static 'js/chart.umd.min.js' %}"></script>
 <script>
@@ -475,7 +475,7 @@
       plugins: {legend: {display: false}},
       scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}}, x: {grid: {display: false}}}}});
 
-  const movement = get('movement-data');
+  {% if inventory_access %}const movement = get('movement-data');
   new Chart(document.getElementById('movementChart'), {type: 'bar',
     data: {labels: movement.labels, datasets: [
       {label: 'Stock in', data: movement.stock_in, backgroundColor: '#16a34a', borderRadius: 4},
@@ -483,7 +483,7 @@
     options: {animation: false, layout: chartLayout({right: 12, left: 8}),
       plugins: {legend: Object.assign({position: 'bottom'}, cleanLegend)},
       scales: {y: {beginAtZero: true, grid: {color: '#eef2f7'}},
-        x: {grid: {display: false}, stacked: false}}}});
+        x: {grid: {display: false}, stacked: false}}}});{% endif %}
 })();
 </script>
 {% endblock %}

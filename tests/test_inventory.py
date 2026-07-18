@@ -166,6 +166,9 @@ class AdjustmentTests(TenantTestCase):
         self.assertIsNotNone(movement)
 
     def test_pending_adjustment_applies_only_after_approval(self):
+        role = self.cashier_membership.role
+        role.permissions = [*role.permissions, "inventory.adjust"]
+        role.save(update_fields=["permissions"])
         adjustment = workflows.create_adjustment(
             business=self.business_a, warehouse=self.warehouse_a,
             reason="loss",
