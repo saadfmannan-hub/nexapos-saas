@@ -920,9 +920,9 @@ def current_stock(business, f):
         qs = qs.filter(product__is_tailoring_item=False)
     allowed_branch_ids = f.get("allowed_branch_ids")
     if allowed_branch_ids is not None:
-        qs = qs.filter(warehouse__business=business).filter(
-            Q(warehouse__branch_id__in=allowed_branch_ids)
-            | Q(warehouse__branch__isnull=True)
+        qs = qs.filter(
+            warehouse__business=business,
+            warehouse__branch_id__in=allowed_branch_ids,
         )
     rows = []
     total_value = ZERO
@@ -956,9 +956,9 @@ def low_stock(business, f):
         qs = qs.filter(product__is_tailoring_item=False)
     allowed_branch_ids = f.get("allowed_branch_ids")
     if allowed_branch_ids is not None:
-        qs = qs.filter(warehouse__business=business).filter(
-            Q(warehouse__branch_id__in=allowed_branch_ids)
-            | Q(warehouse__branch__isnull=True)
+        qs = qs.filter(
+            warehouse__business=business,
+            warehouse__branch_id__in=allowed_branch_ids,
         )
     rows = [[level.product.name, level.warehouse.name, level.quantity,
              level.product.reorder_level] for level in qs[:2000]]
@@ -986,10 +986,7 @@ def stock_movements_report(business, f):
         qs = qs.filter(warehouse__branch_id=f["branch_id"])
     allowed_branch_ids = f.get("allowed_branch_ids")
     if allowed_branch_ids is not None:
-        qs = qs.filter(
-            Q(warehouse__branch_id__in=allowed_branch_ids)
-            | Q(warehouse__branch__isnull=True)
-        )
+        qs = qs.filter(warehouse__branch_id__in=allowed_branch_ids)
     rows = [[
         m.created_at.strftime("%Y-%m-%d %H:%M"),
         m.product.name,
@@ -1064,8 +1061,7 @@ def fabric_history(business, f):
         allowed_branch_ids = f.get("allowed_branch_ids")
         if allowed_branch_ids is not None:
             queryset = queryset.filter(
-                Q(warehouse__branch_id__in=allowed_branch_ids)
-                | Q(warehouse__branch__isnull=True)
+                warehouse__branch_id__in=allowed_branch_ids
             )
         if f.get("branch_id"):
             queryset = queryset.filter(warehouse__branch_id=f["branch_id"])

@@ -154,7 +154,7 @@ class Membership(TimeStampedModel):
 
     @cached_property
     def allowed_warehouse_ids(self):
-        """None means all warehouses; otherwise allowed-branch plus central IDs."""
+        """None means all warehouses; otherwise assigned-branch warehouses only."""
         allowed = self.allowed_branch_ids
         if allowed is None:
             return None
@@ -163,7 +163,7 @@ class Membership(TimeStampedModel):
 
         return set(
             Warehouse.objects.for_business(self.business_id)
-            .filter(models.Q(branch_id__in=allowed) | models.Q(branch__isnull=True))
+            .filter(branch_id__in=allowed)
             .values_list("id", flat=True)
         )
 

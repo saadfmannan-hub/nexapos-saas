@@ -367,6 +367,7 @@ class CustomerDetailRegressionTests(TenantTestCase):
     def test_detail_renders_for_brand_new_customer(self):
         self.client.force_login(self.owner_a)
         response = self.client.post(reverse("customers:create"), {
+            "home_branch": self.branch_a.id,
             "full_name": "Fresh Customer", "code": "", "mobile": "98765432",
             "whatsapp": "", "email": "", "address": "", "city": "",
             "country": "", "tax_number": "", "credit_limit": "0",

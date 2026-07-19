@@ -9,6 +9,7 @@
       <strong>{% money receivables symbol=1 %}</strong></span>
     {% endif %}
     {% if module_capabilities.pos_core.enabled and "customers.export" in business_perms %}
+    {% if branch_actions_enabled %}
     <div class="btn-group btn-group-sm">
       <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
         <i class="bi bi-download"></i> Export</button>
@@ -17,12 +18,15 @@
         <li><a class="dropdown-item" href="{% url 'customers:export' %}?format=csv&{{ querystring }}">CSV</a></li>
       </ul>
     </div>
+    {% else %}<button class="btn btn-outline-secondary btn-sm" disabled title="Select a branch first"><i class="bi bi-download"></i> Export</button>{% endif %}
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "customers.import" in business_perms %}
-    <a href="{% url 'customers:import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% if branch_actions_enabled %}<a href="{% url 'customers:import' %}?branch={{ selected_branch.id }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% else %}<button class="btn btn-outline-secondary btn-sm" disabled title="Select a branch first"><i class="bi bi-upload"></i> Import</button>{% endif %}
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "customers.manage" in business_perms %}
-    <a href="{% url 'customers:create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
+    {% if branch_actions_enabled %}<a href="{% url 'customers:create' %}?branch={{ selected_branch.id }}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New customer</a>
+    {% else %}<button class="btn btn-primary btn-sm" disabled title="Select a branch first"><i class="bi bi-plus-lg"></i> New customer</button>{% endif %}
     {% endif %}
   </div>
 </div>
@@ -37,6 +41,17 @@
         {% if credit_access %}<option value="credit" {% if request.GET.filter == "credit" %}selected{% endif %}>With outstanding balance</option>{% endif %}
         <option value="inactive" {% if request.GET.filter == "inactive" %}selected{% endif %}>Inactive</option>
       </select>
+    </div>
+    <div class="col-md-3">
+      {% if branch_locked %}
+      <input type="hidden" name="branch" value="{{ selected_branch.id }}">
+      <input class="form-control form-control-sm" value="{{ selected_branch.name }}" readonly aria-label="Assigned branch">
+      {% else %}
+      <select name="branch" class="form-select form-select-sm">
+        <option value="">All branches</option>
+        {% for branch in branches %}<option value="{{ branch.id }}" {% if selected_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}
+      </select>
+      {% endif %}
     </div>
     <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
       <a href="{% url 'customers:list' %}" class="btn btn-sm btn-outline-secondary">Clear</a></div>

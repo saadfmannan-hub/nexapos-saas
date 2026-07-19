@@ -20,6 +20,14 @@ def _csv_upload(text, name="import.csv"):
     return SimpleUploadedFile(name, text.encode("utf-8"), content_type="text/csv")
 
 
+def _csv_with_context(text, headers, values):
+    lines = text.strip().splitlines()
+    return "\n".join([
+        ",".join(headers) + "," + lines[0],
+        *[",".join(values) + "," + line for line in lines[1:]],
+    ]) + "\n"
+
+
 class CustomerExportTests(TenantTestCase):
     def setUp(self):
         Customer.objects.create(business=self.business_a, code="CUST-1",
@@ -28,7 +36,7 @@ class CustomerExportTests(TenantTestCase):
         self.client.force_login(self.owner_a)
 
     def test_csv_export_contains_customer(self):
-        r = self.client.get(reverse("customers:export"))
+        r = self.client.get(reverse("customers:export"), {"branch": self.branch_a.id})
         self.assertEqual(r.status_code, 200)
         self.assertIn("text/csv", r["Content-Type"])
         body = r.content.decode()
@@ -36,7 +44,9 @@ class CustomerExportTests(TenantTestCase):
         self.assertIn("Alpha Buyer", body)
 
     def test_xlsx_export(self):
-        r = self.client.get(reverse("customers:export"), {"format": "xlsx"})
+        r = self.client.get(reverse("customers:export"), {
+            "format": "xlsx", "branch": self.branch_a.id,
+        })
         self.assertIn("spreadsheetml", r["Content-Type"])
         self.assertTrue(r.content.startswith(b"PK"))
 
@@ -46,7 +56,9 @@ class CustomerExportTests(TenantTestCase):
         )
         before = logs.count()
 
-        response = self.client.get(reverse("customers:export"))
+        response = self.client.get(
+            reverse("customers:export"), {"branch": self.branch_a.id}
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(logs.count(), before)
@@ -61,8 +73,22 @@ class CustomerImportTests(TenantTestCase):
     def setUp(self):
         self.client.force_login(self.owner_a)
 
+    def _post(self, csv_text, mode="skip"):
+        csv_text = _csv_with_context(
+            csv_text,
+            ["branch code", "branch name"],
+            [self.branch_a.code, self.branch_a.name],
+        )
+        return self.client.post(reverse("customers:import"), {
+            "branch": self.branch_a.id,
+            "file": _csv_upload(csv_text),
+            "mode": mode,
+        })
+
     def test_template_download(self):
-        r = self.client.get(reverse("customers:import_template"))
+        r = self.client.get(
+            reverse("customers:import_template"), {"branch": self.branch_a.id}
+        )
         self.assertEqual(r.status_code, 200)
         self.assertIn("Customer Name", r.content.decode())
 
@@ -72,8 +98,7 @@ class CustomerImportTests(TenantTestCase):
             "NEW-1,Imported One,955001,one@example.com,50\n"
             "NEW-2,Imported Two,955002,,0\n"
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         self.assertEqual(r.status_code, 200)
         body = r.content.decode()
         self.assertIn("data-import-form", body)
@@ -95,13 +120,11 @@ class CustomerImportTests(TenantTestCase):
         csv_text = ("customer code,customer name,mobile\n"
                     "EX-1,Changed Name,900900\n")
         # skip
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         self.assertEqual(r.context["results"]["summary"]["skipped"], 1)
         self.assertEqual(Customer.objects.get(code="EX-1").full_name, "Original")
         # update
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "update"})
+        r = self._post(csv_text, "update")
         self.assertEqual(r.context["results"]["summary"]["updated"], 1)
         self.assertEqual(Customer.objects.get(code="EX-1").full_name, "Changed Name")
 
@@ -112,8 +135,7 @@ class CustomerImportTests(TenantTestCase):
             "V-1,Valid,901,not-an-email\n"        # invalid email
             "V-2,Good Row,902,good@example.com\n"  # ok
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         body = r.content.decode()
         self.assertIn("Import failed. Please check your file and try again.", body)
         self.assertIn("Errors count", body)
@@ -125,17 +147,17 @@ class CustomerImportTests(TenantTestCase):
 
     def test_duplicate_mobile_in_file_rejected(self):
         csv_text = ("customer name,mobile\nA,500\nB,500\n")
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         summary = r.context["results"]["summary"]
         self.assertEqual(summary["imported"], 1)
         self.assertEqual(summary["failed"], 1)
 
     def test_error_report_download(self):
         csv_text = "customer name,mobile\n,500\n"  # missing name
-        self.client.post(reverse("customers:import"),
-                         {"file": _csv_upload(csv_text), "mode": "skip"})
-        r = self.client.get(reverse("customers:import"), {"errors": "1"})
+        self._post(csv_text)
+        r = self.client.get(reverse("customers:import"), {
+            "errors": "1", "branch": self.branch_a.id,
+        })
         self.assertIn("text/csv", r["Content-Type"])
         self.assertIn("Row,Field,Error", r.content.decode())
         self.assertIn("Error", r.content.decode())
@@ -148,8 +170,7 @@ class CustomerImportTests(TenantTestCase):
             "customer code,customer name,mobile,opening balance,notes,active,measurement\n"
             "MEAS-1,Measured Customer,999001,25.000,Prefers SMS,No,42cm\n"
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         self.assertEqual(r.context["results"]["summary"]["imported"], 1)
         customer = Customer.objects.for_business(self.business_a).get(code="MEAS-1")
         self.assertEqual(customer.balance, D("25.000"))
@@ -157,7 +178,9 @@ class CustomerImportTests(TenantTestCase):
         self.assertFalse(customer.is_active)
         self.assertEqual(customer.more_options, {"1": "42cm"})
 
-        export = self.client.get(reverse("customers:export"))
+        export = self.client.get(
+            reverse("customers:export"), {"branch": self.branch_a.id}
+        )
         body = export.content.decode()
         self.assertIn("Measurement", body)
         self.assertIn("42cm", body)
@@ -178,8 +201,7 @@ class CustomerImportTests(TenantTestCase):
             "Sleeves,Design 3D No,Daraz 1 2 3 Line,Computer Design\n"
             "TAILOR-1,Tailoring Customer,999002,60,18,40,22,24,D3-10,Line A,Logo\n"
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         self.assertEqual(r.context["results"]["summary"]["imported"], 1)
         customer = Customer.objects.for_business(self.business_a).get(
             code="TAILOR-1")
@@ -211,8 +233,7 @@ class CustomerImportTests(TenantTestCase):
             "customer code,customer name,mobile,Toul,Shoulders,Chest\n"
             "TAILOR-2,Existing Tailor Updated,999003,56,,39\n"
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "update"})
+        r = self._post(csv_text, "update")
         self.assertEqual(r.context["results"]["summary"]["updated"], 1)
         customer = Customer.objects.for_business(self.business_a).get(
             code="TAILOR-2")
@@ -228,8 +249,7 @@ class CustomerImportTests(TenantTestCase):
             "customer code,customer name,mobile,Custom Sleeve\n"
             "TAILOR-3,Unmapped Custom,999004,24\n"
         )
-        r = self.client.post(reverse("customers:import"),
-                             {"file": _csv_upload(csv_text), "mode": "skip"})
+        r = self._post(csv_text)
         self.assertEqual(r.context["results"]["summary"]["failed"], 1)
         self.assertIn(
             "Unmapped customer custom field column",
@@ -395,10 +415,13 @@ class InventoryExportTests(TenantTestCase):
         self.client.force_login(self.owner_a)
 
     def test_csv_export_columns_and_stock(self):
-        r = self.client.get(reverse("inventory:export"))
+        r = self.client.get(reverse("inventory:export"), {
+            "branch": self.branch_a.id,
+            "warehouse": self.warehouse_a.id,
+        })
         body = r.content.decode()
         for col in ["Current Stock", "Available Stock", "Stock Value",
-                    "Warehouse", "Branch", "Variant SKU", "Unit Cost"]:
+                    "Warehouse Code", "Branch Code", "Variant SKU", "Unit Cost"]:
             self.assertIn(col, body)
         self.assertIn("Widget A", body)
 
@@ -413,8 +436,18 @@ class InventoryImportTests(TenantTestCase):
         self.client.force_login(self.owner_a)
 
     def _post(self, csv_text, mode):
-        return self.client.post(reverse("inventory:import"),
-                               {"file": _csv_upload(csv_text), "mode": mode})
+        csv_text = _csv_with_context(
+            csv_text,
+            ["branch code", "branch name", "warehouse code", "warehouse name"],
+            [self.branch_a.code, self.branch_a.name,
+             self.warehouse_a.code, self.warehouse_a.name],
+        )
+        return self.client.post(reverse("inventory:import"), {
+            "branch": self.branch_a.id,
+            "warehouse": self.warehouse_a.id,
+            "file": _csv_upload(csv_text),
+            "mode": mode,
+        })
 
     def test_add_mode_increases_stock(self):
         csv_text = ("sku,warehouse,quantity\nWID-A,Main Warehouse,25\n")
@@ -492,7 +525,10 @@ class InventoryImportTests(TenantTestCase):
         self.assertEqual(r.context["results"]["summary"]["failed"], 1)
 
     def test_template_headers_include_variant_and_unit_cost(self):
-        r = self.client.get(reverse("inventory:import_template"))
+        r = self.client.get(reverse("inventory:import_template"), {
+            "branch": self.branch_a.id,
+            "warehouse": self.warehouse_a.id,
+        })
         body = r.content.decode()
         self.assertIn("Variant Sku", body)
         self.assertIn("Variant Barcode", body)
@@ -508,10 +544,16 @@ class InventoryImportTests(TenantTestCase):
             business=self.business_a, branch=other_branch, name="Other Warehouse",
             code="OW")
         csv_text = (
-            "sku,branch,warehouse,quantity\n"
-            "WID-A,Other Branch,Main Warehouse,5\n"
+            "branch code,branch name,warehouse code,warehouse name,sku,quantity\n"
+            f"{other_branch.code},{other_branch.name},{self.warehouse_a.code},"
+            f"{self.warehouse_a.name},WID-A,5\n"
         )
-        r = self._post(csv_text, "add")
+        r = self.client.post(reverse("inventory:import"), {
+            "branch": self.branch_a.id,
+            "warehouse": self.warehouse_a.id,
+            "file": _csv_upload(csv_text),
+            "mode": "add",
+        })
         self.assertEqual(r.context["results"]["summary"]["failed"], 1)
         self.assertEqual(
             inventory.get_stock(self.business_a, self.warehouse_a, self.product_a),

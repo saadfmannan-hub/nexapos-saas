@@ -131,6 +131,17 @@ class CustomerViewSet(TenantReadOnlyViewSet):
     serializer_class = serializers.CustomerSerializer
     required_permission = "customers.view"
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        allowed = self.request.api_membership.allowed_branch_ids
+        if allowed is not None:
+            queryset = queryset.filter(home_branch_id__in=allowed)
+        return queryset
+
+    def has_api_object_scope(self, request, context, obj):
+        allowed = context.membership.allowed_branch_ids
+        return allowed is None or obj.home_branch_id in allowed
+
     @property
     def base_queryset(self):
         from apps.customers.models import Customer

@@ -309,15 +309,17 @@ def set_opening_stock(
 
 
 EXPORT_COLUMNS = [
+    "Branch Code", "Branch Name", "Warehouse Code", "Warehouse Name",
     "SKU", "Barcode", "Product Name", "Variant SKU", "Variant Barcode",
-    "Category", "Branch", "Warehouse",
+    "Category",
     "Current Stock", "Reserved Stock", "Available Stock", "Minimum Stock Level",
     "Stock Value", "Unit Cost", "Last Purchase Price", "Last Selling Price",
     "Last Stock Movement Date", "Status",
 ]
 IMPORT_COLUMNS = [
+    "branch code", "branch name", "warehouse code", "warehouse name",
     "sku", "barcode", "product name", "variant sku", "variant barcode",
-    "branch", "warehouse", "quantity", "minimum stock level",
+    "quantity", "minimum stock level",
     "adjustment type", "reason / notes", "unit cost",
 ]
 IMPORT_MODES = {"add", "replace", "opening", "minimum"}
@@ -370,14 +372,16 @@ def inventory_export_dataset(
         cost = D(target.average_cost) or D(getattr(target, "purchase_price", 0))
         last = last_moves.get((level.product_id, level.warehouse_id))
         rows.append([
+            level.warehouse.branch.code if level.warehouse.branch else "",
+            level.warehouse.branch.name if level.warehouse.branch else "",
+            level.warehouse.code,
+            level.warehouse.name,
             level.product.sku or "",
             level.product.barcode or "",
             str(level.variant or level.product),
             level.variant.sku if level.variant else "",
             level.variant.barcode if level.variant else "",
             level.product.category.name if level.product.category else "",
-            level.warehouse.branch.name if level.warehouse.branch else "",
-            level.warehouse.name,
             level.quantity, ZERO, level.quantity,
             "" if level.product.is_meter_tailoring else level.product.reorder_level,
             money(level.quantity * cost), cost,
@@ -395,6 +399,8 @@ def import_inventory(
     rows,
     mode,
     user,
+    selected_branch=None,
+    selected_warehouse=None,
     allowed_warehouse_ids=None,
     membership=None,
     request=None,
@@ -420,7 +426,39 @@ def import_inventory(
                 membership_warehouse_ids
             )
 
-    from apps.branches.models import Warehouse
+    from apps.branches.models import Branch, Warehouse
+
+    selected_branch = Branch.objects.select_for_update(no_key=True).filter(
+        pk=getattr(selected_branch, "pk", None),
+        business=business,
+        is_active=True,
+    ).first()
+    selected_warehouse = Warehouse.objects.select_for_update(no_key=True).filter(
+        pk=getattr(selected_warehouse, "pk", None),
+        business=business,
+        branch=selected_branch,
+        is_active=True,
+    ).first()
+    if (
+        selected_branch is None
+        or selected_warehouse is None
+        or not access_context.membership.can_access_branch(selected_branch)
+        or (
+            membership_warehouse_ids is not None
+            and selected_warehouse.pk not in membership_warehouse_ids
+        )
+    ):
+        require_actor_access(
+            user,
+            business,
+            "inventory",
+            permission_code="inventory.import",
+            action=AccessAction.WRITE,
+            membership=access_context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+
     from apps.catalog.models import Product, ProductVariant
     from apps.core.imports import normalize_row
 
@@ -437,8 +475,24 @@ def import_inventory(
         variant_barcode = r.get("variant barcode", "")
         sku = r.get("sku", "")
         barcode = r.get("barcode", "")
-        wh_name = r.get("warehouse", "")
-        branch_name = r.get("branch", "")
+        branch_code = r.get("branch code", "")
+        branch_name = r.get("branch name", "")
+        warehouse_code = r.get("warehouse code", "")
+        warehouse_name = r.get("warehouse name", "")
+
+        if (
+            branch_code.casefold() != selected_branch.code.casefold()
+            or branch_name.casefold() != selected_branch.name.casefold()
+            or warehouse_code.casefold() != selected_warehouse.code.casefold()
+            or warehouse_name.casefold() != selected_warehouse.name.casefold()
+        ):
+            errors.append((
+                idx,
+                "Branch and warehouse metadata must match the selected "
+                f"context {selected_branch.code} / {selected_warehouse.code}.",
+            ))
+            summary["failed"] += 1
+            continue
 
         if not any((sku, barcode, variant_sku, variant_barcode)):
             errors.append((idx, "Provide a SKU or barcode."))
@@ -538,24 +592,7 @@ def import_inventory(
             summary["failed"] += 1
             continue
 
-        # Resolve warehouse (by name, optionally within branch)
-        wh_qs = Warehouse.objects.for_business(business).filter(is_active=True)
-        if allowed_warehouse_ids is not None:
-            wh_qs = wh_qs.filter(id__in=allowed_warehouse_ids)
-        if branch_name:
-            wh_qs = wh_qs.filter(branch__name__iexact=branch_name)
-            if not wh_qs.exists():
-                errors.append((idx, f"Branch not found: {branch_name}"))
-                summary["failed"] += 1
-                continue
-        if wh_name:
-            warehouse = wh_qs.filter(name__iexact=wh_name).first()
-        else:
-            warehouse = wh_qs.filter(is_default=True).first() or wh_qs.first()
-        if warehouse is None:
-            errors.append((idx, f"Warehouse not found: {wh_name or '(default)'}"))
-            summary["failed"] += 1
-            continue
+        warehouse = selected_warehouse
 
         # In-file duplicate guard
         key = (product.id, variant.id if variant else None, warehouse.id)

@@ -228,8 +228,14 @@ def pos_view(request):
         _held_sales_for_request(request).order_by("-created_at")[:20],
     )
     walk_in = Customer.objects.for_business(request.business).filter(
-        is_walk_in=True
+        home_branch=branch,
+        is_walk_in=True,
+        is_active=True,
     ).first()
+    if walk_in is None:
+        from apps.customers.services import ensure_walk_in_customer
+
+        walk_in = ensure_walk_in_customer(request.business, branch)
     settings_obj = request.business.settings
     can_sell_without_shift = settings_obj.allow_sale_without_shift
     vat_rate = settings_obj.effective_vat_rate
@@ -296,9 +302,7 @@ def pos_products(request):
         )
         allowed = request.membership.allowed_branch_ids
         if allowed is not None:
-            warehouse_qs = warehouse_qs.filter(
-                Q(branch_id__in=allowed) | Q(branch__isnull=True)
-            )
+            warehouse_qs = warehouse_qs.filter(branch_id__in=allowed)
         if not warehouse_qs.exists():
             return JsonResponse(
                 {"items": [], "error": "Invalid warehouse."}, status=403,
@@ -425,8 +429,22 @@ def pos_barcode(request):
 
 @module_permission_required("pos_core", "sales.create")
 def pos_customers(request):
+    from apps.branches.models import Branch
+
+    try:
+        branch = Branch.objects.for_business(request.business).get(
+            pk=request.GET.get("branch_id"),
+            is_active=True,
+        )
+    except (Branch.DoesNotExist, ValueError):
+        return JsonResponse({"results": [], "error": "Invalid branch."}, status=404)
+    if not request.membership.can_access_branch(branch):
+        return JsonResponse({"results": [], "error": "Invalid branch."}, status=404)
     q = request.GET.get("q", "").strip()
-    qs = Customer.objects.for_business(request.business).filter(is_active=True)
+    qs = Customer.objects.for_business(request.business).filter(
+        home_branch=branch,
+        is_active=True,
+    )
     if q:
         qs = qs.filter(Q(full_name__icontains=q) | Q(mobile__icontains=q) |
                        Q(code__icontains=q) | Q(email__icontains=q))
@@ -434,7 +452,6 @@ def pos_customers(request):
         evaluate_access(
             request, "customer_credit", action=AccessAction.READ
         ).allowed
-        and request.membership.allowed_branch_ids is None
     )
     results = [{
         "id": c.id, "name": c.full_name, "mobile": c.mobile,
@@ -451,8 +468,18 @@ def pos_customers(request):
 @module_permission_required("pos_core", "customers.manage")
 def pos_quick_customer(request):
     """Create a customer from the POS without leaving the screen."""
+    from apps.branches.models import Branch
     from apps.customers.services import next_customer_code
 
+    try:
+        branch = Branch.objects.for_business(request.business).get(
+            pk=request.POST.get("branch_id"),
+            is_active=True,
+        )
+    except (Branch.DoesNotExist, ValueError):
+        return JsonResponse({"ok": False, "error": "Invalid branch."}, status=404)
+    if not request.membership.can_access_branch(branch):
+        return JsonResponse({"ok": False, "error": "Invalid branch."}, status=404)
     try:
         subscriptions.check_limit(request.business, "customers")
     except (subscriptions.LimitExceeded, subscriptions.SubscriptionInactive) as exc:
@@ -462,7 +489,8 @@ def pos_quick_customer(request):
     if not name:
         return JsonResponse({"ok": False, "error": "Name is required."}, status=400)
     if mobile and Customer.objects.for_business(request.business).filter(
-        mobile=mobile
+        home_branch=branch,
+        mobile=mobile,
     ).exists():
         return JsonResponse(
             {"ok": False, "error": "A customer with this mobile already exists."},
@@ -471,7 +499,8 @@ def pos_quick_customer(request):
     customer = customer_services.save_customer(
         customer=Customer(
             business=request.business,
-            code=next_customer_code(request.business),
+            home_branch=branch,
+            code=next_customer_code(request.business, branch),
             full_name=name[:160],
             mobile=mobile[:30],
         ),
@@ -516,7 +545,9 @@ def pos_checkout(request):
 
     try:
         customer = Customer.objects.for_business(request.business).get(
-            pk=payload.get("customer_id"), is_active=True
+            pk=payload.get("customer_id"),
+            home_branch=branch,
+            is_active=True,
         )
     except Customer.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid customer."}, status=400)

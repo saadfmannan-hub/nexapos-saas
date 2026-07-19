@@ -90,13 +90,13 @@ class InventoryEnforcementTests(TenantTestCase):
         )
         return branch, warehouse, central
 
-    @staticmethod
-    def list_urls():
+    def list_urls(self):
+        context = f"?branch={self.branch_a.id}&warehouse={self.warehouse_a.id}"
         return (
             reverse("inventory:stock_list"),
-            reverse("inventory:export"),
-            reverse("inventory:import"),
-            reverse("inventory:import_template"),
+            reverse("inventory:export") + context,
+            reverse("inventory:import") + context,
+            reverse("inventory:import_template") + context,
             reverse("inventory:movement_list"),
             reverse("inventory:item_search"),
             reverse("inventory:transfer_list"),
@@ -237,12 +237,17 @@ class InventoryEnforcementTests(TenantTestCase):
 
         for route_name in (
             "inventory:stock_list",
-            "inventory:export",
-            "inventory:import_template",
             "inventory:movement_list",
         ):
             with self.subTest(route=route_name):
                 self.assertEqual(self.client.get(reverse(route_name)).status_code, 200)
+        context = {"branch": self.branch_a.id, "warehouse": self.warehouse_a.id}
+        for route_name in ("inventory:export", "inventory:import_template"):
+            with self.subTest(route=route_name):
+                self.assertEqual(
+                    self.client.get(reverse(route_name), context).status_code,
+                    200,
+                )
         for route_name in (
             "inventory:import",
             "inventory:transfer_create",
@@ -389,37 +394,37 @@ class InventoryEnforcementTests(TenantTestCase):
             ),
             DenialCode.SCOPE_DENIED,
         )
-        services.set_opening_stock(
-            business=self.business_a,
-            warehouse=central,
-            product=self.product_a,
-            quantity=D("1"),
-            unit_cost=D("4"),
-            user=user,
-            membership=membership,
+        self.assert_service_denied(
+            lambda: services.set_opening_stock(
+                business=self.business_a,
+                warehouse=central,
+                product=self.product_a,
+                quantity=D("1"),
+                unit_cost=D("4"),
+                user=user,
+                membership=membership,
+            ),
+            DenialCode.SCOPE_DENIED,
         )
-        summary, errors = services.import_inventory(
-            business=self.business_a,
-            rows=[
-                {
-                    "sku": self.product_a.sku,
-                    "warehouse": other_warehouse.name,
-                    "quantity": "5",
-                }
-            ],
-            mode="add",
-            user=user,
-            membership=membership,
+        self.assert_service_denied(
+            lambda: services.import_inventory(
+                business=self.business_a,
+                rows=[],
+                mode="add",
+                user=user,
+                membership=membership,
+                selected_branch=other_warehouse.branch,
+                selected_warehouse=other_warehouse,
+            ),
+            DenialCode.SCOPE_DENIED,
         )
-        self.assertEqual(summary["failed"], 1)
-        self.assertTrue(errors)
         self.assertEqual(
             services.get_stock(self.business_a, other_warehouse, self.product_a),
             D("0"),
         )
         self.assertEqual(
             services.get_stock(self.business_a, central, self.product_a),
-            D("1"),
+            D("0"),
         )
 
     def test_cross_tenant_service_scope_fails_closed_before_stock_write(self):

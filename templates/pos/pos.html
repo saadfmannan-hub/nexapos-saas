@@ -641,7 +641,7 @@ function pos() {
     },
 
     async searchCustomers() {
-      const r = await fetch("{% url 'sales:pos_customers' %}?q=" + encodeURIComponent(this.customerSearch));
+      const r = await fetch("{% url 'sales:pos_customers' %}?branch_id={{ branch.id }}&q=" + encodeURIComponent(this.customerSearch));
       this.customerResults = (await r.json()).results;
     },
     selectCustomer(c) {
@@ -669,6 +669,7 @@ function pos() {
     async quickCustomer() {
       const body = new FormData();
       body.append('name', this.newCustomer.name); body.append('mobile', this.newCustomer.mobile);
+      body.append('branch_id', '{{ branch.id }}');
       const r = await fetch("{% url 'sales:pos_quick_customer' %}",
         {method: 'POST', body, headers: {'X-CSRFToken': '{{ csrf_token }}'}});
       const data = await r.json();

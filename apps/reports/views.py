@@ -34,6 +34,7 @@ ZERO = Decimal("0")
 
 
 def _parse_filters(request):
+    from apps.branches.models import Branch, Warehouse
     from apps.suppliers.models import SupplierPayment
 
     f = {}
@@ -42,9 +43,34 @@ def _parse_filters(request):
         request.business,
     )
     branch = request.GET.get("branch", "")
-    f["branch_id"] = int(branch) if branch.isdigit() else None
+    if branch and not branch.isdigit():
+        raise Http404
+    branch_id = int(branch) if branch.isdigit() else None
     warehouse = request.GET.get("warehouse", "")
-    f["warehouse_id"] = int(warehouse) if warehouse.isdigit() else None
+    if warehouse and not warehouse.isdigit():
+        raise Http404
+    warehouse_id = int(warehouse) if warehouse.isdigit() else None
+    allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if branch_id is not None:
+        branch_qs = Branch.objects.for_business(request.business)
+        if allowed_branches is not None:
+            branch_qs = branch_qs.filter(pk__in=allowed_branches)
+        if not branch_qs.filter(pk=branch_id).exists():
+            raise Http404
+    if warehouse_id is not None:
+        warehouse_qs = Warehouse.objects.for_business(request.business)
+        if allowed_branches is not None:
+            warehouse_qs = warehouse_qs.filter(branch_id__in=allowed_branches)
+        elif allowed_warehouses is not None:
+            warehouse_qs = warehouse_qs.filter(pk__in=allowed_warehouses)
+        warehouse_obj = warehouse_qs.filter(pk=warehouse_id).first()
+        if warehouse_obj is None or (
+            branch_id is not None and warehouse_obj.branch_id != branch_id
+        ):
+            raise Http404
+    f["branch_id"] = branch_id
+    f["warehouse_id"] = warehouse_id
     product = request.GET.get("product", "")
     f["product_id"] = int(product) if product.isdigit() else None
     brand = request.GET.get("brand", "")
@@ -112,7 +138,7 @@ def dashboard(request):
         "customer_credit",
         permission_code="customers.view",
         action=AccessAction.READ,
-    ).allowed and request.membership.allowed_branch_ids is None
+    ).allowed
     tailoring_access = evaluate_access(
         request,
         "tailoring",
@@ -124,11 +150,19 @@ def dashboard(request):
         permission_code="reports.view",
         action=AccessAction.READ,
     ).allowed
-    inventory_warehouse_ids = (
-        inventory_decision.context.membership.allowed_warehouse_ids
-        if inventory_access
-        else frozenset()
-    )
+    inventory_allowed_branches = request.membership.allowed_branch_ids
+    if inventory_access and inventory_allowed_branches is not None:
+        from apps.branches.models import Warehouse
+
+        inventory_warehouse_ids = set(
+            Warehouse.objects.for_business(business)
+            .filter(branch_id__in=inventory_allowed_branches)
+            .values_list("id", flat=True)
+        )
+    elif inventory_access:
+        inventory_warehouse_ids = None
+    else:
+        inventory_warehouse_ids = frozenset()
     today = business_localdate(business)
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
@@ -136,6 +170,16 @@ def dashboard(request):
     branch_id = request.GET.get("branch", "")
 
     allowed_branch_ids = request.membership.allowed_branch_ids
+    if branch_id:
+        from apps.branches.models import Branch
+
+        if not branch_id.isdigit():
+            raise Http404
+        branch_qs = Branch.objects.for_business(business).filter(is_active=True)
+        if allowed_branch_ids is not None:
+            branch_qs = branch_qs.filter(pk__in=allowed_branch_ids)
+        if not branch_qs.filter(pk=int(branch_id)).exists():
+            raise Http404
     allowed_warehouse_ids = request.membership.allowed_warehouse_ids
     sales = (
         Sale.objects.for_business(business)
@@ -235,10 +279,12 @@ def dashboard(request):
     agg["subtotal"] = agg.pop("sum_subtotal")
     credit_outstanding = None
     if customer_credit_access:
-        credit_outstanding = (
-            Customer.objects.for_business(business).aggregate(t=Sum("balance"))["t"]
-            or ZERO
-        )
+        customer_qs = Customer.objects.for_business(business)
+        if allowed_branch_ids is not None:
+            customer_qs = customer_qs.filter(home_branch_id__in=allowed_branch_ids)
+        if branch_id.isdigit():
+            customer_qs = customer_qs.filter(home_branch_id=int(branch_id))
+        credit_outstanding = customer_qs.aggregate(t=Sum("balance"))["t"] or ZERO
     payables = ZERO
     if suppliers_access:
         payables = (
@@ -571,11 +617,18 @@ def dashboard(request):
         )[:5]
     pending_receivables = ()
     if customer_credit_access:
-        pending_receivables = (
-            CustomerModel.objects.for_business(business)
-            .filter(balance__gt=0)
-            .order_by("-balance")[:5]
+        pending_receivables = CustomerModel.objects.for_business(business).filter(
+            balance__gt=0
         )
+        if allowed_branch_ids is not None:
+            pending_receivables = pending_receivables.filter(
+                home_branch_id__in=allowed_branch_ids
+            )
+        if branch_id.isdigit():
+            pending_receivables = pending_receivables.filter(
+                home_branch_id=int(branch_id)
+            )
+        pending_receivables = pending_receivables.order_by("-balance")[:5]
 
     widgets = {
         "recent_sales": sales.select_related("customer").order_by("-sale_date")[:8],
@@ -745,9 +798,7 @@ def report_view(request, key):
     allowed_branch_ids = request.membership.allowed_branch_ids
     if allowed_branch_ids is not None:
         branches = branches.filter(id__in=allowed_branch_ids)
-        warehouses = warehouses.filter(
-            Q(branch_id__in=allowed_branch_ids) | Q(branch__isnull=True)
-        )
+        warehouses = warehouses.filter(branch_id__in=allowed_branch_ids)
     if key != "supplier_payments_cheques":
         branches = branches.filter(is_active=True)
         warehouses = warehouses.filter(is_active=True)

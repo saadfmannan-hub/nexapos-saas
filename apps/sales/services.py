@@ -218,7 +218,9 @@ def _locked_checkout_context(
             request=request,
         )
     customer = Customer.objects.select_for_update().filter(
-        pk=getattr(customer, "pk", None), business=business
+        pk=getattr(customer, "pk", None),
+        business=business,
+        home_branch=branch,
     ).first()
     if customer is None:
         _deny_pos_scope(
@@ -682,7 +684,11 @@ def _validate_sale_context(
         raise SaleError("Invalid warehouse.")
     if warehouse.branch_id not in (None, branch.id):
         raise SaleError("Warehouse does not belong to this branch.")
-    if customer.business_id != business.id or not customer.is_active:
+    if (
+        customer.business_id != business.id
+        or customer.home_branch_id != branch.id
+        or not customer.is_active
+    ):
         raise SaleError("Invalid customer.")
     if membership is not None:
         if (

@@ -290,7 +290,7 @@ class ReportsAuditAPIEnforcementTests(TenantTestCase):
         for key in ("current_stock", "low_stock"):
             with self.subTest(key=key, warehouse="central"):
                 response = self.client.get(reverse("reports:view", args=[key]))
-                self.assertContains(response, "Central Stock Marker")
+                self.assertNotContains(response, "Central Stock Marker")
 
     def test_fabric_history_requires_tailoring_and_inventory(self):
         self.set_features(

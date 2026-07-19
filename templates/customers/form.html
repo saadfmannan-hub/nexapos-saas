@@ -7,6 +7,12 @@
     <div class="card-body">
       {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
       <form method="post">{% csrf_token %}
+        {% if form.home_branch.is_hidden %}
+          {{ form.home_branch }}
+          <div class="mb-3"><label class="form-label">Branch</label><input class="form-control" value="{{ selected_branch.name }}" readonly></div>
+        {% else %}
+          {% include "components/form_field.html" with field=form.home_branch %}
+        {% endif %}
         <div class="row">
           <div class="col-md-8">{% include "components/form_field.html" with field=form.full_name %}</div>
           <div class="col-md-4">{% include "components/form_field.html" with field=form.code %}</div>

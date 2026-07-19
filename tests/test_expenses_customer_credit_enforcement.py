@@ -302,7 +302,9 @@ class ExpensesCustomerCreditEnforcementTests(TenantTestCase):
         form_response = self.client.get(
             reverse("customers:edit", args=[customer.public_id])
         )
-        export_response = self.client.get(reverse("customers:export"))
+        export_response = self.client.get(
+            reverse("customers:export"), {"branch": self.branch_a.id}
+        )
         self.assertNotContains(form_response, "Credit limit")
         self.assertNotIn(b"Outstanding Balance", export_response.content)
 
@@ -315,7 +317,7 @@ class ExpensesCustomerCreditEnforcementTests(TenantTestCase):
                 membership=self.membership_a(),
             )
 
-    def test_branch_restricted_customer_export_omits_global_credit_balances(self):
+    def test_branch_restricted_customer_export_includes_branch_credit_balances(self):
         self.make_customer()
         user, _membership = self.make_staff(
             {"customers.view", "customers.export"},
@@ -326,5 +328,5 @@ class ExpensesCustomerCreditEnforcementTests(TenantTestCase):
         response = self.client.get(reverse("customers:export"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn(b"Outstanding Balance", response.content)
-        self.assertNotIn(b"Store Credit", response.content)
+        self.assertIn(b"Outstanding Balance", response.content)
+        self.assertIn(b"Store Credit", response.content)

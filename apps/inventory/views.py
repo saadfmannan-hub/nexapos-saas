@@ -3,7 +3,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db.models import F, Q
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
@@ -35,14 +35,11 @@ def _warehouse_scoped(request, queryset, *, field="warehouse"):
     allowed = request.membership.allowed_branch_ids
     if allowed is None:
         return queryset
-    return queryset.filter(
-        Q(**{f"{field}__branch_id__in": allowed})
-        | Q(**{f"{field}__branch__isnull": True})
-    )
+    return queryset.filter(**{f"{field}__branch_id__in": allowed})
 
 
 def _allowed_warehouse_ids(request):
-    """Return None for tenant-wide access, otherwise allowed + central IDs."""
+    """Return None for tenant-wide access, otherwise assigned-branch IDs."""
     allowed = request.membership.allowed_branch_ids
     if allowed is None:
         return None
@@ -50,7 +47,7 @@ def _allowed_warehouse_ids(request):
 
     return list(
         Warehouse.objects.for_business(request.business)
-        .filter(Q(branch_id__in=allowed) | Q(branch__isnull=True))
+        .filter(branch_id__in=allowed)
         .values_list("id", flat=True)
     )
 
@@ -65,24 +62,70 @@ def _warehouse_queryset(request):
     return qs
 
 
+def _inventory_context(request, *, required=False):
+    from apps.branches.models import Branch, Warehouse
+
+    source = request.POST if request.method == "POST" else request.GET
+    raw_branch = source.get("branch", "")
+    raw_warehouse = source.get("warehouse", "")
+    branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    allowed_branches = request.membership.allowed_branch_ids
+    if allowed_branches is not None:
+        branches = branches.filter(pk__in=allowed_branches)
+    branch = None
+    if raw_branch:
+        if not str(raw_branch).isdigit():
+            raise Http404
+        branch = branches.filter(pk=int(raw_branch)).first()
+        if branch is None:
+            raise Http404
+    elif allowed_branches is not None:
+        branch_list = list(branches.order_by("id")[:2])
+        if len(branch_list) == 1:
+            branch = branch_list[0]
+    if branch is None:
+        if required:
+            raise Http404
+        return None, None, branches, Warehouse.objects.none()
+
+    warehouses = Warehouse.objects.for_business(request.business).filter(
+        branch=branch,
+        is_active=True,
+    )
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_warehouses is not None:
+        warehouses = warehouses.filter(pk__in=allowed_warehouses)
+    warehouse = None
+    if raw_warehouse:
+        if not str(raw_warehouse).isdigit():
+            raise Http404
+        warehouse = warehouses.filter(pk=int(raw_warehouse)).first()
+        if warehouse is None:
+            raise Http404
+    else:
+        warehouse_list = list(warehouses.order_by("id")[:2])
+        if len(warehouse_list) == 1:
+            warehouse = warehouse_list[0]
+    if warehouse is None and required:
+        raise Http404
+    return branch, warehouse, branches, warehouses
+
+
 def _transfer_scoped(request, queryset):
     allowed = request.membership.allowed_branch_ids
     if allowed is None:
         return queryset
-    from_allowed = (
-        Q(from_warehouse__branch_id__in=allowed)
-        | Q(from_warehouse__branch__isnull=True)
-    )
-    to_allowed = (
-        Q(to_warehouse__branch_id__in=allowed)
-        | Q(to_warehouse__branch__isnull=True)
-    )
+    from_allowed = Q(from_warehouse__branch_id__in=allowed)
+    to_allowed = Q(to_warehouse__branch_id__in=allowed)
     return queryset.filter(from_allowed & to_allowed)
 
 
 @module_permission_required("inventory", "inventory.view")
 def stock_list(request):
     tailoring_enabled = get_access_context(request).has_module("tailoring")
+    selected_branch, selected_warehouse, branches, warehouses = _inventory_context(
+        request
+    )
     qs = (
         _warehouse_scoped(
             request,
@@ -92,15 +135,16 @@ def stock_list(request):
         .filter(product__is_archived=False)
         .order_by("product__name")
     )
+    if selected_warehouse is None:
+        qs = qs.none()
+    else:
+        qs = qs.filter(warehouse=selected_warehouse)
     if not tailoring_enabled:
         qs = qs.filter(product__is_tailoring_item=False)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(product__name__icontains=q) | Q(product__sku__icontains=q) |
                        Q(product__barcode__icontains=q))
-    warehouse_id = request.GET.get("warehouse", "")
-    if warehouse_id.isdigit():
-        qs = qs.filter(warehouse_id=warehouse_id)
     level = request.GET.get("level", "")
     if level == "low":
         qs = qs.filter(quantity__lte=F("product__reorder_level"),
@@ -120,11 +164,13 @@ def stock_list(request):
                 target, "purchase_price", 0)
             lvl.stock_value = money_q(lvl.quantity * lvl.unit_cost)
 
-    warehouses = _warehouse_queryset(request)
     total_value = (
         services.stock_value(
             request.business,
-            allowed_warehouse_ids=_allowed_warehouse_ids(request),
+            warehouse=selected_warehouse,
+            allowed_warehouse_ids=(
+                [selected_warehouse.pk] if selected_warehouse is not None else []
+            ),
             include_tailoring=tailoring_enabled,
         )
         if show_cost
@@ -134,6 +180,11 @@ def stock_list(request):
         "page_obj": page_obj, "q": q, "warehouses": warehouses,
         "active_nav": "inventory", "show_cost": show_cost,
         "total_value": total_value, "querystring": _qs_without_page(request),
+        "branches": branches,
+        "selected_branch": selected_branch,
+        "selected_warehouse": selected_warehouse,
+        "branch_locked": request.membership.allowed_branch_ids is not None,
+        "inventory_actions_enabled": selected_warehouse is not None,
     })
 
 
@@ -142,15 +193,18 @@ def inventory_export(request):
     from apps.audit import services as audit
     from apps.reports import exports
 
-    def _int(name):
-        v = request.GET.get(name, "")
-        return int(v) if v.isdigit() else None
-
-    filters = {"warehouse_id": _int("warehouse"), "branch_id": _int("branch")}
+    selected_branch, selected_warehouse, _branches, _warehouses = _inventory_context(
+        request,
+        required=True,
+    )
+    filters = {
+        "warehouse_id": selected_warehouse.pk,
+        "branch_id": selected_branch.pk,
+    }
     data = services.inventory_export_dataset(
         request.business,
         filters,
-        allowed_warehouse_ids=_allowed_warehouse_ids(request),
+        allowed_warehouse_ids=[selected_warehouse.pk],
         include_tailoring=get_access_context(request).has_module("tailoring"),
     )
     audit.log("inventory.exported", request=request, module="inventory",
@@ -165,10 +219,16 @@ def inventory_export(request):
 def inventory_import_template(request):
     from apps.reports import exports
 
+    selected_branch, selected_warehouse, _branches, _warehouses = _inventory_context(
+        request,
+        required=True,
+    )
     data = {
         "columns": [c.title() for c in services.IMPORT_COLUMNS],
-        "rows": [["WID-A", "1000000000017", "Widget A", "", "", "Head Office",
-                  "Main Warehouse", "50", "10", "Opening count",
+        "rows": [[selected_branch.code, selected_branch.name,
+                  selected_warehouse.code, selected_warehouse.name,
+                  "WID-A", "1000000000017", "Widget A", "", "",
+                  "50", "10", "Opening count",
                   "Initial load", "4.000"]],
         "totals": None,
     }
@@ -181,6 +241,11 @@ def inventory_import_template(request):
 def inventory_import(request):
     from apps.audit import services as audit
     from apps.core.imports import error_report_response, parse_tabular_file
+
+    selected_branch, selected_warehouse, _branches, _warehouses = _inventory_context(
+        request,
+        required=True,
+    )
 
     if request.GET.get("errors") == "1":
         errors = request.session.get("inventory_import_errors", [])
@@ -211,7 +276,9 @@ def inventory_import(request):
                 summary, errors = services.import_inventory(
                     business=request.business, rows=rows, mode=mode,
                     user=request.user,
-                    allowed_warehouse_ids=_allowed_warehouse_ids(request),
+                    selected_branch=selected_branch,
+                    selected_warehouse=selected_warehouse,
+                    allowed_warehouse_ids=[selected_warehouse.pk],
                     membership=request.membership,
                     request=request,
                 )
@@ -230,6 +297,8 @@ def inventory_import(request):
     return render(request, "inventory/import.html", {
         "results": results, "import_error": import_error,
         "active_nav": "inventory",
+        "selected_branch": selected_branch,
+        "selected_warehouse": selected_warehouse,
         "columns": [c.title() for c in services.IMPORT_COLUMNS],
     })
 
@@ -244,9 +313,7 @@ def movement_list(request):
         qs = qs.filter(product__is_tailoring_item=False)
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
-        qs = qs.filter(
-            Q(warehouse__branch_id__in=allowed) | Q(warehouse__branch__isnull=True)
-        )
+        qs = qs.filter(warehouse__branch_id__in=allowed)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(product__name__icontains=q) | Q(reference_id__icontains=q))

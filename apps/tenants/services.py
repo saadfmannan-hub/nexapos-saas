@@ -98,7 +98,7 @@ def provision_business(
     from apps.sales.services import create_default_payment_methods
 
     create_default_catalog(business)
-    ensure_walk_in_customer(business)
+    ensure_walk_in_customer(business, branch)
     create_default_payment_methods(business)
     create_default_register(business, branch)
     create_default_expense_categories(business)

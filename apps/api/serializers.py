@@ -85,6 +85,9 @@ class ProductSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
 
 
 class CustomerSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
+    home_branch = serializers.PrimaryKeyRelatedField(read_only=True)
+    branch_code = serializers.CharField(source="home_branch.code", read_only=True)
+    branch_name = serializers.CharField(source="home_branch.name", read_only=True)
     module_fields = {
         "customer_credit": ("balance", "store_credit"),
     }
@@ -105,6 +108,9 @@ class CustomerSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
         model = Customer
         fields = [
             "public_id",
+            "home_branch",
+            "branch_code",
+            "branch_name",
             "code",
             "full_name",
             "mobile",

@@ -50,6 +50,17 @@ def _require_tailoring_product_access(
         )
 
 
+def _require_business_wide_catalog(request, permission_code, action=AccessAction.READ):
+    if request.membership.allowed_branch_ids is not None:
+        require_access(
+            request,
+            "pos_core",
+            permission_code=permission_code,
+            action=action,
+            scope_allowed=False,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Products
 # ---------------------------------------------------------------------------
@@ -89,11 +100,16 @@ def product_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
 
     # Attach total stock to page items (single query)
+    stock_qs = (
+        inventory.StockLevel.objects.for_business(request.business)
+        .filter(product__in=[p.pk for p in page_obj])
+    )
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        stock_qs = stock_qs.filter(warehouse__branch_id__in=allowed_branch_ids)
     stock = {
         row["product_id"]: row["total"]
-        for row in inventory.StockLevel.objects.for_business(request.business)
-        .filter(product__in=[p.pk for p in page_obj])
-        .values("product_id").annotate(total=Sum("quantity"))
+        for row in stock_qs.values("product_id").annotate(total=Sum("quantity"))
     }
     for p in page_obj:
         p.total_stock = stock.get(p.pk, 0)
@@ -117,6 +133,7 @@ def _qs_without_page(request):
 @module_permission_required("pos_core", "products.export")
 def product_export(request):
     """Export products (CSV/XLSX) honoring catalog + stock filters."""
+    _require_business_wide_catalog(request, "products.export")
     from apps.branches.models import Branch, Warehouse
     from apps.reports import exports
 
@@ -449,8 +466,13 @@ def product_detail(request, public_id):
     )
     movements = (
         inventory.StockMovement.objects.for_business(request.business)
-        .filter(product=product).select_related("warehouse", "user")[:30]
+        .filter(product=product).select_related("warehouse", "user")
     )
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        levels = levels.filter(warehouse__branch_id__in=allowed_branch_ids)
+        movements = movements.filter(warehouse__branch_id__in=allowed_branch_ids)
+    movements = movements[:30]
     show_cost = request.membership.has_perm("cost.view")
     return render(request, "catalog/product_detail.html", {
         "product": product, "variants": variants, "levels": levels,
@@ -699,6 +721,11 @@ def tax_list(request):
 
 @module_permission_required("pos_core", "products.import")
 def product_import(request):
+    _require_business_wide_catalog(
+        request,
+        "products.import",
+        action=AccessAction.WRITE,
+    )
     from apps.core.imports import error_report_response, parse_tabular_file
 
     from . import services as catalog_services
@@ -742,6 +769,7 @@ def product_import(request):
 
 @module_permission_required("pos_core", "products.import")
 def import_template(request):
+    _require_business_wide_catalog(request, "products.import")
     from apps.reports import exports
 
     from . import services as catalog_services

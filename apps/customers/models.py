@@ -22,6 +22,14 @@ class CustomerGroup(TenantModel):
 
 
 class Customer(TenantModel):
+    home_branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="customers",
+        help_text="Owning operational branch. Unassigned legacy customers are owner-only.",
+    )
     code = models.CharField(max_length=30)
     full_name = models.CharField(max_length=160)
     mobile = models.CharField(max_length=30, blank=True)
@@ -55,15 +63,40 @@ class Customer(TenantModel):
         indexes = [
             models.Index(fields=["business", "full_name"]),
             models.Index(fields=["business", "mobile"]),
+            models.Index(fields=["business", "home_branch", "full_name"]),
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["business", "code"], name="uniq_customer_code_per_business"
-            )
+                fields=["business", "home_branch", "code"],
+                condition=models.Q(home_branch__isnull=False),
+                name="uniq_customer_code_per_branch",
+            ),
+            models.UniqueConstraint(
+                fields=["business", "code"],
+                condition=models.Q(home_branch__isnull=True),
+                name="uniq_unassigned_customer_code",
+            ),
+            models.UniqueConstraint(
+                fields=["business", "home_branch"],
+                condition=models.Q(is_walk_in=True, home_branch__isnull=False),
+                name="uniq_walk_in_customer_per_branch",
+            ),
         ]
 
     def __str__(self):
         return self.full_name
+
+    def save(self, *args, **kwargs):
+        if self.home_branch_id is None and self.business_id:
+            from apps.branches.models import Branch
+
+            branches = Branch.objects.filter(
+                business_id=self.business_id,
+                is_active=True,
+            ).order_by("id")[:2]
+            if len(branches) == 1:
+                self.home_branch = branches[0]
+        super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         if self.is_walk_in:

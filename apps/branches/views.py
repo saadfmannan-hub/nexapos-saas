@@ -56,9 +56,14 @@ def branch_form(request, public_id=None):
 
     form = BranchForm(request.business, request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
+        creating = instance is None
         branch = form.save(commit=False)
         branch.business = request.business
         branch.save()
+        if creating:
+            from apps.customers.services import ensure_walk_in_customer
+
+            ensure_walk_in_customer(request.business, branch)
         audit.log("branch.saved", request=request, module="branches", obj=branch,
                   description=f"Branch '{branch.name}' saved.")
         messages.success(request, "Branch saved.")

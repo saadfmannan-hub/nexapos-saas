@@ -1,6 +1,7 @@
 from django import forms
 
 from apps.branches.forms import TenantStyledModelForm
+from apps.branches.models import Branch
 
 from .models import Customer, CustomerGroup
 
@@ -10,13 +11,34 @@ class CustomerForm(TenantStyledModelForm):
 
     class Meta:
         model = Customer
-        fields = ["full_name", "code", "mobile", "whatsapp", "email", "address",
+        fields = ["home_branch", "full_name", "code", "mobile", "whatsapp", "email", "address",
                   "city", "country", "group", "tax_number", "credit_limit",
                   "notes", "is_active"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 2})}
 
-    def __init__(self, business, *args, include_credit=True, **kwargs):
+    def __init__(
+        self,
+        business,
+        *args,
+        include_credit=True,
+        membership=None,
+        selected_branch=None,
+        **kwargs,
+    ):
         super().__init__(business, *args, **kwargs)
+        branch_qs = Branch.objects.for_business(business).filter(is_active=True)
+        allowed = membership.allowed_branch_ids if membership is not None else None
+        if allowed is not None:
+            branch_qs = branch_qs.filter(pk__in=allowed)
+        self.fields["home_branch"].queryset = branch_qs
+        self.fields["home_branch"].required = True
+        self.branch_locked = allowed is not None
+        self.selected_branch = selected_branch
+        if selected_branch is not None:
+            self.fields["home_branch"].initial = selected_branch
+        if self.branch_locked:
+            self.fields["home_branch"].widget = forms.HiddenInput()
+            self.fields["home_branch"].required = False
         if not include_credit:
             self.fields.pop("credit_limit", None)
         self.fields["group"].queryset = CustomerGroup.objects.for_business(business)
@@ -35,6 +57,16 @@ class CustomerForm(TenantStyledModelForm):
             )
             self.more_option_fields.append(field_name)
 
+    def clean_home_branch(self):
+        branch = self.cleaned_data.get("home_branch")
+        if self.branch_locked:
+            branch = self.selected_branch
+        if branch is None or not self.fields["home_branch"].queryset.filter(
+            pk=branch.pk
+        ).exists():
+            raise forms.ValidationError("Select a valid active business branch.")
+        return branch
+
     def save(self, commit=True):
         customer = super().save(commit=False)
         customer.more_options = {
@@ -51,7 +83,11 @@ class CustomerForm(TenantStyledModelForm):
         code = self.cleaned_data.get("code", "").strip()
         if not code:
             return code
-        qs = Customer.objects.for_business(self.business).filter(code__iexact=code)
+        branch = self.cleaned_data.get("home_branch") or self.instance.home_branch
+        qs = Customer.objects.for_business(self.business).filter(
+            home_branch=branch,
+            code__iexact=code,
+        )
         if self.instance.pk:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
@@ -61,7 +97,11 @@ class CustomerForm(TenantStyledModelForm):
     def clean_mobile(self):
         mobile = self.cleaned_data.get("mobile", "").strip()
         if mobile:
-            qs = Customer.objects.for_business(self.business).filter(mobile=mobile)
+            branch = self.cleaned_data.get("home_branch") or self.instance.home_branch
+            qs = Customer.objects.for_business(self.business).filter(
+                home_branch=branch,
+                mobile=mobile,
+            )
             if self.instance.pk:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():

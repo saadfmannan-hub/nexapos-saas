@@ -5,10 +5,11 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.http import Http404
 
 from apps.audit import services as audit
+from apps.branches.models import Branch
 from apps.core.money import D, money
 from apps.subscriptions.access import (
     AccessAction,
@@ -20,12 +21,14 @@ from .models import Customer, CustomerGroup, CustomerPayment
 
 # Export column order ↔ model field mapping (reused by export + import template)
 BASE_EXPORT_COLUMNS = [
-    "Customer Code", "Customer Name", "Mobile", "WhatsApp", "Email", "Address",
+    "Branch Code", "Branch Name", "Customer Code", "Customer Name",
+    "Mobile", "WhatsApp", "Email", "Address",
     "City", "Country", "Group", "Credit Limit", "Outstanding Balance",
     "Opening Balance", "Store Credit", "Notes", "Status", "Created Date",
 ]
 BASE_IMPORT_COLUMNS = [
-    "customer code", "customer name", "mobile", "whatsapp", "email",
+    "branch code", "branch name", "customer code", "customer name",
+    "mobile", "whatsapp", "email",
     "address", "city", "country", "group", "credit limit",
     "opening balance", "notes", "active",
 ]
@@ -36,12 +39,93 @@ CREDIT_IMPORT_COLUMNS = {"credit limit", "opening balance"}
 CUSTOM_FIELD_HEADER_WORDS = ("custom", "measurement", "moreoption", "moreoptions")
 
 
-def ensure_walk_in_customer(business):
+def customer_queryset_for_membership(business, membership):
+    queryset = Customer.objects.for_business(business)
+    allowed = membership.allowed_branch_ids
+    if allowed is not None:
+        queryset = queryset.filter(home_branch_id__in=allowed)
+    return queryset
+
+
+def resolve_branch_context(
+    business,
+    membership,
+    raw_branch,
+    *,
+    required=False,
+):
+    """Resolve one active tenant branch without trusting request identifiers."""
+    branches = Branch.objects.for_business(business).filter(is_active=True)
+    allowed = membership.allowed_branch_ids
+    if allowed is not None:
+        branches = branches.filter(pk__in=allowed)
+        allowed_branches = list(branches.order_by("id"))
+        if not allowed_branches:
+            raise Http404
+        if raw_branch not in (None, ""):
+            try:
+                branch_id = int(raw_branch)
+            except (TypeError, ValueError):
+                raise Http404 from None
+            branch = next(
+                (candidate for candidate in allowed_branches if candidate.pk == branch_id),
+                None,
+            )
+            if branch is None:
+                raise Http404
+            return branch
+        if len(allowed_branches) == 1:
+            return allowed_branches[0]
+        if required:
+            raise Http404
+        return None
+
+    if raw_branch in (None, ""):
+        if required:
+            raise Http404
+        return None
+    try:
+        return branches.get(pk=int(raw_branch))
+    except (Branch.DoesNotExist, TypeError, ValueError):
+        raise Http404 from None
+
+
+def ensure_walk_in_customer(business, branch=None):
+    if branch is None:
+        branches = list(
+            Branch.objects.for_business(business).filter(is_active=True).order_by("id")[:2]
+        )
+        if len(branches) != 1:
+            raise ValueError("Select a branch before creating a Walk-In Customer.")
+        branch = branches[0]
+    branch = Branch.objects.for_business(business).filter(
+        pk=getattr(branch, "pk", None), is_active=True
+    ).first()
+    if branch is None:
+        raise ValueError("Walk-In Customer branch must be active and tenant-owned.")
     customer, _ = Customer.objects.get_or_create(
         business=business,
+        home_branch=branch,
         is_walk_in=True,
-        defaults={"code": "WALK-IN", "full_name": "Walk-In Customer"},
+        defaults={
+            "code": f"WALK-IN-{branch.code}"[:30],
+            "full_name": f"Walk-In Customer — {branch.name}"[:160],
+        },
     )
+    expected_code = f"WALK-IN-{branch.code}"[:30]
+    expected_name = f"Walk-In Customer — {branch.name}"[:160]
+    update_fields = []
+    if customer.code != expected_code:
+        customer.code = expected_code
+        update_fields.append("code")
+    if customer.full_name != expected_name:
+        customer.full_name = expected_name
+        update_fields.append("full_name")
+    if not customer.is_active:
+        customer.is_active = True
+        update_fields.append("is_active")
+    if update_fields:
+        customer.save(update_fields=[*update_fields, "updated_at"])
     return customer
 
 
@@ -120,16 +204,19 @@ def _unknown_custom_columns(business, row, used_more_option_columns):
     return unknowns
 
 
-def next_customer_code(business):
-    count = Customer.objects.for_business(business).count()
+def next_customer_code(business, branch=None):
+    queryset = Customer.objects.for_business(business)
+    if branch is not None:
+        queryset = queryset.filter(home_branch=branch)
+    count = queryset.count()
     n = count + 1
-    while Customer.objects.for_business(business).filter(code=f"CUST-{n:05d}").exists():
+    while queryset.filter(code=f"CUST-{n:05d}").exists():
         n += 1
     return f"CUST-{n:05d}"
 
 
 CUSTOMER_FORM_FIELDS = (
-    "full_name", "code", "mobile", "whatsapp", "email", "address", "city",
+    "home_branch", "full_name", "code", "mobile", "whatsapp", "email", "address", "city",
     "country", "group", "tax_number", "credit_limit", "notes", "is_active",
     "more_options",
 )
@@ -138,7 +225,7 @@ CUSTOMER_FORM_FIELDS = (
 @transaction.atomic
 def save_customer(*, customer, business, user, membership=None, request=None):
     """Persist a basic customer behind POS Core and customer-role access."""
-    require_actor_access(
+    context = require_actor_access(
         user,
         business,
         "pos_core",
@@ -158,6 +245,35 @@ def save_customer(*, customer, business, user, membership=None, request=None):
             request=request,
             scope_allowed=False,
         )
+    target_branch = Branch.objects.select_for_update().filter(
+        pk=customer.home_branch_id,
+        business=business,
+        is_active=True,
+    ).first()
+    if target_branch is None:
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="customers.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    allowed_branch_ids = context.membership.allowed_branch_ids
+    if allowed_branch_ids is not None and target_branch.pk not in allowed_branch_ids:
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="customers.manage",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    customer.home_branch = target_branch
     if customer.group_id is not None:
         canonical_group = CustomerGroup.objects.filter(
             pk=customer.group_id, business=business
@@ -189,6 +305,20 @@ def save_customer(*, customer, business, user, membership=None, request=None):
                 permission_code="customers.manage",
                 action=AccessAction.WRITE,
                 membership=membership,
+                request=request,
+                scope_allowed=False,
+            )
+        if allowed_branch_ids is not None and (
+            canonical_customer.home_branch_id not in allowed_branch_ids
+            or target_branch.pk != canonical_customer.home_branch_id
+        ):
+            require_actor_access(
+                user,
+                business,
+                "pos_core",
+                permission_code="customers.manage",
+                action=AccessAction.WRITE,
+                membership=context.membership,
                 request=request,
                 scope_allowed=False,
             )
@@ -293,7 +423,8 @@ def record_customer_payment(
     ):
         raise ValidationError("Use a real payment method to collect a balance.")
 
-    if context.membership.allowed_branch_ids is not None:
+    allowed_branch_ids = context.membership.allowed_branch_ids
+    if allowed_branch_ids is not None and customer.home_branch_id not in allowed_branch_ids:
         require_actor_access(
             user,
             canonical_business,
@@ -305,7 +436,7 @@ def record_customer_payment(
             scope_allowed=False,
         )
 
-    branch = None
+    branch = customer.home_branch
     if shift is not None:
         from apps.registers.models import Shift
 
@@ -321,6 +452,17 @@ def record_customer_payment(
             .first()
         )
         if shift is None or not context.membership.can_access_branch(shift.branch):
+            require_actor_access(
+                user,
+                canonical_business,
+                "customer_credit",
+                permission_code="customers.payments",
+                action=AccessAction.WRITE,
+                membership=context.membership,
+                request=request,
+                scope_allowed=False,
+            )
+        if customer.home_branch_id != shift.branch_id:
             require_actor_access(
                 user,
                 canonical_business,
@@ -381,9 +523,11 @@ def export_dataset(business, queryset, *, include_credit=True):
     """Build {columns, rows} for customer export (CSV/XLSX)."""
     rows = []
     option_labels = business.settings.more_option_labels
-    for c in queryset.select_related("group"):
+    for c in queryset.select_related("group", "home_branch"):
         more_values = c.more_options or {}
         row = [
+            c.home_branch.code if c.home_branch else "",
+            c.home_branch.name if c.home_branch else "Unassigned",
             c.code, c.full_name, c.mobile, c.whatsapp, c.email, c.address,
             c.city, c.country, c.group.name if c.group else "",
         ]
@@ -405,7 +549,16 @@ def export_dataset(business, queryset, *, include_credit=True):
 
 
 @transaction.atomic
-def import_customers(*, business, rows, mode, user, membership=None, request=None):
+def import_customers(
+    *,
+    business,
+    branch,
+    rows,
+    mode,
+    user,
+    membership=None,
+    request=None,
+):
     """Import customer rows. mode: 'skip' | 'update'.
 
     Returns (summary, errors) where summary has imported/updated/skipped/
@@ -414,7 +567,7 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
     """
     from apps.core.imports import normalize_row
 
-    require_actor_access(
+    context = require_actor_access(
         user,
         business,
         "pos_core",
@@ -423,6 +576,22 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
         membership=membership,
         request=request,
     )
+    branch = Branch.objects.select_for_update(no_key=True).filter(
+        pk=getattr(branch, "pk", None),
+        business=business,
+        is_active=True,
+    ).first()
+    if branch is None or not context.membership.can_access_branch(branch):
+        require_actor_access(
+            user,
+            business,
+            "pos_core",
+            permission_code="customers.import",
+            action=AccessAction.WRITE,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
     credit_allowed = evaluate_actor_access(
         user,
         business,
@@ -463,6 +632,27 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
             ))
             summary["failed"] += 1
             continue
+        row_branch_code = r.get("branch code", "")
+        row_branch_name = r.get("branch name", "")
+        branch_restricted = context.membership.allowed_branch_ids is not None
+        if not row_branch_code and not row_branch_name and branch_restricted:
+            row_branch_code = branch.code
+            row_branch_name = branch.name
+        if not row_branch_code or not row_branch_name:
+            errors.append((idx, "Branch Code and Branch Name are required."))
+            summary["failed"] += 1
+            continue
+        if (
+            row_branch_code.casefold() != branch.code.casefold()
+            or row_branch_name.casefold() != branch.name.casefold()
+        ):
+            errors.append((
+                idx,
+                f"Branch must match selected branch {branch.code} — {branch.name}.",
+            ))
+            summary["failed"] += 1
+            continue
+
         name = r.get("customer name", "")
         code = r.get("customer code", "")
         mobile = r.get("mobile", "")
@@ -491,10 +681,29 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
 
         existing = None
         if code:
-            existing = Customer.objects.for_business(business).filter(code=code).first()
-        if existing is None and mobile:
             existing = Customer.objects.for_business(business).filter(
-                mobile=mobile).first()
+                home_branch=branch,
+                code=code,
+            ).first()
+        foreign_identifiers = Q()
+        if mobile:
+            foreign_identifiers |= Q(mobile=mobile)
+        if email:
+            foreign_identifiers |= Q(email__iexact=email)
+        foreign_match_exists = bool(foreign_identifiers) and (
+            Customer.objects.for_business(business)
+            .exclude(home_branch=branch)
+            .filter(foreign_identifiers)
+            .exists()
+        )
+        if existing is None and foreign_match_exists:
+            errors.append((
+                idx,
+                "Mobile or email belongs to a customer in another branch; "
+                "that customer was not changed.",
+            ))
+            summary["failed"] += 1
+            continue
 
         if existing and existing.is_walk_in:
             errors.append((idx, "Cannot import over the walk-in customer."))
@@ -527,8 +736,11 @@ def import_customers(*, business, rows, mode, user, membership=None, request=Non
                 continue
         else:
             try:
-                customer = Customer(business=business,
-                                    code=code or next_customer_code(business))
+                customer = Customer(
+                    business=business,
+                    home_branch=branch,
+                    code=code or next_customer_code(business, branch),
+                )
                 _apply_fields(
                     business,
                     customer,
