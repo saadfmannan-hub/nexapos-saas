@@ -980,17 +980,41 @@ PLAN_MODULE_LABELS = {
 }
 PLAN_MODULE_HELP_TEXT = {
     "feature_purchases": (
-        "Purchasing requires Inventory Management and Suppliers."
+        "Purchasing requires POS Core, Inventory Management, and Suppliers."
     ),
     "feature_transfers": "Stock Transfers require Inventory Management.",
     "feature_tailoring_module": (
         "Tailoring Operations require POS Core and Inventory Management."
     ),
     "feature_customer_credit": "Customer Credit requires POS Core.",
+    "feature_advanced_reports": (
+        "Advanced Reports require POS Core, Inventory Management, Suppliers, "
+        "Purchasing, Expenses, and Customer Credit."
+    ),
     "feature_barcode_printing": "Barcode Printing requires POS Core.",
     "feature_custom_roles": "Custom Roles require POS Core Users & Staff.",
     "feature_api_access": (
         "API Access does not automatically enable any business module."
+    ),
+}
+PLAN_MODULE_DEPENDENCIES = {
+    "feature_purchases": (
+        "feature_sales",
+        "feature_inventory",
+        "feature_suppliers",
+    ),
+    "feature_tailoring_module": (
+        "feature_sales",
+        "feature_inventory",
+    ),
+    "feature_customer_credit": ("feature_sales",),
+    "feature_advanced_reports": (
+        "feature_sales",
+        "feature_inventory",
+        "feature_suppliers",
+        "feature_purchases",
+        "feature_expenses",
+        "feature_customer_credit",
     ),
 }
 PLAN_FORM_FIELDS = (
@@ -1027,6 +1051,24 @@ class PlanForm(forms.ModelForm):
         self.pricing_fields = [self[name] for name in self.PRICING_FIELDS]
         self.limit_fields = [self[name] for name in self.LIMIT_FIELDS]
         self.module_fields = [self[name] for name in self.MODULE_FIELDS]
+
+    def clean(self):
+        cleaned_data = super().clean()
+        for module_field, dependency_fields in PLAN_MODULE_DEPENDENCIES.items():
+            if not cleaned_data.get(module_field):
+                continue
+            missing_labels = [
+                PLAN_MODULE_LABELS[field]
+                for field in dependency_fields
+                if not cleaned_data.get(field)
+            ]
+            if missing_labels:
+                self.add_error(
+                    module_field,
+                    f"{PLAN_MODULE_LABELS[module_field]} requires enabled modules: "
+                    f"{', '.join(missing_labels)}.",
+                )
+        return cleaned_data
 
 
 @platform_admin_required

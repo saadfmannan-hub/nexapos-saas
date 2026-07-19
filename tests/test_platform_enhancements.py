@@ -450,10 +450,14 @@ class PlanAdminTests(PlatformBaseTest):
             self.assertContains(r, f'name="{field}"')
             self.assertContains(r, label)
         for text in [
-            "Purchasing requires Inventory Management and Suppliers.",
+            "Purchasing requires POS Core, Inventory Management, and Suppliers.",
             "Stock Transfers require Inventory Management.",
             "Tailoring Operations require POS Core and Inventory Management.",
             "Customer Credit requires POS Core.",
+            (
+                "Advanced Reports require POS Core, Inventory Management, Suppliers, "
+                "Purchasing, Expenses, and Customer Credit."
+            ),
             "Barcode Printing requires POS Core.",
             "Custom Roles require POS Core Users &amp; Staff.",
             "API Access does not automatically enable any business module.",
@@ -530,7 +534,14 @@ class PlanAdminTests(PlatformBaseTest):
             monthly_price="39.000",
             description="Updated through Platform Admin",
         )
-        edit_payload.pop("feature_inventory")
+        for field in (
+            "feature_inventory",
+            "feature_purchases",
+            "feature_transfers",
+            "feature_tailoring_module",
+            "feature_advanced_reports",
+        ):
+            edit_payload.pop(field)
         edit_response = self.client.post(
             reverse("platformadmin:plan_edit", args=[plan.pk]), edit_payload
         )
@@ -540,6 +551,70 @@ class PlanAdminTests(PlatformBaseTest):
         self.assertEqual(plan.monthly_price, D("39.000"))
         self.assertEqual(plan.description, "Updated through Platform Admin")
         self.assertFalse(plan.feature_inventory)
+
+    def test_plan_form_rejects_invalid_module_dependencies(self):
+        cases = {
+            "feature_purchases": (
+                "feature_sales",
+                "feature_inventory",
+                "feature_suppliers",
+            ),
+            "feature_tailoring_module": (
+                "feature_sales",
+                "feature_inventory",
+            ),
+            "feature_customer_credit": ("feature_sales",),
+            "feature_advanced_reports": (
+                "feature_sales",
+                "feature_inventory",
+                "feature_suppliers",
+                "feature_purchases",
+                "feature_expenses",
+                "feature_customer_credit",
+            ),
+        }
+        for module_field, dependency_fields in cases.items():
+            for dependency_field in dependency_fields:
+                with self.subTest(
+                    module=module_field,
+                    missing_dependency=dependency_field,
+                ):
+                    payload = self._payload(
+                        name=f"Invalid {module_field} {dependency_field}"
+                    )
+                    payload.pop(dependency_field)
+                    form = PlanForm(payload)
+                    self.assertFalse(form.is_valid())
+                    self.assertIn(module_field, form.errors)
+                    self.assertIn(
+                        PLAN_MODULE_LABELS[dependency_field],
+                        form.errors[module_field][0],
+                    )
+
+    def test_platform_admin_does_not_save_invalid_dependency_combination(self):
+        payload = self._payload(name="Blocked Dependency Plan")
+        payload.pop("feature_inventory")
+
+        response = self.client.post(reverse("platformadmin:plan_create"), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("feature_purchases", response.context["form"].errors)
+        self.assertFalse(Plan.objects.filter(name="Blocked Dependency Plan").exists())
+
+    def test_api_access_does_not_enable_underlying_modules(self):
+        payload = self._payload(name="API Only Plan")
+        for field in PLAN_MODULE_FIELDS:
+            if field != "feature_api_access":
+                payload.pop(field)
+
+        form = PlanForm(payload)
+
+        self.assertTrue(form.is_valid(), form.errors)
+        plan = form.save()
+        self.assertTrue(plan.feature_api_access)
+        self.assertFalse(plan.feature_sales)
+        self.assertFalse(plan.feature_inventory)
+        self.assertFalse(plan.feature_purchases)
 
     def test_plan_validation_rejects_invalid_limits_and_duplicate_names(self):
         invalid_limit = self.client.post(
