@@ -498,10 +498,12 @@ class LockedTailoringProductSetupTests(TenantTestCase):
         self.assertEqual(errors, [])
         self.assertEqual(summary["created"], 2)
         self.assertEqual(product.variants.count(), 2)
-        self.assertEqual(
-            list(product.variants.order_by("name").values_list("sku", flat=True)),
-            ["", ""],
+        variant_skus = list(
+            product.variants.order_by("name").values_list("sku", flat=True)
         )
+        self.assertEqual(len(variant_skus), 2)
+        self.assertTrue(all(variant_skus))
+        self.assertEqual(len(set(variant_skus)), 2)
 
     def test_meter_variant_import_rejects_parent_identifier_collision(self):
         product = Product.objects.create(
@@ -531,7 +533,7 @@ class LockedTailoringProductSetupTests(TenantTestCase):
 
         self.assertEqual(summary["failed"], 1)
         self.assertEqual(len(errors), 1)
-        self.assertIn("Duplicate SKU", errors[0][1])
+        self.assertIn("Variant SKU belongs to an existing Product", errors[0][1])
         self.assertFalse(product.variants.exists())
 
     def test_meter_import_does_not_create_unused_tax_configuration(self):
@@ -675,7 +677,7 @@ class LockedTailoringProductSetupTests(TenantTestCase):
         )
         self.assertEqual(movement.quantity, D("22.125"))
 
-    def test_positive_variant_opening_requires_tenant_warehouse(self):
+    def test_single_tenant_warehouse_is_auto_selected_for_variant_opening(self):
         response = self.client.post(
             reverse("catalog:product_create"),
             self.meter_payload(
@@ -683,13 +685,18 @@ class LockedTailoringProductSetupTests(TenantTestCase):
                 variants_json=self.variant_rows(),
             ),
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertFormError(
-            response.context["form"],
-            "opening_warehouse",
-            "Select a warehouse for the variant opening stock.",
+        self.assertEqual(response.status_code, 302)
+        product = Product.objects.get(sku="LOCK-METER")
+        variant = product.variants.get(sku="LOCK-METER-C4")
+        self.assertEqual(
+            inventory.get_stock(
+                self.business_a,
+                self.warehouse_a,
+                product,
+                variant=variant,
+            ),
+            D("22.125"),
         )
-        self.assertFalse(Product.objects.filter(sku="LOCK-METER").exists())
 
     def test_variant_decimal_payload_is_strictly_validated(self):
         cases = (
@@ -831,7 +838,7 @@ class LockedTailoringProductSetupTests(TenantTestCase):
         self.assertEqual(variant.name, "Color 1 Edited")
         self.assertEqual(variant.average_cost, D("6.625"))
 
-    def test_restricted_member_meter_opening_warehouses_are_scoped(self):
+    def test_restricted_member_meter_opening_warehouses_are_branch_scoped(self):
         other_branch = Branch.objects.create(
             business=self.business_a,
             name="Other Catalog Branch",
@@ -860,6 +867,8 @@ class LockedTailoringProductSetupTests(TenantTestCase):
             ),
         )
 
+        self.assertEqual(response.status_code, 404)
+        response = self.client.get(reverse("catalog:product_create"))
         self.assertEqual(response.status_code, 200)
         warehouse_ids = set(
             response.context["form"].fields["opening_warehouse"].queryset.values_list(
@@ -867,11 +876,11 @@ class LockedTailoringProductSetupTests(TenantTestCase):
             )
         )
         self.assertIn(self.warehouse_a.id, warehouse_ids)
-        self.assertIn(central.id, warehouse_ids)
+        self.assertNotIn(central.id, warehouse_ids)
         self.assertNotIn(other_warehouse.id, warehouse_ids)
         self.assertFalse(Product.objects.filter(sku="LOCK-METER").exists())
 
-    def test_restricted_member_catalog_import_allows_central_not_other_branch(self):
+    def test_restricted_member_catalog_import_rejects_non_branch_warehouses_atomically(self):
         product = Product.objects.create(
             business=self.business_a,
             name="Scoped Import Fabric",
@@ -917,15 +926,11 @@ class LockedTailoringProductSetupTests(TenantTestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["results"]["summary"]["failed"], 1)
-        self.assertEqual(response.context["results"]["summary"]["created"], 1)
+        self.assertEqual(response.context["results"]["summary"]["failed"], 2)
+        self.assertEqual(response.context["results"]["summary"]["created"], 0)
         self.assertFalse(product.variants.filter(sku="SCOPED-OTHER").exists())
-        central_variant = product.variants.get(sku="SCOPED-CENTRAL")
-        self.assertEqual(
-            inventory.get_stock(
-                self.business_a, central, product, variant=central_variant
-            ),
-            D("2.250"),
+        self.assertFalse(
+            product.variants.filter(sku="SCOPED-CENTRAL").exists()
         )
 
     def test_standalone_meter_variant_hides_and_neutralizes_sale_price(self):
@@ -1051,7 +1056,13 @@ class LockedTailoringProductSetupTests(TenantTestCase):
         self.assertTrue(self.product_a.is_legacy_tailoring)
 
     def test_product_form_contains_meter_ui_contract_and_variant_opening(self):
-        response = self.client.get(reverse("catalog:product_create"))
+        response = self.client.get(
+            reverse("catalog:product_create"),
+            {
+                "branch": self.branch_a.id,
+                "warehouse": self.warehouse_a.id,
+            },
+        )
         self.assertContains(response, 'data-is-meter="true"')
         self.assertContains(response, 'x-show="!isMeterUnit()"')
         self.assertContains(response, 'x-bind:disabled="isMeterUnit()"')

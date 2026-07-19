@@ -269,15 +269,39 @@ def pos_view(request):
 def pos_products(request):
     """JSON product grid/search for the POS screen."""
     from apps.branches.models import Warehouse
+    from apps.catalog import services as catalog_services
     from apps.catalog.models import Product
 
     q = request.GET.get("q", "").strip()
     category_id = request.GET.get("category", "")
+    warehouse_id = request.GET.get("warehouse_id", "")
+    if not str(warehouse_id).isdigit():
+        return JsonResponse(
+            {"items": [], "error": "Invalid warehouse."}, status=403,
+        )
+    warehouse_qs = Warehouse.objects.for_business(request.business).filter(
+        pk=warehouse_id,
+        is_active=True,
+        branch__isnull=False,
+    )
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        warehouse_qs = warehouse_qs.filter(branch_id__in=allowed)
+    warehouse = warehouse_qs.select_related("branch").first()
+    if warehouse is None:
+        return JsonResponse(
+            {"items": [], "error": "Invalid warehouse."}, status=403,
+        )
     qs = (
         Product.objects.for_business(request.business)
         .filter(is_active=True, is_archived=False)
         .select_related("brand", "tax_rate", "unit")
         .prefetch_related("variants")
+    )
+    qs = catalog_services.products_visible_in_branch(
+        qs,
+        business=request.business,
+        branch=warehouse.branch,
     )
     if not _tailoring_enabled(request):
         qs = qs.filter(is_tailoring_item=False)
@@ -293,24 +317,20 @@ def pos_products(request):
         qs = qs.filter(Q(category_id=category_id) | Q(category__parent_id=category_id))
     qs = qs.order_by("name")[:60]
 
-    warehouse_id = request.GET.get("warehouse_id")
     stock_map = {}
-    if warehouse_id and str(warehouse_id).isdigit():
-        warehouse_qs = Warehouse.objects.for_business(request.business).filter(
-            pk=warehouse_id,
-            is_active=True,
+    for row in StockLevel.objects.for_business(request.business).filter(
+        warehouse=warehouse, product__in=[p.pk for p in qs]
+    ).values("product_id", "variant_id", "quantity"):
+        stock_map[(row["product_id"], row["variant_id"])] = float(row["quantity"])
+    visible_variant_ids = set(
+        StockLevel.objects.for_business(request.business)
+        .filter(
+            warehouse__branch=warehouse.branch,
+            product__in=[p.pk for p in qs],
+            variant__isnull=False,
         )
-        allowed = request.membership.allowed_branch_ids
-        if allowed is not None:
-            warehouse_qs = warehouse_qs.filter(branch_id__in=allowed)
-        if not warehouse_qs.exists():
-            return JsonResponse(
-                {"items": [], "error": "Invalid warehouse."}, status=403,
-            )
-        for row in StockLevel.objects.for_business(request.business).filter(
-            warehouse_id=warehouse_id, product__in=[p.pk for p in qs]
-        ).values("product_id", "variant_id", "quantity"):
-            stock_map[(row["product_id"], row["variant_id"])] = float(row["quantity"])
+        .values_list("variant_id", flat=True)
+    )
 
     items = []
     for p in qs:
@@ -322,7 +342,9 @@ def pos_products(request):
         )
         if p.has_variants:
             for v in p.variants.all():
-                if not v.is_active:
+                if not v.is_active or (
+                    p.is_stocked and v.id not in visible_variant_ids
+                ):
                     continue
                 items.append({
                     "product_id": p.id, "variant_id": v.id,
@@ -369,10 +391,36 @@ def pos_products(request):
 @module_permission_required("pos_core", "sales.create")
 def pos_barcode(request):
     """Exact barcode/SKU lookup — used by scanner input."""
+    from apps.branches.models import Warehouse
+    from apps.catalog import services as catalog_services
     from apps.catalog.models import Product, ProductVariant
 
     code = request.GET.get("code", "").strip()
     if not code:
+        return JsonResponse({"found": False})
+    raw_warehouse = request.GET.get("warehouse_id", "")
+    warehouse = None
+    if raw_warehouse:
+        if not str(raw_warehouse).isdigit():
+            return JsonResponse({"found": False})
+        warehouses = Warehouse.objects.for_business(request.business).filter(
+            pk=int(raw_warehouse),
+            is_active=True,
+            branch__isnull=False,
+        )
+        allowed = request.membership.allowed_branch_ids
+        if allowed is not None:
+            warehouses = warehouses.filter(branch_id__in=allowed)
+        warehouse = warehouses.select_related("branch").first()
+    else:
+        shift = register_services.get_open_shift(
+            request.business,
+            request.user,
+            membership=request.membership,
+        )
+        branch = shift.branch if shift is not None else _user_branches(request).first()
+        warehouse = _branch_warehouse(branch) if branch is not None else None
+    if warehouse is None:
         return JsonResponse({"found": False})
     tailoring_enabled = _tailoring_enabled(request)
     variant = (
@@ -381,7 +429,15 @@ def pos_barcode(request):
         .select_related("product__tax_rate", "product__unit", "product")
         .first()
     )
-    if variant and variant.product.is_tailoring_item and not tailoring_enabled:
+    if variant and (
+        (variant.product.is_tailoring_item and not tailoring_enabled)
+        or not catalog_services.product_is_visible_in_branch(
+            business=request.business,
+            product=variant.product,
+            variant=variant,
+            branch=warehouse.branch,
+        )
+    ):
         variant = None
     if variant and variant.product.is_active and not variant.product.is_archived:
         p = variant.product
@@ -408,7 +464,14 @@ def pos_barcode(request):
         .select_related("tax_rate", "unit")
         .first()
     )
-    if product and product.is_tailoring_item and not tailoring_enabled:
+    if product and (
+        (product.is_tailoring_item and not tailoring_enabled)
+        or not catalog_services.product_is_visible_in_branch(
+            business=request.business,
+            product=product,
+            branch=warehouse.branch,
+        )
+    ):
         product = None
     if product and not product.has_variants:
         tax_rate = calculations.resolve_tax_rate(request.business, product)

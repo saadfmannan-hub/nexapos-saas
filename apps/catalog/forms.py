@@ -32,6 +32,15 @@ class ProductIdentifierValidationMixin:
         variants = ProductVariant.objects.for_business(self.business).filter(**{field: value})
         if self.instance.pk:
             products = products.exclude(pk=self.instance.pk)
+        elif getattr(self, "allow_product_reuse", False):
+            # The branch onboarding service performs the authoritative safe
+            # Product reuse check after all identifying fields are clean.
+            # A ProductVariant identifier is never eligible for parent reuse.
+            if variants.exists():
+                raise forms.ValidationError(
+                    f"This {field.upper()} belongs to a product variant."
+                )
+            return value
         if products.exists() or variants.exists():
             raise forms.ValidationError(f"This {field.upper()} is already in use.")
         return value
@@ -186,12 +195,17 @@ class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
         *args,
         allowed_warehouse_ids=None,
         tailoring_enabled=True,
+        selected_warehouse=None,
+        require_branch_warehouse=False,
+        allow_product_reuse=False,
+        lock_global_fields=False,
         **kwargs,
     ):
         super().__init__(business, *args, **kwargs)
         from apps.suppliers.models import Supplier
 
         self.tailoring_enabled = bool(tailoring_enabled)
+        self.allow_product_reuse = bool(allow_product_reuse)
         self.fields["category"].queryset = Category.objects.for_business(business).filter(is_active=True)
         self.fields["brand"].queryset = Brand.objects.for_business(business).filter(is_active=True)
         unit_qs = Unit.objects.for_business(business).filter(is_active=True)
@@ -221,6 +235,12 @@ class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
         if allowed_warehouse_ids is not None:
             warehouse_qs = warehouse_qs.filter(pk__in=allowed_warehouse_ids)
         self.fields["opening_warehouse"].queryset = warehouse_qs
+        self.fields["opening_warehouse"].label = "Warehouse"
+        self.fields["opening_warehouse"].required = bool(
+            require_branch_warehouse
+        )
+        if selected_warehouse is not None:
+            self.fields["opening_warehouse"].initial = selected_warehouse
         for name in ("category", "brand", "unit", "tax_rate", "preferred_supplier"):
             self.fields[name].required = False
 
@@ -288,6 +308,11 @@ class ProductForm(ProductIdentifierValidationMixin, TenantStyledModelForm):
             )
             if selected_type != Product.Type.VARIANT:
                 del self.fields["opening_warehouse"]
+
+        if lock_global_fields and self.instance.pk:
+            for name, field in self.fields.items():
+                if name not in {"opening_warehouse", "auto_generate_sku"}:
+                    field.disabled = True
 
     def clean(self):
         cleaned = super().clean()
@@ -532,5 +557,5 @@ class ProductImportForm(forms.Form):
     match_by = forms.ChoiceField(
         choices=[("sku", "SKU"), ("barcode", "Barcode"), ("name", "Product name")],
         initial="sku", widget=forms.Select(attrs={"class": "form-select"}),
-        help_text="Rows matching an existing product are skipped (no silent updates).",
+        help_text="Existing Products and variants are reused only when identity matches safely.",
     )

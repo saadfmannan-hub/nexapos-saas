@@ -10,7 +10,6 @@ from apps.inventory.models import StockMovement
 
 from .base import TenantTestCase
 
-
 D = Decimal
 
 
@@ -107,18 +106,21 @@ class ProductOpeningStockTests(TenantTestCase):
         )
         self.assertFalse(Product.objects.filter(sku="FABRIC-125").exists())
 
-    def test_positive_opening_stock_requires_warehouse(self):
+    def test_single_warehouse_is_auto_selected(self):
         response = self.client.post(
             reverse("catalog:product_create"),
             self.payload(opening_warehouse=""),
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertFormError(
-            response.context["form"],
-            "opening_warehouse",
-            "Select a warehouse for the opening stock.",
+        self.assertEqual(response.status_code, 302)
+        product = Product.objects.for_business(self.business_a).get(
+            sku="OPEN-001"
         )
-        self.assertFalse(Product.objects.filter(sku="OPEN-001").exists())
+        self.assertEqual(
+            inventory.get_stock(
+                self.business_a, self.warehouse_a, product
+            ),
+            D("12.000"),
+        )
 
     def test_zero_opening_stock_is_valid_without_warehouse_or_movement(self):
         response = self.client.post(
@@ -146,8 +148,7 @@ class ProductOpeningStockTests(TenantTestCase):
             reverse("catalog:product_create"),
             self.payload(opening_warehouse=self.warehouse_b.pk),
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("opening_warehouse", response.context["form"].errors)
+        self.assertEqual(response.status_code, 404)
         self.assertFalse(Product.objects.filter(sku="OPEN-001").exists())
 
     def test_cross_tenant_unit_is_rejected(self):

@@ -1,20 +1,49 @@
 {% extends "layouts/base.html" %}
 {% block title %}Import products - {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
-<h1 class="page-title mb-3">Import products</h1>
+<h1 class="page-title mb-1">Import products</h1>
+<p class="text-secondary small mb-3">
+  {{ selected_branch.name }} — {{ selected_warehouse.name|default:"Select a Warehouse" }}. Products, Colors/Sizes, and Opening Stock are handled in one file.
+</p>
+<div class="card mb-3"><div class="card-body py-2">
+  <form method="get" class="row g-2 align-items-center">
+    <div class="col-md-5">
+      {% if branch_locked %}
+      <input type="hidden" name="branch" value="{{ selected_branch.id }}">
+      <input class="form-control form-control-sm" value="{{ selected_branch.name }}" readonly aria-label="Assigned branch">
+      {% else %}
+      <select name="branch" class="form-select form-select-sm">
+        {% for branch in branches %}<option value="{{ branch.id }}" {% if selected_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}
+      </select>
+      {% endif %}
+    </div>
+    {% if selected_branch %}
+    <div class="col-md-5">
+      <select name="warehouse" class="form-select form-select-sm" required>
+        <option value="">Select warehouse…</option>
+        {% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="col-auto"><button class="btn btn-sm btn-outline-primary">Apply context</button></div>
+  </form>
+</div></div>
 <div class="row g-3">
   <div class="col-lg-5">
     <div class="card"><div class="card-header">Upload file</div><div class="card-body">
       <ol class="small text-secondary">
-        <li>Download the <a href="{% url 'catalog:import_template' %}">CSV template</a>.</li>
-        <li>Fill one product per row (columns: {{ columns|join:", " }}).</li>
+        <li>{% if selected_warehouse %}<a href="{% url 'catalog:import_template' %}?branch={{ selected_branch.id }}&amp;warehouse={{ selected_warehouse.id }}">Download the simple CSV template</a>{% else %}Select a Warehouse, then download the template{% endif %}.</li>
+        <li>Use one row for a normal Product, or one row per Color/Size for a Product with variants.</li>
+        <li>Columns: {{ columns|join:", " }}.</li>
         <li>Upload as .csv or .xlsx. Invalid rows are reported, never silently imported.</li>
       </ol>
       <form method="post" enctype="multipart/form-data" data-import-form>{% csrf_token %}
+        {% if selected_branch %}<input type="hidden" name="branch" value="{{ selected_branch.id }}">{% endif %}
+        {% if selected_warehouse %}<input type="hidden" name="warehouse" value="{{ selected_warehouse.id }}">{% endif %}
         {% include "components/form_field.html" with field=form.file %}
-        {% include "components/form_field.html" with field=form.match_by %}
-        <button class="btn btn-primary" data-import-submit>Validate &amp; import</button>
-        <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Back</a>
+        <input type="hidden" name="match_by" value="sku">
+        <button class="btn btn-primary" data-import-submit {% if selected_branch and not selected_warehouse %}disabled{% endif %}>Validate &amp; import</button>
+        <a href="{% url 'catalog:product_list' %}?branch={{ selected_branch.id }}{% if selected_warehouse %}&amp;warehouse={{ selected_warehouse.id }}{% endif %}" class="btn btn-outline-secondary">Back</a>
         {% include "components/import_progress.html" %}
       </form>
     </div></div>
@@ -51,7 +80,7 @@
         <div class="col-sm-6 col-xl-4"><div class="border rounded p-2"><div class="small text-secondary">Errors count</div><strong>{{ results.summary.failed }}</strong></div></div>
       </div>
       {% if results.errors %}
-      <a href="{% url 'catalog:product_import' %}?errors=1" class="btn btn-sm btn-outline-danger mb-2">
+      <a href="{% url 'catalog:product_import' %}?errors=1{% if selected_branch %}&amp;branch={{ selected_branch.id }}{% endif %}{% if selected_warehouse %}&amp;warehouse={{ selected_warehouse.id }}{% endif %}" class="btn btn-sm btn-outline-danger mb-2">
         <i class="bi bi-download"></i> Download error report</a>
       <div class="border rounded p-2 bg-danger-subtle small" style="max-height:300px;overflow:auto">
         {% for row_no, msg in results.errors %}<div>Row {{ row_no }}: {{ msg }}</div>{% endfor %}

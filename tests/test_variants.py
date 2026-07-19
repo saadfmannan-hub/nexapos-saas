@@ -69,7 +69,11 @@ class SimpleProductTests(ProductFormBaseTest):
         r = self.client.post(reverse("catalog:product_create"),
                              self._base_payload(name="Simple Widget", sku="MAN-1"))
         self.assertEqual(r.status_code, 302)
-        self.assertEqual(r.url, reverse("catalog:product_list"))
+        self.assertEqual(
+            r.url,
+            f"{reverse('catalog:product_list')}?branch={self.branch_a.pk}"
+            f"&warehouse={self.warehouse_a.pk}",
+        )
         p = Product.objects.for_business(self.business_a).get(name="Simple Widget")
         self.assertEqual(p.sku, "MAN-1")
         self.assertEqual(p.product_type, "standard")
@@ -117,8 +121,11 @@ class VariantProductTests(ProductFormBaseTest):
         ))
         self.assertEqual(r.status_code, 302)
         product = Product.objects.for_business(self.business_a).get(name="T-Shirt")
-        self.assertEqual(r.url, reverse("catalog:product_detail",
-                                        args=[product.public_id]))
+        self.assertEqual(
+            r.url,
+            f"{reverse('catalog:product_detail', args=[product.public_id])}"
+            f"?branch={self.branch_a.pk}&warehouse={self.warehouse_a.pk}",
+        )
         variants = product.variants.all()
         self.assertEqual(variants.count(), 2)
         mb = variants.get(sku="TS-MB")

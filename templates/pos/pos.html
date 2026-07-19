@@ -467,7 +467,7 @@ function pos() {
       const code = this.barcodeInput.trim();
       if (!code) return;
       this.barcodeInput = '';
-      const r = await fetch("{% url 'sales:pos_barcode' %}?code=" + encodeURIComponent(code));
+      const r = await fetch("{% url 'sales:pos_barcode' %}?warehouse_id={{ warehouse.id }}&code=" + encodeURIComponent(code));
       const data = await r.json();
       if (data.found) { this.addToCart(data.item); }
       else { this.search = code; this.loadProducts(); }

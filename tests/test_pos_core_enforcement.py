@@ -1249,15 +1249,15 @@ class PosCoreEnforcementTests(TenantTestCase):
         export_url = reverse("catalog:product_export")
 
         unfiltered = self.product_export_row(self.client.get(export_url))
-        self.assertEqual(D(unfiltered["Current Stock"]), D("111"))
-        self.assertNotEqual(D(unfiltered["Current Stock"]), D("148"))
+        self.assertEqual(D(unfiltered["Current Stock"]), D("100"))
+        self.assertEqual(unfiltered["Branch"], self.branch_a.name)
 
-        allowed_warehouse = self.product_export_row(
-            self.client.get(export_url, {"warehouse": self.warehouse_a.pk})
+        self.assertEqual(
+            self.client.get(
+                export_url, {"warehouse": self.warehouse_a.pk}
+            ).status_code,
+            404,
         )
-        self.assertEqual(D(allowed_warehouse["Current Stock"]), D("100"))
-        self.assertEqual(allowed_warehouse["Warehouse"], self.warehouse_a.name)
-        self.assertEqual(allowed_warehouse["Branch"], self.branch_a.name)
 
         allowed_branch = self.product_export_row(
             self.client.get(export_url, {"branch": self.branch_a.pk})
@@ -1265,12 +1265,10 @@ class PosCoreEnforcementTests(TenantTestCase):
         self.assertEqual(D(allowed_branch["Current Stock"]), D("100"))
         self.assertEqual(allowed_branch["Branch"], self.branch_a.name)
 
-        central_only = self.product_export_row(
-            self.client.get(export_url, {"warehouse": central.pk})
+        self.assertEqual(
+            self.client.get(export_url, {"warehouse": central.pk}).status_code,
+            404,
         )
-        self.assertEqual(D(central_only["Current Stock"]), D("11"))
-        self.assertEqual(central_only["Warehouse"], central.name)
-        self.assertEqual(central_only["Branch"], "All")
 
     def test_restricted_product_export_rejects_forged_filters_before_generation(self):
         other_branch, other_warehouse, _central = self.make_secondary_locations()
@@ -1298,7 +1296,7 @@ class PosCoreEnforcementTests(TenantTestCase):
                 self.assertEqual(response.status_code, 404)
                 dataset.assert_not_called()
 
-    def test_owner_product_export_can_use_any_same_business_warehouse(self):
+    def test_owner_product_export_can_select_any_same_business_branch(self):
         other_branch, other_warehouse, _central = self.make_secondary_locations()
         inventory_services.set_opening_stock(
             business=self.business_a,
@@ -1313,14 +1311,13 @@ class PosCoreEnforcementTests(TenantTestCase):
         export_url = reverse("catalog:product_export")
 
         row = self.product_export_row(
-            self.client.get(export_url, {"warehouse": other_warehouse.pk})
+            self.client.get(export_url, {"branch": other_branch.pk})
         )
         self.assertEqual(D(row["Current Stock"]), D("37"))
-        self.assertEqual(row["Warehouse"], other_warehouse.name)
         self.assertEqual(row["Branch"], other_branch.name)
         self.assertEqual(
             self.client.get(
-                export_url, {"warehouse": self.warehouse_b.pk}
+                export_url, {"branch": self.branch_b.pk}
             ).status_code,
             404,
         )
@@ -1372,22 +1369,20 @@ class PosCoreEnforcementTests(TenantTestCase):
             user=user,
         )
 
-        self.assertEqual(summary["created"], 2)
-        self.assertEqual(summary["failed"], 1)
-        self.assertEqual(len(errors), 1)
+        self.assertEqual(summary["created"], 1)
+        self.assertEqual(summary["failed"], 2)
+        self.assertEqual(len(errors), 2)
         allowed_product = Product.objects.for_business(self.business_a).get(
             sku="SEC-IMPORT-ALLOWED"
-        )
-        central_product = Product.objects.for_business(self.business_a).get(
-            sku="SEC-IMPORT-CENTRAL"
         )
         self.assertEqual(
             allowed_product.stock_levels.get(warehouse=self.warehouse_a).quantity,
             D("5"),
         )
-        self.assertEqual(
-            central_product.stock_levels.get(warehouse=central).quantity,
-            D("7"),
+        self.assertFalse(
+            Product.objects.for_business(self.business_a).filter(
+                sku="SEC-IMPORT-CENTRAL"
+            ).exists()
         )
         self.assertFalse(
             Product.objects.for_business(self.business_a).filter(

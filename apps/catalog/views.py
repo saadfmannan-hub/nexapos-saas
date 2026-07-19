@@ -7,8 +7,9 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q, Sum
 from django.forms.models import construct_instance
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 
 from apps.audit import services as audit
 from apps.core.mixins import get_tenant_object
@@ -61,15 +62,126 @@ def _require_business_wide_catalog(request, permission_code, action=AccessAction
         )
 
 
+def _catalog_branch_context(request, *, post_field="branch"):
+    """Resolve the operational Product branch without accepting forged scope."""
+    from apps.branches.models import Branch
+
+    source = request.POST if request.method == "POST" else request.GET
+    raw_branch = source.get(post_field, "")
+    branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    allowed = request.membership.allowed_branch_ids
+    if allowed is not None:
+        branches = branches.filter(pk__in=allowed)
+    selected = None
+    if raw_branch:
+        if not str(raw_branch).isdigit():
+            raise Http404
+        selected = branches.filter(pk=int(raw_branch)).first()
+        if selected is None:
+            raise Http404
+    elif allowed is not None:
+        assigned = list(branches.order_by("id")[:2])
+        if len(assigned) != 1:
+            raise Http404
+        selected = assigned[0]
+    elif request.method == "POST":
+        # Backward-compatible server-side resolution for forms submitted from
+        # an already-selected single-branch context. Normal owner GET flow
+        # still requires an explicit Branch selection on the Products page.
+        available = list(branches.order_by("id")[:2])
+        if len(available) == 1:
+            selected = available[0]
+    return selected, branches.order_by("name")
+
+
+def _catalog_warehouse_context(
+    request, branch, *, required=False, post_field="warehouse"
+):
+    from apps.branches.models import Warehouse
+
+    source = request.POST if request.method == "POST" else request.GET
+    raw_warehouse = source.get(post_field, "")
+    if request.method == "POST" and not raw_warehouse:
+        raw_warehouse = source.get("warehouse", "")
+    if branch is None:
+        if raw_warehouse:
+            raise Http404
+        return None, Warehouse.objects.none()
+    warehouses = Warehouse.objects.for_business(request.business).filter(
+        branch=branch,
+        is_active=True,
+    )
+    allowed = request.membership.allowed_warehouse_ids
+    if allowed is not None:
+        warehouses = warehouses.filter(pk__in=allowed)
+    selected = None
+    if raw_warehouse:
+        if not str(raw_warehouse).isdigit():
+            raise Http404
+        selected = warehouses.filter(pk=int(raw_warehouse)).first()
+        if selected is None:
+            raise Http404
+    if selected is None:
+        available = list(warehouses.order_by("id")[:2])
+        if len(available) == 1:
+            selected = available[0]
+    if selected is None and required:
+        raise Http404
+    return selected, warehouses.order_by("name")
+
+
+def _catalog_product_queryset(request, branch=None):
+    from . import services as catalog_services
+
+    queryset = Product.objects.for_business(request.business)
+    if branch is not None:
+        queryset = catalog_services.products_visible_in_branch(
+            queryset,
+            business=request.business,
+            branch=branch,
+        )
+    return queryset
+
+
+def _catalog_product_object_queryset(request, branch=None, *, post_field="branch"):
+    """Scope operational object URLs while preserving owner-only legacy access.
+
+    Current branch workflow links always carry an explicit Branch. Older owner
+    links and tests may not; those retain tenant-wide Product lookup, but never
+    for branch-restricted memberships.
+    """
+    source = request.POST if request.method == "POST" else request.GET
+    if (
+        request.membership.allowed_branch_ids is None
+        and not source.get(post_field)
+    ):
+        return _catalog_product_queryset(request)
+    return _catalog_product_queryset(request, branch)
+
+
 # ---------------------------------------------------------------------------
 # Products
 # ---------------------------------------------------------------------------
 @module_permission_required("pos_core", "products.view")
 def product_list(request):
+    from . import services as catalog_services
+
+    selected_branch, branches = _catalog_branch_context(request)
+    selected_warehouse, warehouses = _catalog_warehouse_context(
+        request, selected_branch
+    )
     qs = (
         Product.objects.for_business(request.business)
         .select_related("category", "brand", "unit", "tax_rate")
     )
+    if selected_branch is not None:
+        qs = catalog_services.products_visible_in_branch(
+            qs,
+            business=request.business,
+            branch=selected_branch,
+        )
+    else:
+        qs = qs.none()
     if not _tailoring_enabled(request):
         qs = qs.filter(is_tailoring_item=False)
     q = request.GET.get("q", "").strip()
@@ -96,6 +208,7 @@ def product_list(request):
 
     from django.core.paginator import Paginator
 
+    scoped_product_count = qs.count()
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
@@ -104,9 +217,13 @@ def product_list(request):
         inventory.StockLevel.objects.for_business(request.business)
         .filter(product__in=[p.pk for p in page_obj])
     )
-    allowed_branch_ids = request.membership.allowed_branch_ids
-    if allowed_branch_ids is not None:
-        stock_qs = stock_qs.filter(warehouse__branch_id__in=allowed_branch_ids)
+    if selected_warehouse is not None:
+        stock_qs = stock_qs.filter(warehouse=selected_warehouse)
+    elif selected_branch is not None:
+        stock_qs = stock_qs.filter(
+            warehouse__branch=selected_branch,
+            warehouse__is_active=True,
+        )
     stock = {
         row["product_id"]: row["total"]
         for row in stock_qs.values("product_id").annotate(total=Sum("quantity"))
@@ -115,11 +232,21 @@ def product_list(request):
         p.total_stock = stock.get(p.pk, 0)
 
     categories = Category.objects.for_business(request.business).filter(is_active=True)
-    p_cur, p_lim, _ = subscriptions.limit_state(request.business, "products")
+    _p_cur, p_lim, _ = subscriptions.limit_state(request.business, "products")
     return render(request, "catalog/product_list.html", {
         "page_obj": page_obj, "q": q, "categories": categories,
-        "active_nav": "products", "product_count": p_cur, "product_limit": p_lim,
+        "active_nav": "products",
+        "product_count": scoped_product_count,
+        "product_limit": p_lim,
         "querystring": _qs_without_page(request),
+        "branches": branches,
+        "selected_branch": selected_branch,
+        "warehouses": warehouses,
+        "selected_warehouse": selected_warehouse,
+        "branch_locked": request.membership.allowed_branch_ids is not None,
+        "context_ready": (
+            selected_branch is not None and selected_warehouse is not None
+        ),
     })
 
 
@@ -132,9 +259,7 @@ def _qs_without_page(request):
 
 @module_permission_required("pos_core", "products.export")
 def product_export(request):
-    """Export products (CSV/XLSX) honoring catalog + stock filters."""
-    _require_business_wide_catalog(request, "products.export")
-    from apps.branches.models import Branch, Warehouse
+    """Export re-importable Products for one selected branch warehouse."""
     from apps.reports import exports
 
     from . import services as catalog_services
@@ -143,27 +268,20 @@ def product_export(request):
         v = request.GET.get(name, "")
         return int(v) if v.isdigit() else None
 
-    allowed_branch_ids = request.membership.allowed_branch_ids
-    allowed_warehouse_ids = request.membership.allowed_warehouse_ids
-    branch_id = _int("branch")
-    warehouse_id = _int("warehouse")
-
-    if branch_id is not None:
-        branches = Branch.objects.for_business(request.business)
-        if allowed_branch_ids is not None:
-            branches = branches.filter(pk__in=allowed_branch_ids)
-        get_tenant_object(branches, request.business, pk=branch_id)
-    if warehouse_id is not None:
-        warehouses = Warehouse.objects.for_business(request.business)
-        if allowed_warehouse_ids is not None:
-            warehouses = warehouses.filter(pk__in=allowed_warehouse_ids)
-        get_tenant_object(warehouses, request.business, pk=warehouse_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    if selected_branch is None:
+        raise Http404
+    selected_warehouse, _warehouses = _catalog_warehouse_context(
+        request, selected_branch, required=True
+    )
+    allowed_branch_ids = {selected_branch.pk}
+    allowed_warehouse_ids = {selected_warehouse.pk}
 
     filters = {
         "category_id": _int("category"),
         "brand_id": _int("brand"),
-        "branch_id": branch_id,
-        "warehouse_id": warehouse_id,
+        "branch_id": selected_branch.pk,
+        "warehouse_id": selected_warehouse.pk,
         "status": request.GET.get("status", ""),
         "include_tailoring": _tailoring_enabled(request),
     }
@@ -182,31 +300,79 @@ def product_export(request):
 def product_form(request, public_id=None):
     from . import services as catalog_services
 
+    selected_branch, branches = _catalog_branch_context(request)
+    if selected_branch is None and public_id:
+        available = list(branches.order_by("id")[:2])
+        if len(available) == 1:
+            selected_branch = available[0]
+    if selected_branch is None:
+        messages.info(request, "Select a branch before adding or editing a Product.")
+        return redirect("catalog:product_list")
+    selected_warehouse, warehouses = _catalog_warehouse_context(
+        request,
+        selected_branch,
+        post_field="opening_warehouse",
+    )
     instance = None
     if public_id:
-        instance = get_tenant_object(Product, request.business, public_id=public_id)
+        instance = get_tenant_object(
+            _catalog_product_object_queryset(request, selected_branch),
+            request.business,
+            public_id=public_id,
+        )
         _require_tailoring_product_access(
             request,
             instance,
             permission_code="products.manage",
             action=AccessAction.WRITE,
         )
-    else:
-        from apps.subscriptions.helpers import guard_limit
-
-        blocked = guard_limit(request, "products")
-        if blocked:
-            return blocked
-
     tailoring_enabled = _tailoring_enabled(request)
+    allowed_warehouse_ids = _allowed_warehouse_ids(request)
+    if selected_branch is not None:
+        branch_warehouse_ids = set(
+            selected_branch.warehouses.filter(is_active=True).values_list(
+                "id", flat=True
+            )
+        )
+        if allowed_warehouse_ids is None:
+            allowed_warehouse_ids = branch_warehouse_ids
+        else:
+            allowed_warehouse_ids = (
+                set(allowed_warehouse_ids) & branch_warehouse_ids
+            )
+    form_data = request.POST or None
+    if (
+        request.method == "POST"
+        and selected_warehouse is not None
+        and not request.POST.get("opening_warehouse")
+    ):
+        form_data = request.POST.copy()
+        form_data["opening_warehouse"] = str(selected_warehouse.pk)
     form = ProductForm(
         request.business,
-        request.POST or None,
+        form_data,
         request.FILES or None,
         instance=instance,
-        allowed_warehouse_ids=_allowed_warehouse_ids(request),
+        allowed_warehouse_ids=allowed_warehouse_ids,
         tailoring_enabled=tailoring_enabled,
+        selected_warehouse=selected_warehouse,
+        require_branch_warehouse=True,
+        allow_product_reuse=instance is None,
+        lock_global_fields=(
+            instance is not None
+            and request.membership.allowed_branch_ids is not None
+        ),
     )
+    form_context = {
+        "form": form,
+        "product": instance,
+        "active_nav": "products",
+        "tailoring_enabled": tailoring_enabled,
+        "selected_branch": selected_branch,
+        "selected_warehouse": selected_warehouse,
+        "warehouses": warehouses,
+        "branch_locked": request.membership.allowed_branch_ids is not None,
+    }
     if request.method == "POST" and form.is_valid():
         auto_sku = form.cleaned_data.get("auto_generate_sku")
         is_variant = form.cleaned_data.get("product_type") == Product.Type.VARIANT
@@ -228,10 +394,7 @@ def product_form(request, public_id=None):
         if variant_errors or form.errors:
             for err in variant_errors:
                 messages.error(request, err)
-            return render(request, "catalog/product_form.html",
-                          {"form": form, "product": instance,
-                           "active_nav": "products",
-                           "tailoring_enabled": tailoring_enabled})
+            return render(request, "catalog/product_form.html", form_context)
 
         with transaction.atomic():
             if instance is not None:
@@ -251,18 +414,10 @@ def product_form(request, public_id=None):
                     )
                 except ValidationError as exc:
                     form.add_error("product_type", exc)
-                    return render(
-                        request,
-                        "catalog/product_form.html",
-                        {
-                            "form": form,
-                            "product": instance,
-                            "active_nav": "products",
-                            "tailoring_enabled": tailoring_enabled,
-                        },
-                    )
+                    return render(request, "catalog/product_form.html", form_context)
             # A concurrent ledger write may have appeared after form.clean().
             # The locked recheck above is authoritative before any edit write.
+            reused_product = False
             if instance is not None:
                 product = construct_instance(
                     form,
@@ -272,33 +427,87 @@ def product_form(request, public_id=None):
                 )
                 form.instance = product
             else:
-                product = form.save(commit=False)
-            if auto_sku and not product.sku:
-                product.sku = catalog_services.generate_sku(request.business)
-            product = catalog_services.save_product(
-                product=product, business=request.business, user=request.user,
-                membership=request.membership, request=request,
-            )
+                try:
+                    product = catalog_services.find_reusable_product(
+                        request.business,
+                        name=form.cleaned_data["name"],
+                        sku=form.cleaned_data.get("sku", ""),
+                        barcode=form.cleaned_data.get("barcode", ""),
+                        category=form.cleaned_data.get("category"),
+                        brand=form.cleaned_data.get("brand"),
+                        unit=form.cleaned_data.get("unit"),
+                        product_type=form.cleaned_data["product_type"],
+                    )
+                except ValidationError as exc:
+                    form.add_error(None, exc)
+                    return render(request, "catalog/product_form.html", form_context)
+                reused_product = product is not None
+                if product is None:
+                    _current, limit, allowed = subscriptions.limit_state(
+                        request.business, "products"
+                    )
+                    if not allowed:
+                        form.add_error(
+                            None,
+                            f"Plan product limit ({limit}) reached.",
+                        )
+                        return render(
+                            request, "catalog/product_form.html", form_context
+                        )
+                    product = form.save(commit=False)
+            onboarding_savepoint = transaction.savepoint()
+            if not reused_product:
+                if auto_sku and not product.sku:
+                    product.sku = catalog_services.generate_sku(request.business)
+                product = catalog_services.save_product(
+                    product=product, business=request.business, user=request.user,
+                    membership=request.membership, request=request,
+                )
 
             opening = form.cleaned_data.get("opening_stock")
-            warehouse = form.cleaned_data.get("opening_warehouse")
+            warehouse = (
+                form.cleaned_data.get("opening_warehouse")
+                or selected_warehouse
+            )
             if (
                 not public_id
-                and opening
                 and warehouse
                 and product.is_stocked
+                and not product.has_variants
                 and not (product.unit_id and product.unit.is_meter)
             ):
-                inventory.set_opening_stock(
-                    business=request.business, warehouse=warehouse, product=product,
-                    quantity=opening, unit_cost=product.purchase_price,
-                    user=request.user,
-                )
+                try:
+                    catalog_services.ensure_branch_opening_stock(
+                        business=request.business,
+                        warehouse=warehouse,
+                        product=product,
+                        quantity=opening or Decimal("0"),
+                        unit_cost=product.purchase_price,
+                        user=request.user,
+                        membership=request.membership,
+                        request=request,
+                    )
+                except ValidationError as exc:
+                    transaction.savepoint_rollback(onboarding_savepoint)
+                    form.add_error(None, exc)
+                    return render(
+                        request, "catalog/product_form.html", form_context
+                    )
 
             created_variants = 0
             if is_variant and variant_rows:
-                created_variants = _create_variants(
-                    request, product, variant_rows, warehouse)
+                try:
+                    created_variants = _create_variants(
+                        request, product, variant_rows, warehouse
+                    )
+                except ValidationError as exc:
+                    transaction.savepoint_rollback(onboarding_savepoint)
+                    form.add_error(None, exc)
+                    return render(
+                        request, "catalog/product_form.html", form_context
+                    )
+
+            transaction.savepoint_commit(onboarding_savepoint)
 
         audit.log("product.saved", request=request, module="catalog", obj=product,
                   description=f"Product '{product.name}' saved"
@@ -306,11 +515,17 @@ def product_form(request, public_id=None):
                                  if created_variants else "."))
         messages.success(request, "Product saved.")
         if product.has_variants:
-            return redirect("catalog:product_detail", public_id=product.public_id)
-        return redirect("catalog:product_list")
-    return render(request, "catalog/product_form.html",
-                  {"form": form, "product": instance, "active_nav": "products",
-                   "tailoring_enabled": tailoring_enabled})
+            target = reverse("catalog:product_detail", args=[product.public_id])
+            if selected_branch is not None:
+                target += (
+                    f"?branch={selected_branch.pk}&warehouse={warehouse.pk}"
+                )
+            return redirect(target)
+        target = reverse("catalog:product_list")
+        if selected_branch is not None:
+            target += f"?branch={selected_branch.pk}&warehouse={warehouse.pk}"
+        return redirect(target)
+    return render(request, "catalog/product_form.html", form_context)
 
 
 VARIANT_DECIMAL_MAX = Decimal("99999999999.999")
@@ -351,12 +566,10 @@ def _variant_decimal(item, field, label, index, errors):
 def _parse_variant_rows(request, raw_json, auto_sku):
     """Validate the variant builder payload. Returns (rows, errors).
 
-    Each row is normalised to a dict; SKU/barcode uniqueness is checked
-    against existing products + variants and within the submitted batch.
-    Auto-SKU rows are validated for uniqueness only when a SKU is supplied
-    (blank ones are generated at save time).
+    Each row is normalised to a dict and identifiers are checked within the
+    submitted batch. Existing identifiers are resolved safely against the
+    selected parent later, inside the atomic save transaction.
     """
-    business = request.business
     if not raw_json.strip():
         return [], []
     try:
@@ -385,16 +598,10 @@ def _parse_variant_rows(request, raw_json, auto_sku):
         if sku:
             if sku in seen_sku:
                 errors.append(f"Variant {idx}: SKU '{sku}' is repeated.")
-            elif (Product.objects.for_business(business).filter(sku=sku).exists()
-                  or ProductVariant.objects.for_business(business).filter(sku=sku).exists()):
-                errors.append(f"Variant {idx}: SKU '{sku}' is already in use.")
             seen_sku.add(sku)
         if barcode:
             if barcode in seen_barcode:
                 errors.append(f"Variant {idx}: barcode '{barcode}' is repeated.")
-            elif (Product.objects.for_business(business).filter(barcode=barcode).exists()
-                  or ProductVariant.objects.for_business(business).filter(barcode=barcode).exists()):
-                errors.append(f"Variant {idx}: barcode '{barcode}' is already in use.")
             seen_barcode.add(barcode)
 
         rows.append({
@@ -414,8 +621,7 @@ def _parse_variant_rows(request, raw_json, auto_sku):
 
 
 def _create_variants(request, product, rows, warehouse):
-    """Create ProductVariant rows (+ opening stock). Assumes rows are
-    already validated. Runs inside the caller's atomic block."""
+    """Create/reuse variants and selected-warehouse stock atomically."""
     from . import services as catalog_services
 
     business = request.business
@@ -423,37 +629,66 @@ def _create_variants(request, product, rows, warehouse):
     created = 0
     for row in rows:
         sku = row["sku"]
-        if not sku:  # auto-generate (auto-SKU on, or simply left blank)
-            sku = catalog_services.generate_sku(business, taken=reserved)
-        reserved.add(sku)
-        variant = ProductVariant(
-            business=business, product=product, name=row["name"],
-            attributes=row["attributes"], sku=sku, barcode=row["barcode"],
-            purchase_price=row["purchase_price"],
-            sale_price=(
-                Decimal("0")
-                if product.is_meter_tailoring
-                else row["sale_price"]
-            ),
+        variant = catalog_services.find_reusable_variant(
+            business,
+            product=product,
+            name=row["name"],
+            attributes=row["attributes"],
+            sku=sku,
+            barcode=row["barcode"],
         )
-        variant = catalog_services.save_variant(
-            variant=variant, product=product, user=request.user,
-            membership=request.membership, request=request,
-        )
-        if row["opening_stock"] and warehouse and product.is_stocked:
-            inventory.set_opening_stock(
-                business=business, warehouse=warehouse, product=product,
-                variant=variant, quantity=row["opening_stock"],
-                unit_cost=row["purchase_price"], user=request.user,
+        if variant is None:
+            if not sku:
+                sku = catalog_services.generate_sku(
+                    business, taken=reserved
+                )
+            reserved.add(sku)
+            variant = ProductVariant(
+                business=business, product=product, name=row["name"],
+                attributes=row["attributes"], sku=sku, barcode=row["barcode"],
+                purchase_price=row["purchase_price"],
+                sale_price=(
+                    Decimal("0")
+                    if product.is_meter_tailoring
+                    else row["sale_price"]
+                ),
             )
-        created += 1
+            variant = catalog_services.save_variant(
+                variant=variant, product=product, user=request.user,
+                membership=request.membership, request=request,
+            )
+            created += 1
+        if warehouse and product.is_stocked:
+            catalog_services.ensure_branch_opening_stock(
+                business=business,
+                warehouse=warehouse,
+                product=product,
+                variant=variant,
+                quantity=row["opening_stock"],
+                unit_cost=row["purchase_price"],
+                user=request.user,
+                membership=request.membership,
+                request=request,
+            )
     return created
 
 
 @module_permission_required("pos_core", "products.view")
 def product_detail(request, public_id):
+    selected_branch, branches = _catalog_branch_context(request)
+    if selected_branch is None:
+        available = list(branches.order_by("id")[:2])
+        if len(available) == 1:
+            selected_branch = available[0]
+    if selected_branch is None:
+        raise Http404
+    selected_warehouse, _warehouses = _catalog_warehouse_context(
+        request, selected_branch, required=True
+    )
     product = get_tenant_object(
-        Product.objects.select_related("category", "brand", "unit", "tax_rate"),
+        _catalog_product_object_queryset(request, selected_branch).select_related(
+            "category", "brand", "unit", "tax_rate"
+        ),
         request.business, public_id=public_id,
     )
     _require_tailoring_product_access(
@@ -468,21 +703,26 @@ def product_detail(request, public_id):
         inventory.StockMovement.objects.for_business(request.business)
         .filter(product=product).select_related("warehouse", "user")
     )
-    allowed_branch_ids = request.membership.allowed_branch_ids
-    if allowed_branch_ids is not None:
-        levels = levels.filter(warehouse__branch_id__in=allowed_branch_ids)
-        movements = movements.filter(warehouse__branch_id__in=allowed_branch_ids)
+    levels = levels.filter(warehouse=selected_warehouse)
+    movements = movements.filter(warehouse=selected_warehouse)
     movements = movements[:30]
     show_cost = request.membership.has_perm("cost.view")
     return render(request, "catalog/product_detail.html", {
         "product": product, "variants": variants, "levels": levels,
         "movements": movements, "active_nav": "products", "show_cost": show_cost,
+        "selected_branch": selected_branch,
+        "selected_warehouse": selected_warehouse,
     })
 
 
 @module_permission_required("pos_core", "products.archive")
 def product_archive(request, public_id):
-    product = get_tenant_object(Product, request.business, public_id=public_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=public_id,
+    )
     _require_tailoring_product_access(
         request,
         product,
@@ -500,14 +740,22 @@ def product_archive(request, public_id):
         audit.log("product.archived", request=request, module="catalog", obj=product,
                   description=f"Product '{product.name}' archived.")
         messages.success(request, f"'{product.name}' archived.")
-    return redirect("catalog:product_list")
+    target = reverse("catalog:product_list")
+    if selected_branch is not None:
+        target += f"?branch={selected_branch.pk}"
+    return redirect(target)
 
 
 @module_permission_required("pos_core", "products.archive")
 def product_restore(request, public_id):
     from . import services as catalog_services
 
-    product = get_tenant_object(Product, request.business, public_id=public_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=public_id,
+    )
     _require_tailoring_product_access(
         request,
         product,
@@ -522,14 +770,22 @@ def product_restore(request, public_id):
         audit.log("product.restored", request=request, module="catalog", obj=product,
                   description=f"Product '{product.name}' restored from archive.")
         messages.success(request, f"'{product.name}' restored and active again.")
-    return redirect("catalog:product_detail", public_id=public_id)
+    target = reverse("catalog:product_detail", args=[public_id])
+    if selected_branch is not None:
+        target += f"?branch={selected_branch.pk}"
+    return redirect(target)
 
 
 @module_permission_required("pos_core", "products.delete")
 def product_delete(request, public_id):
     from . import services as catalog_services
 
-    product = get_tenant_object(Product, request.business, public_id=public_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=public_id,
+    )
     _require_tailoring_product_access(
         request,
         product,
@@ -545,18 +801,32 @@ def product_delete(request, public_id):
             )
         except catalog_services.ProductInUse as exc:
             messages.error(request, str(exc))
-            return redirect("catalog:product_detail", public_id=public_id)
+            target = reverse("catalog:product_detail", args=[public_id])
+            if selected_branch is not None:
+                target += f"?branch={selected_branch.pk}"
+            return redirect(target)
         audit.log("product.deleted", request=request, module="catalog",
                   description=f"Product '{name}' ({ref}) hard-deleted "
                               "(no transaction history).")
         messages.success(request, f"'{name}' permanently deleted.")
-        return redirect("catalog:product_list")
-    return redirect("catalog:product_detail", public_id=public_id)
+        target = reverse("catalog:product_list")
+        if selected_branch is not None:
+            target += f"?branch={selected_branch.pk}"
+        return redirect(target)
+    target = reverse("catalog:product_detail", args=[public_id])
+    if selected_branch is not None:
+        target += f"?branch={selected_branch.pk}"
+    return redirect(target)
 
 
 @module_permission_required("pos_core", "products.manage")
 def variant_form(request, product_id, public_id=None):
-    product = get_tenant_object(Product, request.business, public_id=product_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=product_id,
+    )
     _require_tailoring_product_access(
         request,
         product,
@@ -624,10 +894,14 @@ def variant_form(request, product_id, public_id=None):
             form.add_error(None, exc)
         else:
             messages.success(request, "Variant saved.")
-            return redirect("catalog:product_detail", public_id=product.public_id)
+            target = reverse("catalog:product_detail", args=[product.public_id])
+            if selected_branch is not None:
+                target += f"?branch={selected_branch.pk}"
+            return redirect(target)
     return render(request, "catalog/variant_form.html",
                   {"form": form, "product": product, "variant": instance,
-                   "active_nav": "products"})
+                   "active_nav": "products",
+                   "selected_branch": selected_branch})
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +913,12 @@ def product_barcode_svg(request, public_id):
     import barcode
     from barcode.writer import SVGWriter
 
-    product = get_tenant_object(Product, request.business, public_id=public_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=public_id,
+    )
     _require_tailoring_product_access(
         request, product, permission_code="products.view"
     )
@@ -651,7 +930,12 @@ def product_barcode_svg(request, public_id):
 
 @module_permission_required("barcode_printing", "products.view")
 def product_labels(request, public_id):
-    product = get_tenant_object(Product, request.business, public_id=public_id)
+    selected_branch, _branches = _catalog_branch_context(request)
+    product = get_tenant_object(
+        _catalog_product_object_queryset(request, selected_branch),
+        request.business,
+        public_id=public_id,
+    )
     _require_tailoring_product_access(
         request, product, permission_code="products.view"
     )
@@ -662,6 +946,7 @@ def product_labels(request, public_id):
     return render(request, "catalog/labels.html", {
         "product": product, "count_range": range(count),
         "business": request.business,
+        "selected_branch": selected_branch,
     })
 
 
@@ -721,11 +1006,6 @@ def tax_list(request):
 
 @module_permission_required("pos_core", "products.import")
 def product_import(request):
-    _require_business_wide_catalog(
-        request,
-        "products.import",
-        action=AccessAction.WRITE,
-    )
     from apps.core.imports import error_report_response, parse_tabular_file
 
     from . import services as catalog_services
@@ -734,6 +1014,15 @@ def product_import(request):
         errors = request.session.get("product_import_errors", [])
         return error_report_response("product_import_errors.csv", errors)
 
+    selected_branch, branches = _catalog_branch_context(request)
+    if selected_branch is None:
+        messages.info(request, "Select a Branch before importing Products.")
+        return redirect("catalog:product_list")
+    selected_warehouse, warehouses = _catalog_warehouse_context(
+        request,
+        selected_branch,
+        required=request.method == "POST" and selected_branch is not None,
+    )
     form = ProductImportForm(request.POST or None, request.FILES or None)
     results = None
     import_error = None
@@ -742,7 +1031,10 @@ def product_import(request):
             subscriptions.require_operational(request.business)
         except subscriptions.SubscriptionInactive as exc:
             messages.error(request, str(exc))
-            return redirect("catalog:product_list")
+            target = reverse("catalog:product_list")
+            if selected_branch is not None:
+                target += f"?branch={selected_branch.pk}"
+            return redirect(target)
         rows, parse_error = parse_tabular_file(form.cleaned_data["file"])
         if parse_error:
             import_error = parse_error
@@ -753,6 +1045,11 @@ def product_import(request):
                 match_by=form.cleaned_data["match_by"], user=request.user,
                 allowed_warehouse_ids=_allowed_warehouse_ids(request),
                 membership=request.membership, request=request,
+                branch_context_mode=(
+                    "branch"
+                ),
+                selected_branch=selected_branch,
+                selected_warehouse=selected_warehouse,
             )
             request.session["product_import_errors"] = errors
             results = {"summary": summary, "errors": errors, "total": len(rows)}
@@ -764,24 +1061,59 @@ def product_import(request):
                   {"form": form, "results": results,
                    "import_error": import_error,
                    "columns": catalog_services.IMPORT_COLUMNS,
-                   "active_nav": "products"})
+                   "active_nav": "products",
+                   "branches": branches,
+                   "warehouses": warehouses,
+                   "selected_branch": selected_branch,
+                   "selected_warehouse": selected_warehouse,
+                   "branch_locked": request.membership.allowed_branch_ids is not None,
+                   "business_wide_context": False})
 
 
 @module_permission_required("pos_core", "products.import")
 def import_template(request):
-    _require_business_wide_catalog(request, "products.import")
     from apps.reports import exports
 
     from . import services as catalog_services
 
+    selected_branch, _branches = _catalog_branch_context(request)
+    if selected_branch is None:
+        raise Http404
+    selected_warehouse, _warehouses = _catalog_warehouse_context(
+        request,
+        selected_branch,
+        required=True,
+    )
+
+    branch_values = (
+        [
+            selected_branch.code,
+            selected_branch.name,
+            selected_warehouse.code,
+            selected_warehouse.name,
+        ]
+        if selected_branch is not None
+        else ["", "", "", ""]
+    )
+
     data = {
-        "columns": [c.title() for c in catalog_services.IMPORT_COLUMNS],
-        "rows": [[
-            "Example T-Shirt", "TSH-001", "6291041500213", "Clothing",
-            "Generic", "standard", "Piece", "2.500", "4.900", "2.500",
-            "5", "No", "Yes", "10", "5", "Head Office", "Main Warehouse",
-            "", "", "", "", "", "", "Active", "No",
-        ]],
+        "columns": catalog_services.EXPORT_COLUMNS,
+        "rows": [
+            [
+                "Hi Sofy", "FAB-HI-SOFY", "", "Fabrics", "Hi Sofy",
+                "variant", "Meter", "2.500", "0", "2.500", "", "",
+                "Yes", "80", "0", *branch_values,
+                "Color Code", "Color 1", "FAB-HI-SOFY-C1", "6299801000010",
+                "Yes", "No",
+            ],
+            [
+                "Hi Sofy", "FAB-HI-SOFY", "", "Fabrics", "Hi Sofy",
+                "variant", "Meter", "2.500", "0", "2.500", "", "",
+                "Yes", "60", "0", *branch_values,
+                "Color Code", "Color 2", "FAB-HI-SOFY-C2", "6299801000027",
+                "Yes", "No",
+            ],
+        ],
         "totals": None,
     }
     if request.GET.get("format") == "xlsx":

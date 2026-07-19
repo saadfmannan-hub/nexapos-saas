@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import NotFound
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -102,9 +103,37 @@ class ProductViewSet(TenantReadOnlyViewSet):
     required_permission = "products.view"
 
     def get_queryset(self):
+        from apps.branches.models import Branch
+        from apps.catalog import services as catalog_services
+
         queryset = super().get_queryset()
         if "tailoring" not in self.request.api_access_context.effective_modules:
             queryset = queryset.filter(is_tailoring_item=False)
+        raw_branch = self.request.query_params.get("branch", "").strip()
+        branches = Branch.objects.for_business(
+            self.request.api_business
+        ).filter(is_active=True)
+        allowed = self.request.api_membership.allowed_branch_ids
+        if allowed is not None:
+            branches = branches.filter(pk__in=allowed)
+        branch = None
+        if raw_branch:
+            if not raw_branch.isdigit():
+                raise NotFound()
+            branch = branches.filter(pk=int(raw_branch)).first()
+            if branch is None:
+                raise NotFound()
+        elif allowed is not None:
+            assigned = list(branches.order_by("id")[:2])
+            if len(assigned) != 1:
+                raise NotFound()
+            branch = assigned[0]
+        if branch is not None:
+            queryset = catalog_services.products_visible_in_branch(
+                queryset,
+                business=self.request.api_business,
+                branch=branch,
+            )
         return queryset
 
     @property

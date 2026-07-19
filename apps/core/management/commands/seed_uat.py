@@ -232,11 +232,15 @@ class Command(BaseCommand):
             "sales.credit",
             "sales.refund",
             "products.view",
+            "products.manage",
+            "products.import",
+            "products.export",
             "customers.view",
             "customers.manage",
             "customers.export",
             "customers.import",
             "inventory.view",
+            "inventory.adjust",
             "inventory.export",
             "inventory.import",
             "shifts.open",
@@ -415,6 +419,20 @@ class Command(BaseCommand):
                 unit_cost=D(cost),
                 user=owner,
             )
+
+        self._ensure_branch_only_products(
+            business=business,
+            owner=owner,
+            al_hail=al_hail,
+            mabelah=mabelah,
+            al_hail_warehouse=al_hail_warehouse,
+            mabelah_warehouse=workshop,
+        )
+        self._ensure_simple_product_examples(
+            business=business,
+            owner=owner,
+            warehouse=al_hail_warehouse,
+        )
 
         # Named customers are evenly branch-owned; walk-ins remain separate.
         customer_specs = (
@@ -951,6 +969,161 @@ class Command(BaseCommand):
                 "run against shared or production databases."
             )
 
+    def _ensure_branch_only_products(
+        self,
+        *,
+        business,
+        owner,
+        al_hail,
+        mabelah,
+        al_hail_warehouse,
+        mabelah_warehouse,
+    ):
+        """Idempotently retain one clear visibility fixture per UAT branch."""
+        from apps.catalog.models import Brand, Category, Product, Unit
+        from apps.inventory import services as inventory
+        from apps.inventory.models import StockLevel
+
+        category, _ = Category.objects.get_or_create(
+            business=business,
+            name="Retail",
+            parent=None,
+        )
+        brand, _ = Brand.objects.get_or_create(
+            business=business,
+            name="Shumukh Select",
+        )
+        unit = Unit.objects.for_business(business).filter(name="Piece").first()
+        fixtures = (
+            ("Al Hail Exclusive Gift Set", "UAT-AH-ONLY", al_hail, al_hail_warehouse),
+            ("Mabelah Exclusive Gift Set", "UAT-MB-ONLY", mabelah, mabelah_warehouse),
+        )
+        changed = False
+        for name, sku, branch, warehouse in fixtures:
+            product, created = Product.objects.get_or_create(
+                business=business,
+                sku=sku,
+                defaults={
+                    "name": name,
+                    "category": category,
+                    "brand": brand,
+                    "unit": unit,
+                    "purchase_price": D("4.000"),
+                    "sale_price": D("10.000"),
+                    "reorder_level": D("3.000"),
+                    "track_inventory": True,
+                },
+            )
+            changed = changed or created
+            if not StockLevel.objects.for_business(business).filter(
+                product=product,
+                warehouse__branch=branch,
+            ).exists():
+                inventory.set_opening_stock(
+                    business=business,
+                    warehouse=warehouse,
+                    product=product,
+                    quantity=D("12.000"),
+                    unit_cost=D("4.000"),
+                    user=owner,
+                )
+                changed = True
+        return changed
+
+    def _ensure_simple_product_examples(self, *, business, owner, warehouse):
+        """Create idempotent branch-onboarding examples for local UAT."""
+        from apps.catalog.models import (
+            Brand,
+            Category,
+            Product,
+            ProductVariant,
+            Unit,
+        )
+        from apps.inventory import services as inventory
+        from apps.inventory.models import StockLevel
+
+        fabrics, _ = Category.objects.get_or_create(
+            business=business, name="Fabrics", parent=None
+        )
+        retail, _ = Category.objects.get_or_create(
+            business=business, name="Retail", parent=None
+        )
+        meter = Unit.objects.for_business(business).get(is_meter=True)
+        piece = Unit.objects.for_business(business).get(name="Piece")
+        examples = (
+            (
+                "Hi Sofy", "UAT-HI-SOFY", fabrics, "Hi Sofy", meter,
+                "Color Code", (("Color 1", "80"), ("Color 2", "60"), ("Color 3", "95")),
+            ),
+            (
+                "Premium Kumma", "UAT-PREMIUM-KUMMA", retail, "Shumukh Select",
+                piece, "Size", (("10", "8"), ("10.5", "10"), ("11", "6")),
+            ),
+            (
+                "Royal Khanjar", "UAT-ROYAL-KHANJAR", retail, "Shumukh Select",
+                piece, "Size", (("Small", "5"), ("Medium", "7"), ("Large", "4")),
+            ),
+            (
+                "Classic Assa", "UAT-CLASSIC-ASSA", retail, "Shumukh Select",
+                piece, "Size", (("Small", "9"), ("Medium", "11"), ("Large", "8")),
+            ),
+        )
+        changed = False
+        for name, sku, category, brand_name, unit, option_name, values in examples:
+            brand, _ = Brand.objects.get_or_create(
+                business=business, name=brand_name
+            )
+            product, created = Product.objects.get_or_create(
+                business=business,
+                sku=sku,
+                defaults={
+                    "name": name,
+                    "category": category,
+                    "brand": brand,
+                    "unit": unit,
+                    "product_type": Product.Type.VARIANT,
+                    "purchase_price": D("2.500"),
+                    "sale_price": D("0") if unit.is_meter else D("8.000"),
+                    "track_inventory": True,
+                    "allow_discount": not unit.is_meter,
+                    "is_tailoring_item": unit.is_meter,
+                },
+            )
+            changed = changed or created
+            for index, (value, quantity) in enumerate(values, start=1):
+                variant, variant_created = ProductVariant.objects.get_or_create(
+                    business=business,
+                    sku=f"{sku}-{index}",
+                    defaults={
+                        "product": product,
+                        "name": value,
+                        "attributes": {option_name: value},
+                        "purchase_price": D("2.500"),
+                        "sale_price": D("0") if unit.is_meter else D("8.000"),
+                    },
+                )
+                if variant.product_id != product.id:
+                    raise CommandError(
+                        f"UAT variant SKU collision: {variant.sku}"
+                    )
+                changed = changed or variant_created
+                if not StockLevel.objects.for_business(business).filter(
+                    warehouse=warehouse,
+                    product=product,
+                    variant=variant,
+                ).exists():
+                    inventory.set_opening_stock(
+                        business=business,
+                        warehouse=warehouse,
+                        product=product,
+                        variant=variant,
+                        quantity=D(quantity),
+                        unit_cost=D("2.500"),
+                        user=owner,
+                    )
+                    changed = True
+        return changed
+
     def _upgrade_existing_branch_customers(self, business):
         """Idempotently upgrade only the command's known local UAT fixture."""
         from apps.accounts.models import Role
@@ -969,6 +1142,23 @@ class Command(BaseCommand):
             ) from exc
 
         changed = False
+        al_hail_warehouse = al_hail.warehouses.filter(is_active=True).first()
+        mabelah_warehouse = mabelah.warehouses.filter(is_active=True).first()
+        if al_hail_warehouse is None or mabelah_warehouse is None:
+            raise CommandError("Existing UAT branches require active warehouses.")
+        changed = self._ensure_branch_only_products(
+            business=business,
+            owner=business.owner,
+            al_hail=al_hail,
+            mabelah=mabelah,
+            al_hail_warehouse=al_hail_warehouse,
+            mabelah_warehouse=mabelah_warehouse,
+        ) or changed
+        changed = self._ensure_simple_product_examples(
+            business=business,
+            owner=business.owner,
+            warehouse=al_hail_warehouse,
+        ) or changed
         salesman_role = Role.objects.for_business(business).filter(
             name="Salesman"
         ).first()
@@ -977,7 +1167,9 @@ class Command(BaseCommand):
         required_permissions = {
             "customers.view", "customers.manage", "customers.export",
             "customers.import", "inventory.view", "inventory.export",
-            "inventory.import", "products.view", "sales.view", "sales.create",
+            "inventory.import", "inventory.adjust", "products.view",
+            "products.manage", "products.import", "products.export",
+            "sales.view", "sales.create",
         }
         updated_permissions = set(salesman_role.permissions or []) | required_permissions
         if updated_permissions != set(salesman_role.permissions or []):

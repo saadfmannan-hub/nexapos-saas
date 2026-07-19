@@ -28,7 +28,7 @@
   {% for _ in count_range %}
   <div class="label">
     <div class="lname">{{ product.name }}</div>
-    <img src="{% url 'catalog:product_barcode' product.public_id %}" alt="barcode">
+    <img src="{% url 'catalog:product_barcode' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}" alt="barcode">
     <div>{{ product.barcode|default:product.sku }}</div>
     <div class="fw-bold">{{ product.sale_price }} {{ business.currency_display }}</div>
   </div>

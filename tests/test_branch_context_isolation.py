@@ -342,10 +342,11 @@ class BranchContextIsolationTests(TenantTestCase):
         )
         self.assertContains(detail, self.warehouse_a.name)
         self.assertNotContains(detail, self.warehouse_2.name)
-        self.assertEqual(
-            self.client.get(reverse("catalog:product_export")).status_code,
-            403,
-        )
+        export = self.client.get(reverse("catalog:product_export"))
+        self.assertEqual(export.status_code, 200)
+        export_text = export.content.decode()
+        self.assertIn(self.branch_a.name, export_text)
+        self.assertNotIn(self.warehouse_2.name, export_text)
 
     def test_customer_api_and_dashboard_receivables_are_branch_scoped(self):
         api = self.client.get(reverse("api:customer-list"))

@@ -464,20 +464,21 @@ def restore_product(product, *, user, membership=None, request=None):
     return canonical_product
 
 
-EXPORT_COLUMNS = [
-    "Product Name", "SKU", "Barcode", "Category", "Brand", "Product Type", "Unit",
-    "Purchase Price", "Sale Price", "Cost Price", "Tax/VAT Rate",
-    "Tax Inclusive", "Track Inventory", "Current Stock", "Minimum Stock",
-    "Warehouse", "Branch", "Variant Parent", "Variant Name", "Variant SKU",
-    "Variant Barcode", "Status", "Created Date", "Updated Date",
-]
 IMPORT_COLUMNS = [
     "product name", "sku", "barcode", "category", "brand", "product type", "unit",
     "purchase price", "sale price", "cost price", "tax/vat rate",
     "tax inclusive", "track inventory", "opening stock", "minimum stock",
-    "branch", "warehouse", "variant parent", "variant option name",
-    "variant option value", "variant name", "variant sku", "variant barcode",
+    "branch code", "branch name", "warehouse code", "warehouse name",
+    "variant option name", "variant option value", "variant sku", "variant barcode",
     "active", "archived",
+]
+EXPORT_COLUMNS = [
+    "Product Name", "SKU", "Barcode", "Category", "Brand", "Product Type",
+    "Unit", "Purchase Price", "Sale Price", "Cost Price", "Tax/VAT Rate",
+    "Tax Inclusive", "Track Inventory", "Opening Stock", "Minimum Stock",
+    "Branch Code", "Branch Name", "Warehouse Code", "Warehouse Name",
+    "Variant Option Name", "Variant Option Value", "Variant SKU",
+    "Variant Barcode", "Active", "Archived",
 ]
 PRODUCT_TYPE_ALIASES = {
     "": Product.Type.STANDARD,
@@ -492,11 +493,64 @@ PRODUCT_TYPE_ALIASES = {
 }
 
 
+def products_visible_in_branch(queryset, *, business, branch):
+    """Scope stocked items by warehouse; non-stock services stay global."""
+    from django.db.models import Q
+
+    if branch is None or branch.business_id != business.id:
+        return queryset.none()
+    return queryset.filter(
+        Q(track_inventory=False)
+        | Q(product_type__in=(Product.Type.SERVICE, Product.Type.NON_STOCK))
+        | Q(
+            stock_levels__business=business,
+            stock_levels__warehouse__business=business,
+            stock_levels__warehouse__branch=branch,
+            stock_levels__warehouse__is_active=True,
+        )
+    ).distinct()
+
+
+def product_is_visible_in_branch(*, business, product, branch, variant=None):
+    """Return whether a product (and optional variant) is available in a branch."""
+    from apps.inventory.models import StockLevel
+
+    if (
+        branch is None
+        or branch.business_id != business.id
+        or product.business_id != business.id
+    ):
+        return False
+    if not product.is_stocked:
+        return True
+    levels = StockLevel.objects.for_business(business).filter(
+        product=product,
+        warehouse__business=business,
+        warehouse__branch=branch,
+        warehouse__is_active=True,
+    )
+    if variant is not None:
+        if variant.business_id != business.id or variant.product_id != product.id:
+            return False
+        levels = levels.filter(variant=variant)
+    elif product.has_variants:
+        levels = levels.filter(variant__isnull=False)
+    return levels.exists()
+
+
 def _as_bool(value, default=False):
     raw = str(value or "").strip().lower()
     if raw == "":
         return default
     return raw in ("1", "true", "yes", "y", "active", "enabled")
+
+
+def _as_optional_variant_value(value):
+    """Normalize import placeholders used for absent variant-only values."""
+    raw = str(value or "").strip()
+    if raw.casefold() in ("", "null", "-"):
+        return ""
+    return raw
 
 
 def _as_decimal(
@@ -576,6 +630,202 @@ def _duplicate_code_exists(business, *, sku="", barcode="", exclude_product=None
         raise ValueError(f"Duplicate barcode within this business: {barcode}")
 
 
+def find_reusable_product(
+    business,
+    *,
+    name,
+    sku="",
+    barcode="",
+    category=None,
+    brand=None,
+    unit=None,
+    product_type,
+):
+    """Resolve one safely matching business-wide Product for branch onboarding."""
+    products = Product.objects.for_business(business).select_for_update()
+    variants = ProductVariant.objects.for_business(business)
+    candidates = []
+    for field, value in (("sku", sku), ("barcode", barcode)):
+        value = str(value or "").strip()
+        if not value:
+            continue
+        if variants.filter(**{field: value}).exists():
+            raise ValidationError(
+                f"{field.upper()} belongs to an existing variant: {value}"
+            )
+        match = products.filter(**{field: value}).first()
+        if match is not None:
+            candidates.append(match)
+    if candidates and any(item.pk != candidates[0].pk for item in candidates):
+        raise ValidationError("SKU and barcode identify different Products.")
+
+    signature = products.filter(
+        name__iexact=str(name or "").strip(),
+        category=category,
+        brand=brand,
+        unit=unit,
+    )
+    if candidates:
+        product = candidates[0]
+        if not signature.filter(pk=product.pk).exists():
+            raise ValidationError(
+                "The Product identifiers already belong to a different Product."
+            )
+    else:
+        matches = list(signature[:2])
+        if len(matches) > 1:
+            raise ValidationError(
+                "Product identity is ambiguous. Supply a unique Product SKU."
+            )
+        product = matches[0] if matches else None
+
+    if product is None:
+        return None
+    if product.product_type != product_type:
+        raise ValidationError(
+            "The existing Product has a different Product Type."
+        )
+    if sku and product.sku != sku:
+        raise ValidationError("The matching Product has a different SKU.")
+    if barcode and product.barcode != barcode:
+        raise ValidationError("The matching Product has a different barcode.")
+    return product
+
+
+def find_reusable_variant(
+    business,
+    *,
+    product,
+    name,
+    attributes,
+    sku="",
+    barcode="",
+):
+    """Resolve a safe existing variant or return None for a missing variant."""
+    variants = ProductVariant.objects.for_business(business).select_for_update()
+    candidates = []
+    for field, value in (("sku", sku), ("barcode", barcode)):
+        value = str(value or "").strip()
+        if not value:
+            continue
+        if Product.objects.for_business(business).filter(
+            **{field: value}
+        ).exists():
+            raise ValidationError(
+                f"Variant {field.upper()} belongs to an existing Product: {value}"
+            )
+        match = variants.filter(**{field: value}).first()
+        if match is not None:
+            if match.product_id != product.id:
+                raise ValidationError(
+                    f"Variant {field.upper()} belongs to another Product: {value}"
+                )
+            candidates.append(match)
+    if candidates and any(item.pk != candidates[0].pk for item in candidates):
+        raise ValidationError(
+            "Variant SKU and barcode identify different variants."
+        )
+    if candidates:
+        variant = candidates[0]
+        if (
+            variant.name.casefold() != str(name or "").strip().casefold()
+            or variant.attributes != attributes
+        ):
+            raise ValidationError(
+                "The Variant identifiers already belong to a different variant."
+            )
+        return variant
+
+    matches = list(
+        variants.filter(
+            product=product,
+            name__iexact=str(name or "").strip(),
+            attributes=attributes,
+        )[:2]
+    )
+    if len(matches) > 1:
+        raise ValidationError(
+            "Variant identity is ambiguous. Supply a unique Variant SKU."
+        )
+    variant = matches[0] if matches else None
+    if variant is not None:
+        if sku and variant.sku != sku:
+            raise ValidationError("The matching Variant has a different SKU.")
+        if barcode and variant.barcode != barcode:
+            raise ValidationError("The matching Variant has a different barcode.")
+    return variant
+
+
+def ensure_branch_opening_stock(
+    *,
+    business,
+    warehouse,
+    product,
+    variant=None,
+    quantity,
+    unit_cost,
+    user,
+    membership=None,
+    request=None,
+):
+    """Create one warehouse assignment and opening movement, idempotently."""
+    from apps.inventory import services as inventory
+    from apps.inventory.models import StockLevel
+
+    inventory.require_inventory_write(
+        business=business,
+        user=user,
+        permission_code="inventory.adjust",
+        membership=membership,
+        request=request,
+        warehouses=(warehouse,),
+        tenant_objects=(product, variant),
+    )
+    existing = (
+        StockLevel.objects.select_for_update()
+        .filter(
+            business=business,
+            warehouse=warehouse,
+            product=product,
+            variant=variant,
+        )
+        .first()
+    )
+    if existing is not None:
+        return existing, False
+    if quantity > 0:
+        inventory.set_opening_stock(
+            business=business,
+            warehouse=warehouse,
+            product=product,
+            variant=variant,
+            quantity=quantity,
+            unit_cost=unit_cost,
+            user=user,
+            membership=membership,
+            request=request,
+        )
+        return (
+            StockLevel.objects.get(
+                business=business,
+                warehouse=warehouse,
+                product=product,
+                variant=variant,
+            ),
+            True,
+        )
+    return (
+        StockLevel.objects.create(
+            business=business,
+            warehouse=warehouse,
+            product=product,
+            variant=variant,
+            quantity=Decimal("0"),
+        ),
+        True,
+    )
+
+
 def product_export_dataset(
     business, filters, *, allowed_branch_ids, allowed_warehouse_ids
 ):
@@ -633,6 +883,8 @@ def product_export_dataset(
 
     qs = Product.objects.for_business(business).select_related(
         "category", "brand", "unit")
+    if branch is not None:
+        qs = products_visible_in_branch(qs, business=business, branch=branch)
     if not filters.get("include_tailoring", True):
         qs = qs.filter(is_tailoring_item=False)
 
@@ -663,66 +915,98 @@ def product_export_dataset(
     if branch is not None:
         level_qs = level_qs.filter(warehouse__branch=branch)
     stock_map = {
-        row["product_id"]: row["q"]
-        for row in level_qs.values("product_id").annotate(q=Sum("quantity"))
+        (row["product_id"], row["variant_id"]): row["q"]
+        for row in level_qs.values(
+            "product_id", "variant_id"
+        ).annotate(q=Sum("quantity"))
     }
-    branch_name = ""
-    if warehouse is not None and warehouse.branch is not None:
-        branch_name = warehouse.branch.name
-    elif branch is not None:
-        branch_name = branch.name
+    branch_code = branch.code if branch is not None else ""
+    branch_name = branch.name if branch is not None else ""
+    warehouse_code = warehouse.code if warehouse is not None else ""
+    warehouse_name = warehouse.name if warehouse is not None else ""
+
+    def export_row(product, *, variant=None, stock=Decimal("0")):
+        option_name = ""
+        option_value = ""
+        if variant is not None and variant.attributes:
+            option_name = " / ".join(variant.attributes.keys())
+            option_value = " / ".join(str(v) for v in variant.attributes.values())
+        return [
+            product.name,
+            product.sku,
+            product.barcode,
+            product.category.name if product.category else "",
+            product.brand.name if product.brand else "",
+            product.product_type,
+            product.unit.name if product.unit else "",
+            variant.purchase_price if variant is not None else product.purchase_price,
+            variant.sale_price if variant is not None else product.sale_price,
+            variant.average_cost if variant is not None else product.average_cost,
+            product.tax_rate.rate if product.tax_rate else "",
+            (
+                ""
+                if product.price_includes_tax is None
+                else ("Yes" if product.price_includes_tax else "No")
+            ),
+            "Yes" if product.track_inventory else "No",
+            stock,
+            product.reorder_level,
+            branch_code,
+            branch_name,
+            warehouse_code,
+            warehouse_name,
+            option_name,
+            option_value,
+            variant.sku if variant is not None else "",
+            variant.barcode if variant is not None else "",
+            "Yes" if (variant or product).is_active else "No",
+            "Yes" if product.is_archived else "No",
+        ]
 
     rows = []
-    for p in qs.prefetch_related("variants").order_by("name"):
-        stock = stock_map.get(p.id, 0)
-        if status == "low" and not (p.reorder_level > 0 and stock <= p.reorder_level):
+    for product in qs.prefetch_related("variants").order_by("name"):
+        product_stock = sum(
+            quantity
+            for (product_id, _variant_id), quantity in stock_map.items()
+            if product_id == product.id
+        )
+        if status == "low" and not (
+            product.reorder_level > 0
+            and product_stock <= product.reorder_level
+        ):
             continue
-        if status == "out" and stock > 0:
+        if status == "out" and product_stock > 0:
             continue
-        rows.append([
-            p.name, p.sku, p.barcode,
-            p.category.name if p.category else "",
-            p.brand.name if p.brand else "",
-            p.product_type,
-            p.unit.name if p.unit else "",
-            p.purchase_price, p.sale_price, p.average_cost,
-            p.tax_rate.rate if p.tax_rate else "",
-            "" if p.price_includes_tax is None else ("Yes" if p.price_includes_tax else "No"),
-            "Yes" if p.track_inventory else "No",
-            stock, p.reorder_level,
-            warehouse.name if warehouse else "All",
-            branch_name or "All",
-            "", "", "", "",
-            "Archived" if p.is_archived else ("Active" if p.is_active else "Inactive"),
-            p.created_at.strftime("%Y-%m-%d"),
-            p.updated_at.strftime("%Y-%m-%d"),
-        ])
-        for variant in p.variants.all():
-            rows.append([
-                p.name, p.sku, p.barcode,
-                p.category.name if p.category else "",
-                p.brand.name if p.brand else "",
-                p.product_type,
-                p.unit.name if p.unit else "",
-                variant.purchase_price, variant.sale_price, variant.average_cost,
-                p.tax_rate.rate if p.tax_rate else "",
-                "" if p.price_includes_tax is None else ("Yes" if p.price_includes_tax else "No"),
-                "Yes" if p.track_inventory else "No",
-                "", p.reorder_level,
-                warehouse.name if warehouse else "All",
-                branch_name or "All",
-                p.sku or p.name, variant.name, variant.sku, variant.barcode,
-                "Active" if variant.is_active else "Inactive",
-                variant.created_at.strftime("%Y-%m-%d"),
-                variant.updated_at.strftime("%Y-%m-%d"),
-            ])
+        if product.has_variants:
+            for variant in product.variants.all():
+                key = (product.id, variant.id)
+                if product.is_stocked and key not in stock_map:
+                    continue
+                rows.append(
+                    export_row(
+                        product,
+                        variant=variant,
+                        stock=stock_map.get(key, Decimal("0")),
+                    )
+                )
+        else:
+            key = (product.id, None)
+            if product.is_stocked and key not in stock_map:
+                continue
+            rows.append(
+                export_row(
+                    product,
+                    stock=stock_map.get(key, Decimal("0")),
+                )
+            )
     return {"columns": EXPORT_COLUMNS, "rows": rows, "totals": None}
 
 
 @transaction.atomic
 def import_products(
     *, business, rows, match_by, user, allowed_warehouse_ids=None,
-    membership=None, request=None,
+    membership=None, request=None, branch_context_mode=None,
+    selected_branch=None, selected_warehouse=None,
 ):
     """Import products and variants with row-level error reporting.
 
@@ -730,7 +1014,6 @@ def import_products(
     ``sku``, ``barcode`` or ``name``. Returns (summary, errors).
     """
     from apps.core.imports import normalize_row
-    from apps.inventory import services as inventory
     from apps.subscriptions import services as subscriptions
 
     context = _require_product_write(
@@ -740,6 +1023,37 @@ def import_products(
         membership=membership,
         request=request,
     )
+
+    if branch_context_mode not in (None, "master", "branch"):
+        raise ValidationError("Unknown Product import context.")
+    canonical_branch = None
+    canonical_warehouse = None
+    if branch_context_mode == "branch":
+        from apps.branches.models import Branch, Warehouse
+
+        branch_qs = Branch.objects.for_business(business).filter(is_active=True)
+        allowed_branch_ids = context.membership.allowed_branch_ids
+        if allowed_branch_ids is not None:
+            branch_qs = branch_qs.filter(pk__in=allowed_branch_ids)
+        canonical_branch = branch_qs.filter(
+            pk=getattr(selected_branch, "pk", selected_branch)
+        ).first()
+        if canonical_branch is None:
+            raise ValidationError("Select a valid branch for Product import.")
+        warehouse_qs = Warehouse.objects.for_business(business).filter(
+            branch=canonical_branch,
+            is_active=True,
+        )
+        allowed_ids = context.membership.allowed_warehouse_ids
+        if allowed_ids is not None:
+            warehouse_qs = warehouse_qs.filter(pk__in=allowed_ids)
+        canonical_warehouse = warehouse_qs.filter(
+            pk=getattr(selected_warehouse, "pk", selected_warehouse)
+        ).first()
+        if canonical_warehouse is None:
+            raise ValidationError(
+                "Select a valid warehouse in the selected branch for Product import."
+            )
 
     canonical_warehouse_ids = context.membership.allowed_warehouse_ids
     explicit_warehouse_ids = (
@@ -767,17 +1081,26 @@ def import_products(
             name = r.get("product name") or r.get("name") or ""
             sku = r.get("sku", "")
             barcode = r.get("barcode", "")
-            variant_name = r.get("variant name", "")
-            option_name = r.get("variant option name", "")
-            option_value = r.get("variant option value", "")
-            variant_sku = r.get("variant sku", "")
-            variant_barcode = r.get("variant barcode", "")
+            variant_parent = _as_optional_variant_value(
+                r.get("variant parent")
+            )
+            option_name = _as_optional_variant_value(
+                r.get("variant option name")
+            )
+            option_value = _as_optional_variant_value(
+                r.get("variant option value")
+            )
+            variant_name = _as_optional_variant_value(r.get("variant name"))
+            variant_sku = _as_optional_variant_value(r.get("variant sku"))
+            variant_barcode = _as_optional_variant_value(
+                r.get("variant barcode")
+            )
             is_variant_row = bool(
-                r.get("variant parent") or variant_name or option_value
+                variant_parent or variant_name or option_name or option_value
                 or variant_sku or variant_barcode
             )
 
-            if not name and not r.get("variant parent"):
+            if not name and not variant_parent:
                 raise ValueError("Product name is required.")
             identifiers = [
                 (variant_sku, seen_skus, "Variant SKU"),
@@ -824,7 +1147,7 @@ def import_products(
                 row_no=idx, field="opening stock", minimum=Decimal("0"),
             )
 
-            parent_lookup = r.get("variant parent", "")
+            parent_lookup = variant_parent
             existing = None
             if is_variant_row:
                 existing = (
@@ -838,10 +1161,42 @@ def import_products(
                     existing = Product.objects.for_business(business).filter(
                         name__iexact=parent_lookup
                     ).first()
-                if existing is None and name:
+                if existing is None and sku:
                     existing = Product.objects.for_business(business).filter(
-                        name__iexact=name
+                        sku=sku
                     ).first()
+                if existing is None and barcode:
+                    existing = Product.objects.for_business(business).filter(
+                        barcode=barcode
+                    ).first()
+                if existing is None and name:
+                    identity = Product.objects.for_business(business).filter(
+                        name__iexact=name
+                    )
+                    if r.get("category"):
+                        identity = identity.filter(
+                            category__name__iexact=r["category"]
+                        )
+                    else:
+                        identity = identity.filter(category__isnull=True)
+                    if r.get("brand"):
+                        identity = identity.filter(
+                            brand__name__iexact=r["brand"]
+                        )
+                    else:
+                        identity = identity.filter(brand__isnull=True)
+                    if r.get("unit"):
+                        identity = identity.filter(
+                            unit__name__iexact=r["unit"]
+                        )
+                    else:
+                        identity = identity.filter(unit__isnull=True)
+                    identity_matches = list(identity[:2])
+                    if len(identity_matches) > 1:
+                        raise ValueError(
+                            "Product identity is ambiguous. Supply a unique SKU."
+                        )
+                    existing = identity_matches[0] if identity_matches else None
             elif match_by == "sku" and sku:
                 existing = Product.objects.for_business(business).filter(sku=sku).first()
             elif match_by == "barcode" and barcode:
@@ -849,24 +1204,112 @@ def import_products(
                     barcode=barcode
                 ).first()
             elif match_by == "name" and name:
-                existing = Product.objects.for_business(business).filter(
+                identity = Product.objects.for_business(business).filter(
                     name__iexact=name
-                ).first()
+                )
+                if r.get("brand"):
+                    identity = identity.filter(brand__name__iexact=r["brand"])
+                if r.get("category"):
+                    identity = identity.filter(
+                        category__name__iexact=r["category"]
+                    )
+                if r.get("unit"):
+                    identity = identity.filter(unit__name__iexact=r["unit"])
+                matches = list(identity[:2])
+                if len(matches) > 1:
+                    raise ValueError(
+                        "Product identity is ambiguous. Supply a unique SKU."
+                    )
+                existing = matches[0] if matches else None
 
-            if existing and not is_variant_row:
-                summary["skipped"] += 1
-                continue
+            if existing is not None:
+                if name and existing.name.casefold() != name.casefold():
+                    raise ValueError(
+                        "The Product identifiers belong to a different Product."
+                    )
+                if sku and existing.sku != sku:
+                    raise ValueError("The matching Product has a different SKU.")
+                if barcode and existing.barcode != barcode:
+                    raise ValueError(
+                        "The matching Product has a different barcode."
+                    )
+                if existing.product_type != product_type:
+                    raise ValueError(
+                        "The existing Product has a different Product Type."
+                    )
 
             _current, limit, allowed = subscriptions.limit_state(business, "products")
             if not existing and not allowed:
                 raise ValueError(f"Plan product limit ({limit}) reached.")
 
-            warehouse = _resolve_warehouse(
-                business,
-                r.get("branch", ""),
-                r.get("warehouse", ""),
-                allowed_warehouse_ids=effective_warehouse_ids,
+            if branch_context_mode == "branch":
+                expected_metadata = (
+                    ("Branch Code", r.get("branch code"), canonical_branch.code),
+                    ("Branch Name", r.get("branch name"), canonical_branch.name),
+                    ("Warehouse Code", r.get("warehouse code"), canonical_warehouse.code),
+                    ("Warehouse Name", r.get("warehouse name"), canonical_warehouse.name),
+                )
+                for label, supplied, expected in expected_metadata:
+                    if str(supplied or "").strip().casefold() != str(expected).casefold():
+                        raise ValueError(
+                            f"{label} must exactly match the selected context: {expected}"
+                        )
+                warehouse = canonical_warehouse
+            elif branch_context_mode == "master":
+                context_values = (
+                    r.get("branch code"), r.get("branch name"),
+                    r.get("warehouse code"), r.get("warehouse name"),
+                    r.get("branch"), r.get("warehouse"),
+                )
+                if opening_stock > 0 or any(str(value or "").strip() for value in context_values):
+                    raise ValueError(
+                        "Business-wide Product Master import cannot mutate branch stock. "
+                        "Select a branch and warehouse first."
+                    )
+                warehouse = None
+            else:
+                warehouse = _resolve_warehouse(
+                    business,
+                    r.get("branch name") or r.get("branch", ""),
+                    r.get("warehouse name") or r.get("warehouse", ""),
+                    allowed_warehouse_ids=effective_warehouse_ids,
+                )
+
+            row_tracks_stock = (
+                product_type in (Product.Type.STANDARD, Product.Type.VARIANT)
+                and _as_bool(r.get("track inventory"), True)
             )
+            if opening_stock > 0 and not row_tracks_stock:
+                raise ValueError(
+                    "Opening Stock must be 0 for a non-stock Product."
+                )
+
+            if existing and not is_variant_row:
+                if branch_context_mode != "branch":
+                    summary["skipped"] += 1
+                    continue
+                if existing.has_variants:
+                    raise ValueError(
+                        "Import each variant separately to make this product available "
+                        "in the selected branch."
+                    )
+                if existing.is_stocked:
+                    ensure_branch_opening_stock(
+                        business=business,
+                        warehouse=warehouse,
+                        product=existing,
+                        quantity=opening_stock,
+                        unit_cost=purchase_price,
+                        user=user,
+                        membership=context.membership,
+                        request=request,
+                    )
+                elif opening_stock > 0:
+                    raise ValueError(
+                        "Opening Stock must be 0 for a non-stock Product."
+                    )
+                summary["updated"] += 1
+                continue
             unit = None
             if r.get("unit"):
                 unit = Unit.objects.for_business(business).filter(
@@ -927,6 +1370,19 @@ def import_products(
                 brand, _ = Brand.objects.get_or_create(
                     business=business, name=r["brand"][:120]
                 )
+            if existing is not None:
+                if existing.category_id != getattr(category, "id", None):
+                    raise ValueError(
+                        "The matching Product has a different Category."
+                    )
+                if existing.brand_id != getattr(brand, "id", None):
+                    raise ValueError(
+                        "The matching Product has a different Brand."
+                    )
+                if existing.unit_id != getattr(effective_unit, "id", None):
+                    raise ValueError(
+                        "The matching Product has a different Unit."
+                    )
             tax_rate = None
             if not is_meter:
                 tax_rate = _resolve_tax_rate(
@@ -1021,31 +1477,47 @@ def import_products(
                         product.product_type = Product.Type.VARIANT
                         product.save(update_fields=update_fields)
 
-                    _duplicate_code_exists(
-                        business, sku=variant_sku, barcode=variant_barcode,
-                    )
                     attributes = {}
                     if option_name and option_value:
                         attributes[option_name] = option_value
                     display_name = (
                         variant_name or option_value or "Variant"
                     )[:160]
-                    variant = ProductVariant.objects.create(
-                        business=business, product=product, name=display_name,
-                        attributes=attributes, sku=variant_sku[:60],
-                        barcode=variant_barcode[:80],
-                        purchase_price=purchase_price,
-                        sale_price=sale_price,
-                        average_cost=cost_price,
-                        is_active=_as_bool(r.get("active"), True),
+                    variant = find_reusable_variant(
+                        business,
+                        product=product,
+                        name=display_name,
+                        attributes=attributes,
+                        sku=variant_sku,
+                        barcode=variant_barcode,
                     )
-                    if opening_stock > 0 and warehouse and product.is_stocked:
-                        inventory.set_opening_stock(
-                            business=business, warehouse=warehouse, product=product,
-                            variant=variant, quantity=opening_stock,
-                            unit_cost=purchase_price, user=user,
+                    if variant is None:
+                        if not variant_sku:
+                            variant_sku = generate_sku(business)
+                        variant = ProductVariant.objects.create(
+                            business=business, product=product, name=display_name,
+                            attributes=attributes, sku=variant_sku[:60],
+                            barcode=variant_barcode[:80],
+                            purchase_price=purchase_price,
+                            sale_price=sale_price,
+                            average_cost=cost_price,
+                            is_active=_as_bool(r.get("active"), True),
                         )
-                    summary["created"] += 1
+                        summary["created"] += 1
+                    else:
+                        summary["updated"] += 1
+                    if branch_context_mode == "branch":
+                        ensure_branch_opening_stock(
+                            business=business,
+                            warehouse=warehouse,
+                            product=product,
+                            variant=variant,
+                            quantity=opening_stock,
+                            unit_cost=purchase_price,
+                            user=user,
+                            membership=context.membership,
+                            request=request,
+                        )
                     continue
 
                 _duplicate_code_exists(business, sku=sku, barcode=barcode)
@@ -1075,10 +1547,16 @@ def import_products(
                     is_active=_as_bool(r.get("active"), True),
                     is_archived=_as_bool(r.get("archived"), False),
                 )
-                if opening_stock > 0 and warehouse and product.is_stocked:
-                    inventory.set_opening_stock(
-                        business=business, warehouse=warehouse, product=product,
-                        quantity=opening_stock, unit_cost=purchase_price, user=user,
+                if branch_context_mode == "branch" and product.is_stocked:
+                    ensure_branch_opening_stock(
+                        business=business,
+                        warehouse=warehouse,
+                        product=product,
+                        quantity=opening_stock,
+                        unit_cost=purchase_price,
+                        user=user,
+                        membership=context.membership,
+                        request=request,
                     )
                 summary["created"] += 1
         except ModuleAccessDenied:
@@ -1086,6 +1564,14 @@ def import_products(
         except Exception as exc:
             errors.append((idx, str(exc)))
             summary["failed"] += 1
+    if errors:
+        transaction.set_rollback(True)
+        summary.update({
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "failed": len(rows),
+        })
     return summary, errors
 
 

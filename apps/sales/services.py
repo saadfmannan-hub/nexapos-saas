@@ -11,6 +11,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.audit import services as audit
+from apps.catalog import services as catalog_services
 from apps.catalog.models import Product, ProductVariant
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
@@ -898,6 +899,13 @@ def complete_sale(
             or not variant.is_active
         ):
             raise SaleError("Invalid variant in cart.")
+        if not catalog_services.product_is_visible_in_branch(
+            business=business,
+            product=product,
+            variant=variant,
+            branch=branch,
+        ):
+            raise SaleError("Invalid product in cart.")
         is_meter_tailoring = bool(
             product.is_tailoring_item
             and product.unit_id is not None

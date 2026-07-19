@@ -4,26 +4,27 @@
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
   <h1 class="page-title">{{ product.name }}</h1>
   <div class="d-flex gap-2">
+    <a href="{% url 'catalog:product_list' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-outline-secondary btn-sm">Back to Products</a>
     {% if module_capabilities.barcode_printing.enabled %}
-    <a href="{% url 'catalog:product_labels' product.public_id %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upc"></i> Print labels</a>
+    <a href="{% url 'catalog:product_labels' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upc"></i> Print labels</a>
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-    <a href="{% url 'catalog:product_edit' product.public_id %}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
+    <a href="{% url 'catalog:product_edit' product.public_id %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-primary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "products.archive" in business_perms %}
       {% if product.is_archived %}
-      <form method="post" action="{% url 'catalog:product_restore' product.public_id %}">
+      <form method="post" action="{% url 'catalog:product_restore' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}">
         {% csrf_token %}<button class="btn btn-success btn-sm"><i class="bi bi-arrow-counterclockwise"></i> Restore</button>
       </form>
       {% else %}
-      <form method="post" action="{% url 'catalog:product_archive' product.public_id %}"
+      <form method="post" action="{% url 'catalog:product_archive' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}"
             onsubmit="return confirm('Archive this product? It stays on old invoices but disappears from sale screens.')">
         {% csrf_token %}<button class="btn btn-outline-danger btn-sm"><i class="bi bi-archive"></i> Archive</button>
       </form>
       {% endif %}
     {% endif %}
     {% if module_capabilities.pos_core.can_write and "products.delete" in business_perms %}
-    <form method="post" action="{% url 'catalog:product_delete' product.public_id %}"
+    <form method="post" action="{% url 'catalog:product_delete' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}"
           onsubmit="return confirm('Permanently delete this product? Only possible if it was never used in any transaction.')">
       {% csrf_token %}<button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
     </form>
@@ -69,7 +70,7 @@
       </table>
       {% if module_capabilities.barcode_printing.enabled %}
       {% if product.barcode or product.sku %}
-      <div class="text-center mt-3"><img src="{% url 'catalog:product_barcode' product.public_id %}" style="max-height:70px"></div>
+      <div class="text-center mt-3"><img src="{% url 'catalog:product_barcode' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}" style="max-height:70px"></div>
       {% endif %}
       {% endif %}
     </div></div>
@@ -81,7 +82,7 @@
       <div class="card-header d-flex justify-content-between align-items-center">
         <span>Variants</span>
         {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-        <a href="{% url 'catalog:variant_create' product.public_id %}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Add variant</a>
+        <a href="{% url 'catalog:product_edit' product.public_id %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-lg"></i> Add Color / Size</a>
         {% endif %}
       </div>
       <div class="table-responsive"><table class="table table-sm table-hover mb-0">
@@ -93,7 +94,7 @@
             <td class="small">{{ v.barcode|default:"—" }}</td>
             {% if not product.is_meter_tailoring or not product.unit_id %}<td class="text-end">{{ v.sale_price }}</td>{% endif %}
             <td class="w-1">{% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-              <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
           </tr>
           {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No variants yet</td></tr>{% endfor %}
         </tbody>
@@ -102,7 +103,7 @@
     {% endif %}
 
     <div class="card mb-3">
-      <div class="card-header">Stock by warehouse</div>
+      <div class="card-header">Stock — {{ selected_warehouse.name }}</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>Warehouse</th><th>Variant</th><th class="text-end">Quantity</th></tr></thead>
         <tbody>

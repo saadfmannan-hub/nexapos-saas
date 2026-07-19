@@ -33,7 +33,7 @@
         <div class="form-check mb-3">{{ form.is_active }}
           <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label></div>
         <button class="btn btn-primary">Save variant</button>
-        <a href="{% url 'catalog:product_detail' product.public_id %}" class="btn btn-outline-secondary">Cancel</a>
+        <a href="{% url 'catalog:product_detail' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}" class="btn btn-outline-secondary">Cancel</a>
       </form>
     </div>
   </div>

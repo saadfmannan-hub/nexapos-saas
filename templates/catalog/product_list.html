@@ -2,34 +2,56 @@
 {% block title %}Products — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-  <h1 class="page-title">Products</h1>
+  <div>
+    <h1 class="page-title mb-0">Products</h1>
+    <div class="small text-secondary">
+      {% if context_ready %}{{ selected_branch.name }} — {{ selected_warehouse.name }}{% else %}Select a Branch and Warehouse to work with Products{% endif %}
+    </div>
+  </div>
   <div class="d-flex gap-2">
-    {% if module_capabilities.pos_core.enabled and "products.export" in business_perms %}
+    {% if context_ready and module_capabilities.pos_core.enabled and "products.export" in business_perms %}
     <div class="btn-group btn-group-sm">
       <button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-        <i class="bi bi-download"></i> Export</button>
+        <i class="bi bi-download"></i> Export Products</button>
       <ul class="dropdown-menu dropdown-menu-end">
         <li><a class="dropdown-item" href="{% url 'catalog:product_export' %}?format=xlsx&{{ querystring }}">Excel (.xlsx)</a></li>
         <li><a class="dropdown-item" href="{% url 'catalog:product_export' %}?format=csv&{{ querystring }}">CSV</a></li>
       </ul>
     </div>
     {% endif %}
-    {% if module_capabilities.pos_core.can_write and "products.import" in business_perms %}
-    <a href="{% url 'catalog:product_import' %}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import</a>
+    {% if context_ready and module_capabilities.pos_core.can_write and "products.import" in business_perms and "inventory.adjust" in business_perms %}
+    <a href="{% url 'catalog:product_import' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-outline-secondary btn-sm"><i class="bi bi-upload"></i> Import Products</a>
     {% endif %}
-    {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-    <a href="{% url 'catalog:product_create' %}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New product</a>
+    {% if context_ready and module_capabilities.pos_core.can_write and "products.manage" in business_perms and "inventory.adjust" in business_perms %}
+    <a href="{% url 'catalog:product_create' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> New Product</a>
     {% endif %}
   </div>
 </div>
 
 <div class="card mb-3"><div class="card-body py-2">
   <form class="row g-2 align-items-center" method="get">
-    <div class="col-md-4">
+    <div class="col-md-3">
+      {% if branch_locked %}
+      <input type="hidden" name="branch" value="{{ selected_branch.id }}">
+      <input class="form-control form-control-sm" value="{{ selected_branch.name }}" readonly aria-label="Assigned branch">
+      {% else %}
+      <select name="branch" class="form-select form-select-sm" aria-label="Select Branch" onchange="this.form.elements.warehouse.value='';this.form.submit()">
+        <option value="">Select Branch…</option>
+        {% for branch in branches %}<option value="{{ branch.id }}" {% if selected_branch.id == branch.id %}selected{% endif %}>{{ branch.name }}</option>{% endfor %}
+      </select>
+      {% endif %}
+    </div>
+    <div class="col-md-3">
+      <select name="warehouse" class="form-select form-select-sm" aria-label="Select Warehouse" {% if not selected_branch %}disabled{% endif %}>
+        <option value="">Select Warehouse…</option>
+        {% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected_warehouse.id == warehouse.id %}selected{% endif %}>{{ warehouse.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
       <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm"
              placeholder="Search name, SKU, barcode…">
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
       <select name="category" class="form-select form-select-sm">
         <option value="">All categories</option>
         {% for c in categories %}
@@ -47,7 +69,7 @@
     </div>
     <div class="col-auto">
       <button class="btn btn-sm btn-primary">Filter</button>
-      <a href="{% url 'catalog:product_list' %}" class="btn btn-sm btn-outline-secondary">Clear</a>
+      <a href="{% url 'catalog:product_list' %}{% if selected_branch %}?branch={{ selected_branch.id }}{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}{% endif %}" class="btn btn-sm btn-outline-secondary">Clear</a>
     </div>
     <div class="col-auto ms-auto small text-secondary">
       {{ product_count }}{% if product_limit %} / {{ product_limit }} products on plan{% endif %}
@@ -68,7 +90,7 @@
         {% for p in page_obj %}
         <tr>
           <td>
-            <a href="{% url 'catalog:product_detail' p.public_id %}" class="fw-semibold text-reset">{{ p.name }}</a>
+            <a href="{% url 'catalog:product_detail' p.public_id %}?branch={{ selected_branch.id }}{% if selected_warehouse %}&warehouse={{ selected_warehouse.id }}{% endif %}" class="fw-semibold text-reset">{{ p.name }}</a>
             {% if p.has_variants %}<span class="badge text-bg-info ms-1">Variants</span>{% endif %}
             {% if p.product_type == "service" %}<span class="badge text-bg-secondary ms-1">Service</span>{% endif %}
           </td>
@@ -84,8 +106,8 @@
               {% elif p.is_active %}<span class="badge badge-status bs-active">Active</span>
               {% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
           <td class="text-nowrap">
-            {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-            <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:product_edit' p.public_id %}" title="Edit"><i class="bi bi-pencil"></i></a>
+            {% if context_ready and module_capabilities.pos_core.can_write and "products.manage" in business_perms and "inventory.adjust" in business_perms %}
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:product_edit' p.public_id %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" title="Edit"><i class="bi bi-pencil"></i></a>
             {% endif %}
           </td>
         </tr>
@@ -94,8 +116,8 @@
           <div class="empty-state">
             <i class="bi bi-box-seam d-block mb-2"></i>
             No products yet.
-            {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-            <div class="mt-2"><a href="{% url 'catalog:product_create' %}" class="btn btn-sm btn-primary">Add your first product</a></div>
+            {% if context_ready and module_capabilities.pos_core.can_write and "products.manage" in business_perms and "inventory.adjust" in business_perms %}
+            <div class="mt-2"><a href="{% url 'catalog:product_create' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-sm btn-primary">Add your first Product</a></div>
             {% endif %}
           </div>
         </td></tr>

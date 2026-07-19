@@ -6,9 +6,27 @@
 {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
   <form method="post" enctype="multipart/form-data"
       x-data="productForm('{{ form.product_type.value|default:'standard' }}', {% if form.auto_generate_sku.value %}true{% else %}false{% endif %}, {% if tailoring_enabled and form.is_tailoring_item.value %}true{% else %}false{% endif %}, '{{ form.unit.value|default_if_none:''|escapejs }}', {% if form.track_inventory.value %}true{% else %}false{% endif %}, {% if product and product.unit and product.unit.is_meter and not product.is_tailoring_item %}true{% else %}false{% endif %})">{% csrf_token %}
+<input type="hidden" name="branch" value="{{ selected_branch.id }}">
+{% if not form.opening_warehouse and selected_warehouse %}<input type="hidden" name="warehouse" value="{{ selected_warehouse.id }}">{% endif %}
 <div class="row g-3">
+  <div class="col-12">
+    <div class="card"><div class="card-header">Branch &amp; Warehouse</div><div class="card-body py-2">
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label">Branch</label>
+          <input class="form-control" value="{{ selected_branch.name }}" readonly aria-label="Assigned branch">
+        </div>
+        {% if not form.opening_warehouse %}
+        <div class="col-md-6">
+          <label class="form-label">Warehouse</label>
+          <input class="form-control" value="{{ selected_warehouse.name }}" readonly aria-label="Selected warehouse">
+        </div>
+        {% endif %}
+      </div>
+    </div></div>
+  </div>
   <div class="col-lg-6">
-    <div class="card"><div class="card-header">Basics</div><div class="card-body">
+    <div class="card"><div class="card-header">Basic Product Information</div><div class="card-body">
       {% include "components/form_field.html" with field=form.name %}
       <div class="row">
         <div class="col-6">{% include "components/form_field.html" with field=form.product_type %}</div>
@@ -53,7 +71,7 @@
         Purchase cost is retained for internal costing. The garment charge is entered at POS and is not calculated per meter.
       </div>
     </div></div>
-    <div class="card mt-3"><div class="card-header">Inventory</div><div class="card-body">
+    <div class="card mt-3"><div class="card-header">Stock</div><div class="card-body">
       <div class="form-check mb-2" x-show="!isMeterUnit()" x-cloak>{{ form.track_inventory }}
         <label class="form-check-label" for="{{ form.track_inventory.id_for_label }}">Track inventory for this product</label></div>
       {% if tailoring_enabled %}
@@ -110,7 +128,7 @@
   <!-- ============================ VARIANTS ============================ -->
   <div class="col-12" x-show="productType === 'variant'" x-cloak>
     <div class="card border-primary">
-      <div class="card-header bg-primary-subtle">Variants</div>
+        <div class="card-header bg-primary-subtle">Colors / Sizes</div>
       <div class="card-body">
 
         {% if product and product.variants.exists %}
@@ -125,7 +143,7 @@
                 <td class="small">{{ v.barcode|default:"—" }}</td>
                 <td class="text-end" x-show="!isMeterUnit()" x-cloak>{{ v.sale_price }}</td>
                 <td class="text-end"><a class="btn btn-sm btn-outline-secondary"
-                    href="{% url 'catalog:variant_edit' product.public_id v.public_id %}">Edit</a></td>
+                    href="{% url 'catalog:variant_edit' product.public_id v.public_id %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}">Edit</a></td>
               </tr>
               {% endfor %}
             </tbody>
@@ -138,7 +156,7 @@
         <!-- Variant type / value builder -->
         <div class="row g-3">
           <div class="col-lg-5">
-            <label class="form-label">Variant types &amp; values</label>
+            <label class="form-label">Add Colors or Sizes</label>
             <template x-for="(t, ti) in types" :key="ti">
               <div class="border rounded p-2 mb-2">
                 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -156,7 +174,7 @@
                 </div>
                 <div class="input-group input-group-sm" style="max-width:320px">
                   <input type="text" class="form-control" x-model="t._newValue"
-                         @keydown.enter.prevent="addValue(ti)" placeholder="Add value (e.g. M) and press Enter">
+                         @keydown.enter.prevent="addValue(ti)" placeholder="Add value (e.g. Color 1 or 10.5)">
                   <button type="button" class="btn btn-outline-secondary" @click="addValue(ti)">Add</button>
                 </div>
               </div>
@@ -165,20 +183,20 @@
             <div class="d-flex gap-2 align-items-start">
               <select class="form-select form-select-sm" style="max-width:150px" x-model="newTypeChoice">
                 <option value="Size">Size</option>
-                <option value="Color">Color</option>
+                <option value="Color Code">Color Code</option>
                 <option value="Material">Material</option>
                 <option value="Custom">Custom</option>
               </select>
               <input type="text" class="form-control form-control-sm" style="max-width:150px"
                      x-show="newTypeChoice === 'Custom'" x-model="newTypeCustom" placeholder="Type name">
-              <button type="button" class="btn btn-sm btn-outline-primary" @click="addType()">Add type</button>
+              <button type="button" class="btn btn-sm btn-outline-primary" @click="addType()" x-text="newTypeChoice === 'Size' ? 'Add Size' : 'Add Color'"></button>
             </div>
           </div>
 
           <div class="col-lg-7">
             <div class="d-flex justify-content-between align-items-center mb-2">
               <label class="form-label mb-0">Generated variants</label>
-              <button type="button" class="btn btn-sm btn-secondary" @click="generateVariants()">Generate Variants</button>
+              <button type="button" class="btn btn-sm btn-secondary" @click="generateVariants()">Add Rows</button>
             </div>
             <div class="table-responsive" x-show="variants.length">
               <table class="table table-sm align-middle">
@@ -203,7 +221,7 @@
               </table>
             </div>
             <p class="text-muted small" x-show="!variants.length">
-              Add variant types and values on the left, then click <strong>Generate Variants</strong>.</p>
+              Add Color Codes or Sizes on the left, then click <strong>Add Rows</strong>.</p>
           </div>
         </div>
 
@@ -214,8 +232,8 @@
 </div>
 
 <div class="mt-3">
-  <button class="btn btn-primary">Save product</button>
-  <a href="{% url 'catalog:product_list' %}" class="btn btn-outline-secondary">Cancel</a>
+  <button class="btn btn-primary">Save Product</button>
+  <a href="{% url 'catalog:product_list' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-outline-secondary">Cancel</a>
 </div>
 </form>
 
@@ -254,6 +272,7 @@ function productForm(initialType, initialAutoSku, initialIsTailoring, initialUni
       if (!this.isMeterUnit()) return;
       this.isTailoring = true;
       this.tracksInventory = true;
+      if (!this.types.length) this.newTypeChoice = 'Color Code';
       if (!['standard', 'variant'].includes(this.productType)) {
         this.productType = 'standard';
       }
