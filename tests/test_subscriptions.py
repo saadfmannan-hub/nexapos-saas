@@ -116,6 +116,24 @@ class LimitTests(TenantTestCase):
 
 
 class StatusTests(TenantTestCase):
+    def test_subscription_status_shows_official_contact_links(self):
+        self.client.force_login(self.owner_a)
+        response = self.client.get(reverse("subscriptions:status"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "nexabusinesssolutions360@gmail.com")
+        self.assertContains(
+            response,
+            'href="mailto:nexabusinesssolutions360@gmail.com"',
+        )
+        self.assertContains(response, 'href="https://wa.me/96890124734"')
+        self.assertContains(response, "+968 90124734")
+        self.assertContains(
+            response,
+            "Bank transfer and manual activation are supported.",
+        )
+        self.assertNotContains(response, "support@example.com")
+
     def test_trial_expiry_blocks_new_sales(self):
         self.allow_no_shift()
         sub = self.business_a.subscription

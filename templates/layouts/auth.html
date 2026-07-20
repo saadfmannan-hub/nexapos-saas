@@ -8,13 +8,18 @@
   <link rel="stylesheet" href="{% static 'css/bootstrap.min.css' %}">
   <link rel="stylesheet" href="{% static 'css/bootstrap-icons.min.css' %}">
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <link rel="stylesheet" href="{% static 'css/auth.css' %}">
 </head>
 <body class="auth-body">
-  <div class="container py-4 d-flex justify-content-center">
+  <div class="container auth-layout-container py-4 d-flex justify-content-center">
     <div class="auth-shell">
-      <div class="text-center text-white mb-4">
-        <h3 class="fw-bold mb-1 d-inline-flex align-items-center gap-2"><span class="auth-brand-mark d-inline-block"></span>{{ PRODUCT_NAME }}</h3>
-        <div class="opacity-75 small">{% block tagline %}Point of Sale &amp; Business Management{% endblock %}</div>
+      <div class="auth-brand text-center text-white mb-4">
+        <img class="auth-brand-logo"
+             src="{% static 'images/02_Nexa_Logo_Only-removebg-preview.png' %}"
+             alt="Nexa Business Solutions logo"
+             width="132" height="132">
+        <h1 class="auth-brand-title fw-bold mb-1">{{ PRODUCT_NAME }}</h1>
+        <div class="auth-brand-subtitle">{% block tagline %}Point of Sale &amp; Business Management{% endblock %}</div>
       </div>
       <div class="auth-card card shadow-lg border-0">
         <div class="card-body p-4">

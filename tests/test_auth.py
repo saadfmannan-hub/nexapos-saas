@@ -1,4 +1,5 @@
 """Authentication and registration tests."""
+from django.contrib.staticfiles import finders
 from django.test import TestCase
 from django.urls import reverse
 
@@ -48,6 +49,20 @@ class RegistrationTests(TestCase):
 
 
 class LoginTests(TenantTestCase):
+    def test_login_uses_official_nexa_branding(self):
+        response = self.client.get(reverse("accounts:login"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "NexaPOS")
+        self.assertContains(response, "Point of Sale &amp; Business Management")
+        self.assertContains(
+            response,
+            "images/02_Nexa_Logo_Only-removebg-preview.png",
+        )
+        self.assertContains(response, 'class="auth-brand-logo"')
+        self.assertIsNotNone(
+            finders.find("images/02_Nexa_Logo_Only-removebg-preview.png")
+        )
+
     def test_login_has_no_public_registration_or_reset_links(self):
         response = self.client.get(reverse("accounts:login"))
         self.assertEqual(response.status_code, 200)
