@@ -97,8 +97,8 @@
         <div class="col-md-6">
           <table class="table table-sm small mb-0">
             <tr><th>Trial ends</th><td>{{ sub.trial_ends_at|date:"Y-m-d"|default:"-" }}</td></tr>
-            <tr><th>Period start</th><td>{{ sub.current_period_start|date:"Y-m-d"|default:"-" }}</td></tr>
-            <tr><th>Period end</th><td>{{ sub.current_period_end|date:"Y-m-d"|default:"-" }}</td></tr>
+            <tr><th>Period start</th><td>{{ sub.current_period_start_on|date:"Y-m-d"|default:"-" }}</td></tr>
+            <tr><th>Period end</th><td>{{ sub.current_period_end_on|date:"Y-m-d"|default:"-" }}</td></tr>
             <tr><th>Grace days</th><td>{{ sub.grace_days }}</td></tr>
             <tr><th>Monthly price</th><td>{{ sub.plan.monthly_price }} {{ sub.plan.currency_code }}</td></tr>
             <tr><th>Annual price</th><td>{{ sub.plan.annual_price }} {{ sub.plan.currency_code }}</td></tr>

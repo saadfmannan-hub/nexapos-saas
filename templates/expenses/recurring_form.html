@@ -7,6 +7,7 @@
     <div class="card-body">
       <form method="post">{% csrf_token %}
         {% include "components/form_field.html" with field=form.name %}
+        {% include "components/form_field.html" with field=form.branch %}
         {% include "components/form_field.html" with field=form.category %}
         <div class="row">
           <div class="col-6">{% include "components/form_field.html" with field=form.default_amount %}</div>

@@ -12,6 +12,7 @@ PERMISSIONS = {
     # Dashboard & reports
     "dashboard.view": _("View dashboard"),
     "reports.view": _("View reports"),
+    "reports.sales": _("View sales reports"),
     "reports.financial": _("View financial reports"),
     "reports.export": _("Export reports"),
     "profit.view": _("View profit figures"),
@@ -85,7 +86,7 @@ DEFAULT_ROLES = {
     },
     "Branch Manager": {
         "permissions": [
-            "dashboard.view", "reports.view", "reports.export", "profit.view",
+            "dashboard.view", "reports.view", "reports.sales", "reports.export", "profit.view",
             "sales.view", "sales.create", "sales.void", "sales.refund",
             "sales.discount", "sales.credit", "products.view", "products.export",
             "inventory.view", "inventory.export", "inventory.import",
@@ -113,13 +114,13 @@ DEFAULT_ROLES = {
     "Workshop Manager": {
         "permissions": [
             "sales.view", "products.view", "customers.view",
-            "reports.view", "reports.export", "workshop.fabric_actual",
+            "reports.view", "reports.sales", "reports.export", "workshop.fabric_actual",
             "notifications.view",
         ],
     },
     "Accountant": {
         "permissions": [
-            "dashboard.view", "reports.view", "reports.financial",
+            "dashboard.view", "reports.view", "reports.sales", "reports.financial",
             "reports.export", "profit.view", "cost.view", "sales.view",
             "purchases.view", "suppliers.view", "customers.view",
             "customers.payments", "expenses.view", "expenses.manage",
@@ -142,7 +143,7 @@ DEFAULT_ROLES = {
     },
     "Auditor": {
         "permissions": [
-            "dashboard.view", "reports.view", "reports.financial",
+            "dashboard.view", "reports.view", "reports.sales", "reports.financial",
             "reports.export", "profit.view", "cost.view", "sales.view",
             "purchases.view", "suppliers.view", "customers.view",
             "expenses.view", "inventory.view", "audit.view",

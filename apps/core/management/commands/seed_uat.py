@@ -657,6 +657,7 @@ class Command(BaseCommand):
         recurring_templates = [
             RecurringExpenseTemplate.objects.create(
                 business=business,
+                branch=al_hail,
                 name="Al Hail Monthly Rent",
                 category=rent_category,
                 default_amount=D("950.000"),
@@ -666,6 +667,7 @@ class Command(BaseCommand):
             ),
             RecurringExpenseTemplate.objects.create(
                 business=business,
+                branch=mabelah,
                 name="Monthly Staff Salaries",
                 category=salaries_category,
                 default_amount=D("2400.000"),

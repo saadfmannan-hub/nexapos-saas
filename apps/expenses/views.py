@@ -41,6 +41,12 @@ class ExpenseForm(TenantStyledModelForm):
         if membership is not None and membership.allowed_branch_ids is not None:
             branches = branches.filter(id__in=membership.allowed_branch_ids)
         self.fields["branch"].queryset = branches
+        branch_choices = list(branches[:2])
+        if not self.instance.pk and len(branch_choices) == 1:
+            self.initial["branch"] = branch_choices[0].pk
+            self.fields["branch"].disabled = True
+        elif self.instance.pk and len(branch_choices) == 1:
+            self.fields["branch"].disabled = True
         self.fields["category"].queryset = ExpenseCategory.objects.for_business(business).filter(is_active=True)
         self.fields["supplier"].queryset = Supplier.objects.for_business(business).filter(is_active=True)
         self.fields["supplier"].required = False
@@ -73,8 +79,8 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
     class Meta:
         model = RecurringExpenseTemplate
         fields = [
-            "name", "category", "default_amount", "due_day", "start_date",
-            "end_date", "notes", "is_active",
+            "name", "branch", "category", "default_amount", "due_day",
+            "start_date", "end_date", "notes", "is_active",
         ]
         labels = {
             "name": "Expense name",
@@ -92,6 +98,24 @@ class RecurringExpenseTemplateForm(TenantStyledModelForm):
 
     def __init__(self, business, *args, membership=None, **kwargs):
         super().__init__(business, *args, **kwargs)
+        branches = Branch.objects.for_business(business).filter(is_active=True)
+        if membership is not None and membership.allowed_branch_ids is not None:
+            branches = branches.filter(id__in=membership.allowed_branch_ids)
+        if self.instance.pk and self.instance.branch_id:
+            branches = Branch.objects.for_business(business).filter(
+                Q(is_active=True) | Q(pk=self.instance.branch_id)
+            )
+            if membership is not None and membership.allowed_branch_ids is not None:
+                branches = branches.filter(id__in=membership.allowed_branch_ids)
+        branches = branches.order_by("name")
+        self.fields["branch"].queryset = branches
+        self.fields["branch"].required = True
+        branch_choices = list(branches[:2])
+        if not self.instance.pk and len(branch_choices) == 1:
+            self.initial["branch"] = branch_choices[0].pk
+            self.fields["branch"].disabled = True
+        elif self.instance.pk and len(branch_choices) == 1:
+            self.fields["branch"].disabled = True
         categories = ExpenseCategory.objects.for_business(business)
         if self.instance.pk and self.instance.category_id:
             categories = categories.filter(
@@ -131,6 +155,23 @@ def _expenses_for_request(request, queryset=None):
     return queryset
 
 
+def _branches_for_request(request):
+    queryset = Branch.objects.for_business(request.business).filter(is_active=True)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        queryset = queryset.filter(id__in=allowed_branch_ids)
+    return queryset.order_by("name")
+
+
+def _recurring_templates_for_request(request, queryset=None):
+    queryset = queryset if queryset is not None else RecurringExpenseTemplate.objects.all()
+    queryset = queryset.for_business(request.business)
+    allowed_branch_ids = request.membership.allowed_branch_ids
+    if allowed_branch_ids is not None:
+        queryset = queryset.filter(branch_id__in=allowed_branch_ids)
+    return queryset
+
+
 @module_permission_required(
     "expenses", "expenses.view", action=AccessAction.READ
 )
@@ -152,6 +193,9 @@ def expense_list(request):
     category_id = request.GET.get("category", "")
     if category_id.isdigit():
         qs = qs.filter(category_id=category_id)
+    branch_id = request.GET.get("branch", "")
+    if branch_id.isdigit():
+        qs = qs.filter(branch_id=branch_id)
     date_from, date_to = resolve_date_range(request.GET, request.business)
     qs = qs.filter(
         expense_date__gte=date_from,
@@ -163,11 +207,13 @@ def expense_list(request):
     page_obj = paginator.get_page(request.GET.get("page"))
     categories = ExpenseCategory.objects.for_business(request.business)
     fixed_templates = (
-        RecurringExpenseTemplate.objects.for_business(request.business)
-        .select_related("category")
+        _recurring_templates_for_request(request)
+        .select_related("category", "branch")
         .annotate(generated_count=Count("generated_expenses"))
         .order_by("name", "id")
     )
+    if branch_id.isdigit():
+        fixed_templates = fixed_templates.filter(branch_id=branch_id)
     querystring = date_range_querystring(request.GET, date_from, date_to)
     return render(request, "expenses/list.html", {
         "page_obj": page_obj, "q": q, "total": total, "categories": categories,
@@ -177,6 +223,7 @@ def expense_list(request):
         "can_approve": request.membership.has_perm("expenses.approve"),
         "can_manage": request.membership.has_perm("expenses.manage"),
         "fixed_templates": fixed_templates,
+        "branches": _branches_for_request(request),
     })
 
 
@@ -301,7 +348,7 @@ def recurring_template_form(request, public_id=None):
     instance = None
     if public_id:
         instance = get_tenant_object(
-            RecurringExpenseTemplate,
+            _recurring_templates_for_request(request),
             request.business,
             public_id=public_id,
         )
@@ -309,6 +356,7 @@ def recurring_template_form(request, public_id=None):
         request.business,
         request.POST or None,
         instance=instance,
+        membership=request.membership,
     )
     if request.method == "POST" and form.is_valid():
         template = form.save(commit=False)
@@ -337,7 +385,7 @@ def recurring_template_form(request, public_id=None):
 )
 def recurring_template_action(request, public_id, action):
     template = get_tenant_object(
-        RecurringExpenseTemplate,
+        _recurring_templates_for_request(request),
         request.business,
         public_id=public_id,
     )
@@ -369,7 +417,7 @@ def recurring_template_action(request, public_id, action):
 )
 def recurring_template_delete(request, public_id):
     template = get_tenant_object(
-        RecurringExpenseTemplate,
+        _recurring_templates_for_request(request),
         request.business,
         public_id=public_id,
     )
@@ -389,7 +437,10 @@ def recurring_template_delete(request, public_id):
     try:
         with transaction.atomic():
             template = get_tenant_object(
-                RecurringExpenseTemplate.objects.select_for_update(),
+                _recurring_templates_for_request(
+                    request,
+                    RecurringExpenseTemplate.objects.select_for_update(),
+                ),
                 request.business,
                 public_id=public_id,
             )

@@ -27,7 +27,12 @@ from django.db.models import (
 from django.db.models.functions import Coalesce, Greatest, Round
 from django.utils.dateparse import parse_date
 
-from apps.core.date_ranges import business_localdate, business_timezone
+from apps.core.date_ranges import (
+    business_localdate,
+    business_localtime,
+    business_timezone,
+    filter_business_date_range,
+)
 
 ZERO = Decimal("0")
 
@@ -194,10 +199,13 @@ def _sales_base(business, f, exclude_voided=True):
     qs = Sale.objects.for_business(business).exclude(status="draft")
     if exclude_voided:
         qs = qs.exclude(status="voided")
-    if f.get("date_from"):
-        qs = qs.filter(sale_date__date__gte=f["date_from"])
-    if f.get("date_to"):
-        qs = qs.filter(sale_date__date__lte=f["date_to"])
+    qs = filter_business_date_range(
+        qs,
+        business,
+        field_name="sale_date",
+        date_from=f.get("date_from"),
+        date_to=f.get("date_to"),
+    )
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
     allowed_branch_ids = f.get("allowed_branch_ids")
@@ -397,9 +405,12 @@ def current_year_financial_summary(
         )
         total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
 
-    returns = SaleReturn.objects.for_business(business).filter(
-        created_at__date__gte=year_start,
-        created_at__date__lte=today,
+    returns = filter_business_date_range(
+        SaleReturn.objects.for_business(business),
+        business,
+        field_name="created_at",
+        date_from=year_start,
+        date_to=today,
     )
     returns = _scope_to_membership_branches(
         returns,
@@ -503,7 +514,7 @@ def sales_summary(business, f):
         received = payments["bank"] + payments["card"] + payments["cash"]
         receivable = _money(sale.net_total - received)
         rows.append([
-            sale.sale_date.date(),
+            business_localtime(business, value=sale.sale_date).date(),
             sale.invoice_number,
             _money(sale.net_total),
             _money(payments["bank"]),
@@ -617,7 +628,9 @@ def sales_detailed(business, f):
         )
         rows.append([
             sale.invoice_number,
-            sale.sale_date.strftime("%Y-%m-%d %H:%M"),
+            business_localtime(
+                business, value=sale.sale_date
+            ).strftime("%Y-%m-%d %H:%M"),
             sale.customer.full_name,
             sale.branch.name,
             sale.cashier.full_name,
@@ -802,7 +815,7 @@ def payment_methods_report(business, f):
         payments = _payment_breakdown(sale)
         total_received = payments["cash"] + payments["card"] + payments["bank"]
         rows.append([
-            sale.sale_date.date(),
+            business_localtime(business, value=sale.sale_date).date(),
             sale.invoice_number,
             sale.customer.full_name,
             sale.customer.mobile or "-",
@@ -828,7 +841,8 @@ def payment_methods_report(business, f):
 
 def voided_sales(business, f):
     qs = _sales_base(business, f, exclude_voided=False).filter(status="voided")
-    rows = [[s.invoice_number, s.sale_date.strftime("%Y-%m-%d %H:%M"),
+    rows = [[s.invoice_number, business_localtime(
+              business, value=s.sale_date).strftime("%Y-%m-%d %H:%M"),
              s.total, s.voided_by.full_name if s.voided_by else "",
              s.void_reason] for s in qs]
     return {"columns": ["Invoice", "Date", "Total", "Voided by", "Reason"],
@@ -841,10 +855,13 @@ def returns_report(business, f):
     qs = SaleReturnItem.objects.for_business(business).select_related(
         "sale_return__sale", "sale_return__customer", "sale_return__processed_by",
         "sale_item")
-    if f.get("date_from"):
-        qs = qs.filter(sale_return__created_at__date__gte=f["date_from"])
-    if f.get("date_to"):
-        qs = qs.filter(sale_return__created_at__date__lte=f["date_to"])
+    qs = filter_business_date_range(
+        qs,
+        business,
+        field_name="sale_return__created_at",
+        date_from=f.get("date_from"),
+        date_to=f.get("date_to"),
+    )
     if f.get("branch_id"):
         qs = qs.filter(sale_return__branch_id=f["branch_id"])
     allowed_branch_ids = f.get("allowed_branch_ids")
@@ -860,7 +877,9 @@ def returns_report(business, f):
     for item in qs.order_by("-sale_return__created_at", "sale_item__product_name"):
         sale_return = item.sale_return
         rows.append([
-            sale_return.created_at.strftime("%Y-%m-%d"),
+            business_localtime(
+                business, value=sale_return.created_at
+            ).strftime("%Y-%m-%d"),
             sale_return.return_number,
             sale_return.sale.invoice_number,
             sale_return.customer.full_name,
@@ -1599,7 +1618,7 @@ def customer_receivables(business, f):
             sale.customer.full_name,
             sale.customer.mobile or "-",
             sale.invoice_number,
-            sale.sale_date.date(),
+            business_localtime(business, value=sale.sale_date).date(),
             _money(sale.net_total),
             paid,
             receivable,
@@ -2021,3 +2040,5 @@ REPORT_GROUPS = [
                    "expenses"]),
     ("Registers", ["shifts"]),
 ]
+
+SALES_REPORT_KEYS = frozenset(REPORT_GROUPS[0][1])

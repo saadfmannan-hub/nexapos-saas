@@ -13,6 +13,7 @@ from django.utils import timezone
 from apps.audit import services as audit
 from apps.catalog import services as catalog_services
 from apps.catalog.models import Product, ProductVariant
+from apps.core.date_ranges import business_localdate
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
@@ -1273,7 +1274,7 @@ def complete_sale(
                 continue
         SalePayment.objects.create(
             business=business, sale=sale, method=p["method"],
-            amount=amount, payment_date=timezone.localdate(),
+            amount=amount, payment_date=business_localdate(business),
             reference=p["reference"], received_by=cashier, shift=shift,
         )
 
@@ -1376,7 +1377,7 @@ def add_sale_payment(
         sale=sale,
         method=method,
         amount=amount,
-        payment_date=payment_date or timezone.localdate(),
+        payment_date=payment_date or business_localdate(sale.business),
         reference=reference[:120],
         notes=notes[:300],
         received_by=user,

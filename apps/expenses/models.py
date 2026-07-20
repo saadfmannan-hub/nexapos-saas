@@ -31,6 +31,15 @@ class ExpenseCategory(TenantModel):
 
 class RecurringExpenseTemplate(TenantModel):
     name = models.CharField(max_length=160)
+    # Nullable only so legacy templates can be migrated conservatively. New
+    # templates require a permitted branch through the form/service layer.
+    branch = models.ForeignKey(
+        "branches.Branch",
+        on_delete=models.PROTECT,
+        related_name="recurring_expense_templates",
+        null=True,
+        blank=True,
+    )
     category = models.ForeignKey(
         ExpenseCategory,
         on_delete=models.PROTECT,
@@ -72,6 +81,9 @@ class RecurringExpenseTemplate(TenantModel):
     def clean(self):
         super().clean()
         errors = {}
+        if self.branch_id and self.business_id:
+            if self.branch.business_id != self.business_id:
+                errors["branch"] = "Select a branch from this business."
         if self.category_id and self.business_id:
             if self.category.business_id != self.business_id:
                 errors["category"] = "Select a category from this business."

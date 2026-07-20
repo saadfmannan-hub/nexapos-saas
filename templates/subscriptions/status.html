@@ -14,7 +14,8 @@
           </div>
           <ul class="list-unstyled small text-secondary mb-3">
             {% if subscription.trial_ends_at %}<li>Trial ends: <strong>{{ subscription.trial_ends_at|date:"Y-m-d" }}</strong></li>{% endif %}
-            {% if subscription.current_period_end %}<li>Current period ends: <strong>{{ subscription.current_period_end|date:"Y-m-d" }}</strong></li>{% endif %}
+            {% if subscription.current_period_end %}<li>Current period ends: <strong>{{ subscription.current_period_end_on|date:"Y-m-d" }}</strong></li>{% endif %}
+            <li>Days remaining: <strong>{{ subscription.days_remaining }}</strong></li>
             <li>Billing cycle: {{ subscription.get_billing_cycle_display }}</li>
           </ul>
           {% if not subscription.is_operational %}

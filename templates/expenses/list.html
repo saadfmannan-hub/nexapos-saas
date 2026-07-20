@@ -31,6 +31,12 @@
           {% for value, label in statuses %}<option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </div>
+      <div class="col-lg-2 col-md-4">
+        <select name="branch" class="form-select form-select-sm">
+          <option value="">All branches</option>
+          {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+        </select>
+      </div>
       <div class="col-lg-2 col-md-4"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
       <div class="col-lg-2 col-md-4"><input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm" aria-label="To date"></div>
       <div class="col-auto"><button class="btn btn-sm btn-primary">Filter</button>
@@ -92,7 +98,7 @@
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead><tr>
-          <th>Expense Name</th><th>Category</th><th class="text-end">Monthly Amount</th>
+          <th>Expense Name</th><th>Branch</th><th>Category</th><th class="text-end">Monthly Amount</th>
           <th class="text-center">Due Day</th><th>Start Date</th><th>End Date</th>
           <th>Status</th><th class="text-end">Actions</th>
         </tr></thead>
@@ -100,6 +106,7 @@
           {% for item in fixed_templates %}
           <tr>
             <td class="fw-semibold">{{ item.name }}</td>
+            <td>{{ item.branch.name|default:"Legacy - branch required" }}</td>
             <td>{{ item.category.name }}</td>
             <td class="text-end fw-semibold text-nowrap">{{ item.default_amount }} {{ current_business.currency_display }}</td>
             <td class="text-center">{{ item.due_day }}</td>
@@ -125,7 +132,7 @@
             </td>
           </tr>
           {% empty %}
-          <tr><td colspan="8"><div class="empty-state"><i class="bi bi-calendar2-month d-block mb-2"></i>No fixed expenses added.</div></td></tr>
+          <tr><td colspan="9"><div class="empty-state"><i class="bi bi-calendar2-month d-block mb-2"></i>No fixed expenses added.</div></td></tr>
           {% endfor %}
         </tbody>
       </table>

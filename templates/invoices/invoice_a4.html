@@ -184,12 +184,8 @@
       {% if settings_obj.show_logo_on_invoice and business.logo %}
         <img src="{{ business.logo.url }}" style="max-height:50px;margin-bottom:6px"><br>
       {% endif %}
-      <div class="brand-name">{{ business.name }}</div>
-      {% if business.legal_name %}<div class="muted">{{ business.legal_name }}</div>{% endif %}
       <div class="muted">
-        {{ sale.branch.name }}{% if sale.branch.address %} | {{ sale.branch.address }}{% endif %}<br>
-        {% if business.phone %}Phone: {{ business.phone }}{% endif %}{% if business.phone and business.email %} | {% endif %}{% if business.email %}{{ business.email }}{% endif %}<br>
-        {% if show_vat and vat_number %}VAT No: {{ vat_number }}{% endif %}
+        {% include "invoices/_commercial_header.html" %}
       </div>
     </td>
     <td class="doc-cell">
@@ -206,7 +202,7 @@
     <td>
       <div class="info-title">Invoice</div>
       <div class="info-value">{{ sale.invoice_number }}</div>
-      <div class="muted">{{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+      <div class="muted">{{ sale_local_datetime|date:"Y-m-d H:i" }}</div>
     </td>
     <td>
       <div class="info-title">Customer</div>
@@ -271,7 +267,7 @@
             <td>
               <strong>{{ p.method.name }}</strong>
               <div class="muted">
-                {{ p.payment_date|default:p.created_at|date:"Y-m-d" }}
+                {{ p.print_date|date:"Y-m-d" }}
                 {% if p.reference %} | Ref: {{ p.reference }}{% endif %}
                 {% if p.received_by %} | By: {{ p.received_by.full_name }}{% endif %}
               </div>
@@ -293,7 +289,7 @@
             <td>
               <strong>{{ r.return_number }}</strong>
               <div class="muted">
-                {{ r.created_at|date:"Y-m-d H:i" }} | {{ r.display_returned_quantity }} returned |
+                {{ r.print_datetime|date:"Y-m-d H:i" }} | {{ r.display_returned_quantity }} returned |
                 {{ r.get_refund_method_display }}
                 {% if r.processed_by %} | By: {{ r.processed_by.full_name }}{% endif %}
               </div>

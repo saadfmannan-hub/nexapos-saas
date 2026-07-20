@@ -9,13 +9,18 @@ longer valid (membership revoked / business inactive) it falls back to
 the user's first active membership. Platform staff have no business by
 default.
 """
+from django.utils import timezone
 from django.utils.deprecation import MiddlewareMixin
+
+from apps.core.date_ranges import business_timezone
 
 SESSION_BUSINESS_KEY = "active_business_id"
 
 
 class BusinessMiddleware(MiddlewareMixin):
     def process_request(self, request):
+        # Never let a previous request's tenant timezone leak into this one.
+        timezone.deactivate()
         request.business = None
         request.membership = None
 
@@ -41,3 +46,11 @@ class BusinessMiddleware(MiddlewareMixin):
         if membership:
             request.membership = membership
             request.business = membership.business
+            timezone.activate(business_timezone(membership.business))
+
+    def process_response(self, request, response):
+        timezone.deactivate()
+        return response
+
+    def process_exception(self, request, exception):
+        timezone.deactivate()

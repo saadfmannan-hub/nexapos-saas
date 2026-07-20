@@ -1,0 +1,6 @@
+<div class="print-business-name brand-name">{% if print_header_compact %}{{ print_header.business_name|truncatechars:print_header_limit }}{% else %}{{ print_header.business_name }}{% endif %}</div>
+<div>{% if print_header_compact %}{{ print_header.branch_name|truncatechars:print_header_limit }}{% else %}{{ print_header.branch_name }}{% endif %}</div>
+{% if print_header.branch_address %}<div>{% if print_header_compact %}{{ print_header.branch_address|truncatechars:print_header_limit }}{% else %}{{ print_header.branch_address }}{% endif %}</div>{% endif %}
+{% if print_header.phone %}<div>Tel: {% if print_header_compact %}{{ print_header.phone|truncatechars:print_header_limit }}{% else %}{{ print_header.phone }}{% endif %}</div>{% endif %}
+{% if print_header.commercial_registration %}<div>CR: {% if print_header_compact %}{{ print_header.commercial_registration|truncatechars:print_header_limit }}{% else %}{{ print_header.commercial_registration }}{% endif %}</div>{% endif %}
+{% if print_header.tax_registration_number %}<div>Tax RN: {% if print_header_compact %}{{ print_header.tax_registration_number|truncatechars:print_header_limit }}{% else %}{{ print_header.tax_registration_number }}{% endif %}</div>{% endif %}

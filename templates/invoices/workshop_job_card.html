@@ -226,7 +226,7 @@
 </head>
 <body>
 {% for card in job_cards %}
-{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number job_card_sequence_label=card.job_card_sequence_label workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date %}
+{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number job_card_sequence_label=card.job_card_sequence_label workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date sale_local_datetime=card.sale_local_datetime print_header=card.print_header %}
 <div class="sheet">
   <table class="header">
     <tr>
@@ -236,8 +236,9 @@
         {% endif %}
         <div class="business-name">{{ business.name }}</div>
         <div class="muted">
-          Branch: {{ sale.branch.name }}<br>
-          {% if business.phone %}Phone: {{ business.phone }}{% else %}Phone: -{% endif %}
+          Branch: {{ print_header.branch_name }}<br>
+          {% if print_header.branch_address %}{{ print_header.branch_address }}<br>{% endif %}
+          {% if print_header.phone %}Phone: {{ print_header.phone }}{% else %}Phone: -{% endif %}
         </div>
       </td>
       <td class="doc">
@@ -263,7 +264,7 @@
       </td>
       <td>
         <div class="label">Booking Date</div>
-        <div class="value">{{ sale.sale_date|date:"Y-m-d H:i" }}</div>
+        <div class="value">{{ sale_local_datetime|date:"Y-m-d H:i" }}</div>
       </td>
       <td>
         <div class="label">Delivery Date</div>

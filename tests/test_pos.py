@@ -454,7 +454,10 @@ class PosEndpointTests(TenantTestCase):
         self.business_a.phone = "24500000"
         self.business_a.email = "accounts@example.com"
         self.business_a.address = "Main Business Address"
-        self.business_a.save(update_fields=["phone", "email", "address"])
+        self.business_a.tax_registration_number = "VAT-12345"
+        self.business_a.save(update_fields=[
+            "phone", "email", "address", "tax_registration_number",
+        ])
         sale.customer.mobile = "99001122"
         sale.customer.save(update_fields=["mobile"])
         sale.branch.address = "Branch Address"
@@ -473,13 +476,13 @@ class PosEndpointTests(TenantTestCase):
         self.assertContains(response, "TAX INVOICE")
         self.assertContains(response, "ORIGINAL COPY")
         self.assertContains(response, "24500000")
-        self.assertContains(response, "accounts@example.com")
+        self.assertNotContains(response, "accounts@example.com")
         self.assertContains(response, "Branch Address")
         self.assertNotContains(response, "Customer ID")
         self.assertNotContains(response, "INV-DISC")
         self.assertContains(response, "99001122")
         self.assertNotContains(response, "Main Business Address")
-        self.assertContains(response, "VAT No: VAT-12345")
+        self.assertContains(response, "Tax RN: VAT-12345")
         self.assertContains(response, "Invoice Discount")
         self.assertContains(response, "-10.000")
         self.assertContains(response, "Discounted Subtotal")

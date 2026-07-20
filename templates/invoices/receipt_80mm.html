@@ -17,6 +17,7 @@
   .r { text-align: right; }
   .b { font-weight: bold; }
   .lg { font-size: 11pt; }
+  .print-business-name { font-size: 11pt; font-weight: bold; }
   .xs { font-size: 8pt; }
   hr { border: none; border-top: 1px dashed #000; margin: 5px 0; }
   table { width: 100%; border-collapse: collapse; }
@@ -36,18 +37,14 @@
   {% if settings_obj.show_logo_on_invoice and business.logo %}
     <img src="{{ business.logo.url }}" style="max-height:38px"><br>
   {% endif %}
-  <span class="b lg">{{ business.name }}</span><br>
-  {{ sale.branch.name }}<br>
-  {% if sale.branch.address %}{{ sale.branch.address|truncatechars:36 }}<br>{% elif business.address %}{{ business.address|truncatechars:36 }}<br>{% endif %}
-  {% if business.phone %}Tel: {{ business.phone }}<br>{% endif %}
-  {% if show_vat and vat_number %}VAT No: {{ vat_number }}<br>{% endif %}
+  {% include "invoices/_commercial_header.html" %}
 </div>
 <hr>
 <table>
   <tr><td colspan="2" class="c b">{{ invoice_label }}</td></tr>
   <tr><td>Status</td><td class="r b">{{ invoice_status_label }}</td></tr>
   <tr><td>Invoice</td><td class="r b">{{ sale.invoice_number }}</td></tr>
-  <tr><td>Date</td><td class="r">{{ sale.sale_date|date:"Y-m-d H:i" }}</td></tr>
+  <tr><td>Date</td><td class="r">{{ sale_local_datetime|date:"Y-m-d H:i" }}</td></tr>
   <tr><td>Cashier</td><td class="r">{{ sale.cashier.full_name|truncatechars:22 }}</td></tr>
   {% if not sale.customer.is_walk_in %}
   <tr><td>Customer</td><td class="r">{{ sale.customer.full_name|truncatechars:24 }}</td></tr>
@@ -94,7 +91,7 @@
 <div class="section b">PAYMENTS</div>
 <table>
   {% for p in payments %}
-  <tr><td>{{ p.payment_date|default:p.created_at|date:"Y-m-d" }} {{ p.method.name|truncatechars:14 }}</td><td class="r">{{ p.amount }}</td></tr>
+  <tr><td>{{ p.print_date|date:"Y-m-d" }} {{ p.method.name|truncatechars:14 }}</td><td class="r">{{ p.amount }}</td></tr>
   {% if p.reference %}<tr><td colspan="2">Ref: {{ p.reference|truncatechars:30 }}</td></tr>{% endif %}
   {% if p.received_by %}<tr><td colspan="2">By: {{ p.received_by.full_name|truncatechars:30 }}</td></tr>{% endif %}
   {% empty %}
@@ -113,7 +110,7 @@
 <div class="section b">REFUNDS</div>
 <table>
   {% for r in returns %}
-  <tr><td>REFUND {{ r.created_at|date:"Y-m-d" }}</td><td class="r">-{{ r.refund_amount }}</td></tr>
+  <tr><td>REFUND {{ r.print_datetime|date:"Y-m-d" }}</td><td class="r">-{{ r.refund_amount }}</td></tr>
   <tr><td colspan="2">{{ r.display_returned_quantity }} returned - {{ r.get_refund_method_display }}</td></tr>
   {% if r.processed_by %}<tr><td colspan="2">By: {{ r.processed_by.full_name|truncatechars:30 }}</td></tr>{% endif %}
   {% endfor %}

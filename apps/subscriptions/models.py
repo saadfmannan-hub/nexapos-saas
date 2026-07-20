@@ -6,6 +6,7 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
+from apps.core.date_ranges import business_localdate, business_localtime
 from apps.core.models import TimeStampedModel
 
 
@@ -179,6 +180,22 @@ class Subscription(TimeStampedModel):
         return self.current_period_end
 
     @property
+    def current_period_start_on(self):
+        if not self.current_period_start:
+            return None
+        return business_localtime(
+            self.business, value=self.current_period_start
+        ).date()
+
+    @property
+    def current_period_end_on(self):
+        if not self.current_period_end:
+            return None
+        return business_localtime(
+            self.business, value=self.current_period_end
+        ).date()
+
+    @property
     def days_until_expiry(self):
         end = self.period_ends_on
         if not end:
@@ -234,7 +251,8 @@ class Subscription(TimeStampedModel):
         end = self.period_ends_on
         if not end:
             return None
-        return (end.date() - timezone.localdate()).days
+        end_date = business_localtime(self.business, value=end).date()
+        return (end_date - business_localdate(self.business)).days
 
     @property
     def can_access_app(self) -> bool:

@@ -10,7 +10,9 @@ from django.views.decorators.http import require_POST
 
 from apps.core.date_ranges import (
     business_localdate,
+    business_localtime,
     date_range_querystring,
+    filter_business_date_range,
     resolve_date_range,
 )
 from apps.core.mixins import get_tenant_object
@@ -39,6 +41,7 @@ from .models import (
     SaleItem,
     SaleReturn,
 )
+from .printing import build_print_header
 from .services import SaleError
 
 
@@ -1002,9 +1005,12 @@ def sale_list(request):
     if branch_id.isdigit():
         qs = qs.filter(branch_id=branch_id)
     date_from, date_to = resolve_date_range(request.GET, request.business)
-    qs = qs.filter(
-        sale_date__date__gte=date_from,
-        sale_date__date__lte=date_to,
+    qs = filter_business_date_range(
+        qs,
+        request.business,
+        field_name="sale_date",
+        date_from=date_from,
+        date_to=date_to,
     )
 
     # Delivery filters use the same business-local date as range defaults.
@@ -1264,6 +1270,10 @@ def _job_card_data(
         "priority_label": priority_label,
         "priority_class": priority_class,
         "job_delivery_date": sale.delivery_date,
+        "sale_local_datetime": business_localtime(
+            sale.business, value=sale.sale_date
+        ),
+        "print_header": build_print_header(sale, include_legal=False),
     }
 
 
@@ -1330,6 +1340,15 @@ def _invoice_context(
             }
         ]
     returns = _invoice_display_returns(returns)
+    for payment in payments:
+        payment.print_date = (
+            payment.payment_date
+            or business_localtime(sale.business, value=payment.created_at).date()
+        )
+    for sale_return in returns:
+        sale_return.print_datetime = business_localtime(
+            sale.business, value=sale_return.created_at
+        )
     settings_obj = sale.business.settings
     first_taxed_item = next((item for item in items if item.tax_rate), None)
     vat_rate = first_taxed_item.tax_rate if first_taxed_item else settings_obj.effective_vat_rate
@@ -1348,22 +1367,32 @@ def _invoice_context(
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
         "show_tailoring": show_tailoring,
         "show_credit": show_credit,
+        "sale_local_datetime": business_localtime(
+            sale.business, value=sale.sale_date
+        ),
+        "print_header": build_print_header(sale),
     }
 
 
 def _render_invoice(request, sale, template):
     is_reprint = sale.reprint_count > 0
+    is_58mm = template.endswith("receipt_58mm.html")
+    is_80mm = template.endswith("receipt_80mm.html")
     return render(
         request,
         template,
-        _invoice_context(
-            sale,
-            is_reprint=is_reprint,
-            show_tailoring=_tailoring_enabled(request),
-            show_credit=evaluate_access(
-                request, "customer_credit", action=AccessAction.READ
-            ).allowed,
-        ),
+        {
+            **_invoice_context(
+                sale,
+                is_reprint=is_reprint,
+                show_tailoring=_tailoring_enabled(request),
+                show_credit=evaluate_access(
+                    request, "customer_credit", action=AccessAction.READ
+                ).allowed,
+            ),
+            "print_header_compact": is_58mm or is_80mm,
+            "print_header_limit": 28 if is_58mm else 38,
+        },
     )
 
 
@@ -1638,9 +1667,12 @@ def return_list(request):
                        Q(sale__invoice_number__icontains=q) |
                        Q(customer__full_name__icontains=q))
     date_from, date_to = resolve_date_range(request.GET, request.business)
-    qs = qs.filter(
-        created_at__date__gte=date_from,
-        created_at__date__lte=date_to,
+    qs = filter_business_date_range(
+        qs,
+        request.business,
+        field_name="created_at",
+        date_from=date_from,
+        date_to=date_to,
     )
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))

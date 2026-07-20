@@ -23,6 +23,7 @@ from apps.accounts.models import LoginHistory, Membership, User
 from apps.audit import services as audit
 from apps.audit.models import AuditLog
 from apps.core.currencies import currency_choices, precision_for
+from apps.core.date_ranges import business_localtime, business_timezone
 from apps.subscriptions.models import Coupon, Plan, Subscription, SubscriptionPayment
 from apps.tenants.models import Business
 
@@ -41,14 +42,19 @@ def platform_admin_required(view_func):
     return wrapper
 
 
-def local_date_start(value):
-    return timezone.make_aware(datetime.combine(value, time.min))
+def local_date_start(value, business=None):
+    return timezone.make_aware(
+        datetime.combine(value, time.min),
+        business_timezone(business),
+    )
 
 
 def default_renewal_start(subscription):
     end = subscription.current_period_end if subscription else None
     if end and end > timezone.now():
-        return end.date()
+        return business_localtime(
+            subscription.business, value=end
+        ).date()
     return timezone.localdate()
 
 
@@ -294,11 +300,12 @@ def record_subscription_payment(
 
 
 @platform_admin_required
+@transaction.atomic
 def business_action(request, public_id, action):
     if request.method != "POST":
         return redirect("platformadmin:business_list")
     try:
-        business = Business.objects.get(public_id=public_id)
+        business = Business.objects.select_for_update().get(public_id=public_id)
     except Business.DoesNotExist:
         from django.http import Http404
         raise Http404 from None
@@ -344,16 +351,22 @@ def business_action(request, public_id, action):
             plan = cd["plan"]
             renewal_type = cd["renewal_type"]
             start_date = cd.get("start_date") or default_renewal_start(sub)
-            if renewal_type == "monthly":
+            explicit_end_date = cd.get("end_date")
+            if explicit_end_date:
+                end_date = explicit_end_date
+            elif renewal_type == "monthly":
                 end_date = start_date + timedelta(days=30)
-                sub.billing_cycle = "monthly"
             elif renewal_type == "annual":
                 end_date = start_date + timedelta(days=365)
-                sub.billing_cycle = "annual"
             else:
+                # The form requires this value for a custom renewal.
                 end_date = cd["end_date"]
-            period_start = local_date_start(start_date)
-            period_end = local_date_start(end_date)
+            if renewal_type == "monthly":
+                sub.billing_cycle = "monthly"
+            elif renewal_type == "annual":
+                sub.billing_cycle = "annual"
+            period_start = local_date_start(start_date, business)
+            period_end = local_date_start(end_date, business)
             old_values = {
                 "plan": sub.plan.name,
                 "status": sub.status,

@@ -71,11 +71,28 @@ def _as_date(value):
         ) from exc
 
 
-def _generation_branch(business):
-    branches = Branch.objects.for_business(business).filter(is_active=True)
-    return (
-        branches.filter(is_head_office=True).order_by("id").first()
-        or branches.order_by("id").first()
+def _generation_branch(business, template):
+    """Resolve a fixed expense branch without choosing an arbitrary branch."""
+    if template.branch_id:
+        if template.branch.business_id != business.id:
+            raise RecurringExpenseGenerationError(
+                f"Fixed expense '{template.name}' has an invalid branch."
+            )
+        return template.branch
+
+    # A sole active branch is reliable evidence for a legacy nullable template.
+    branches = list(
+        Branch.objects.for_business(business).filter(is_active=True).order_by("id")[:2]
+    )
+    if len(branches) == 1:
+        return branches[0]
+    if not branches:
+        raise RecurringExpenseGenerationError(
+            "The business has no active branch for recurring expenses."
+        )
+    raise RecurringExpenseGenerationError(
+        f"Choose a branch for legacy fixed expense '{template.name}' before "
+        "generating monthly expenses."
     )
 
 
@@ -95,18 +112,12 @@ def ensure_recurring_expenses_for_month(business, target_date):
         raise RecurringExpenseGenerationError(message)
 
     month_start, month_end = _month_bounds(target_date)
-    branch = _generation_branch(business)
-    if branch is None:
-        raise RecurringExpenseGenerationError(
-            "The business has no active branch for recurring expenses."
-        )
-
     templates = (
         RecurringExpenseTemplate.objects.select_for_update()
         .for_business(business)
         .filter(is_active=True, start_date__lte=month_end)
         .filter(Q(end_date__isnull=True) | Q(end_date__gte=month_start))
-        .select_related("category")
+        .select_related("category", "branch")
         .order_by("id")
     )
     month_last_day = month_end.day
@@ -114,6 +125,7 @@ def ensure_recurring_expenses_for_month(business, target_date):
     existing_count = 0
 
     for template in templates:
+        branch = _generation_branch(business, template)
         due_date = month_start.replace(day=min(template.due_day, month_last_day))
         expense, created = Expense.objects.get_or_create(
             business=business,

@@ -11,7 +11,9 @@ from django.shortcuts import redirect, render
 from apps.audit import services as audit
 from apps.core.date_ranges import (
     business_localdate,
+    business_timezone,
     date_range_querystring,
+    filter_business_date_range,
     resolve_date_range,
 )
 from apps.core.decorators import business_required
@@ -27,6 +29,7 @@ from .queries import (
     REPORT_GROUPS,
     REPORT_REQUIRED_MODULES,
     REPORTS,
+    SALES_REPORT_KEYS,
     current_year_financial_summary,
 )
 
@@ -190,8 +193,13 @@ def dashboard(request):
         sales = sales.filter(branch_id__in=allowed_branch_ids)
     if allowed_warehouse_ids is not None:
         sales = sales.filter(warehouse_id__in=allowed_warehouse_ids)
-    period = sales.filter(sale_date__date__gte=date_from,
-                          sale_date__date__lte=date_to)
+    period = filter_business_date_range(
+        sales,
+        business,
+        field_name="sale_date",
+        date_from=date_from,
+        date_to=date_to,
+    )
     if branch_id.isdigit():
         period = period.filter(branch_id=branch_id)
 
@@ -237,9 +245,16 @@ def dashboard(request):
         totals["income"] = totals["cash"] + totals["card"] + totals["bank"]
         return {key: money(value) for key, value in totals.items()}
 
-    today_sales_qs = sales.filter(sale_date__date=today)
-    today_returns_qs = SaleReturn.objects.for_business(business).filter(
-        created_at__date=today)
+    today_sales_qs = filter_business_date_range(
+        sales, business, field_name="sale_date", date_from=today, date_to=today
+    )
+    today_returns_qs = filter_business_date_range(
+        SaleReturn.objects.for_business(business),
+        business,
+        field_name="created_at",
+        date_from=today,
+        date_to=today,
+    )
     if allowed_branch_ids is not None:
         today_returns_qs = today_returns_qs.filter(branch_id__in=allowed_branch_ids)
     if allowed_warehouse_ids is not None:
@@ -302,8 +317,13 @@ def dashboard(request):
         if allowed_branch_ids is not None:
             expenses_qs = expenses_qs.filter(branch_id__in=allowed_branch_ids)
         expenses_total = expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
-    period_returns_qs = SaleReturn.objects.for_business(business).filter(
-        created_at__date__gte=date_from, created_at__date__lte=date_to)
+    period_returns_qs = filter_business_date_range(
+        SaleReturn.objects.for_business(business),
+        business,
+        field_name="created_at",
+        date_from=date_from,
+        date_to=date_to,
+    )
     if allowed_branch_ids is not None:
         period_returns_qs = period_returns_qs.filter(branch_id__in=allowed_branch_ids)
     if allowed_warehouse_ids is not None:
@@ -374,7 +394,9 @@ def dashboard(request):
 
     # ---- chart datasets (real data) ---------------------------------------
     trend = (
-        period.annotate(day=TruncDate("sale_date")).values("day")
+        period.annotate(
+            day=TruncDate("sale_date", tzinfo=business_timezone(business))
+        ).values("day")
         .annotate(total=Sum("total"), profit=Sum("gross_profit"))
         .order_by("day")
     )
@@ -471,7 +493,13 @@ def dashboard(request):
 
     span = (d_to - d_from).days + 1
     prev_from, prev_to = d_from - timedelta(days=span), d_from - timedelta(days=1)
-    prev = sales.filter(sale_date__date__gte=prev_from, sale_date__date__lte=prev_to)
+    prev = filter_business_date_range(
+        sales,
+        business,
+        field_name="sale_date",
+        date_from=prev_from,
+        date_to=prev_to,
+    )
     if branch_id.isdigit():
         prev = prev.filter(branch_id=branch_id)
     prev_agg = prev.aggregate(t=Sum("total"), p=Sum("gross_profit"), c=Count("id"))
@@ -489,8 +517,13 @@ def dashboard(request):
         prev_expenses = prev_expenses_qs.aggregate(t=Sum("amount"))["t"] or ZERO
     prev_total = prev_agg["t"] or ZERO
     prev_profit = prev_agg["p"] or ZERO
-    yesterday_sales = sales.filter(
-        sale_date__date=today - timedelta(days=1)
+    yesterday = today - timedelta(days=1)
+    yesterday_sales = filter_business_date_range(
+        sales,
+        business,
+        field_name="sale_date",
+        date_from=yesterday,
+        date_to=yesterday,
     ).aggregate(t=Sum("total"))["t"] or ZERO
     trends = {
         "today_sales": _pct(today_sales, yesterday_sales),
@@ -517,7 +550,9 @@ def dashboard(request):
 
     # ---- extra interactive charts ------------------------------------------
     hourly = (
-        period.annotate(h=ExtractHour("sale_date")).values("h")
+        period.annotate(
+            h=ExtractHour("sale_date", tzinfo=business_timezone(business))
+        ).values("h")
         .annotate(t=Sum("total")).order_by("h")
     )
     hour_map = {r["h"]: float(r["t"] or 0) for r in hourly}
@@ -732,7 +767,11 @@ def index(request):
                 permission_code=perm,
                 action=AccessAction.READ,
             )
-            if decision.allowed:
+            sales_allowed = (
+                key not in SALES_REPORT_KEYS
+                or request.membership.has_perm("reports.sales")
+            )
+            if decision.allowed and sales_allowed:
                 items.append({"key": key, "title": title})
         if items:
             groups.append({"name": group_name, "items": items})
@@ -744,6 +783,19 @@ def _run_report(request, key):
     if key not in REPORTS:
         raise Http404
     title, fn, perm = REPORTS[key]
+    require_access(
+        request,
+        REPORT_REQUIRED_MODULES[key],
+        permission_code="reports.view",
+        action=AccessAction.READ,
+    )
+    if key in SALES_REPORT_KEYS:
+        require_access(
+            request,
+            "pos_core",
+            permission_code="reports.sales",
+            action=AccessAction.READ,
+        )
     require_access(
         request,
         REPORT_REQUIRED_MODULES[key],

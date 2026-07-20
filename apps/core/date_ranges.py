@@ -1,5 +1,5 @@
-"""Business-local defaults for date-range filters."""
-from datetime import UTC
+"""Canonical business-local timezone and date-range helpers."""
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
@@ -30,6 +30,62 @@ def business_localdate(business=None, *, now=None):
     if timezone.is_naive(current):
         current = timezone.make_aware(current, local_timezone)
     return timezone.localtime(current, local_timezone).date()
+
+
+def business_localtime(business=None, *, value=None):
+    """Return an aware datetime converted to the business timezone."""
+    local_timezone = business_timezone(business)
+    current = value or timezone.now()
+    if timezone.is_naive(current):
+        current = timezone.make_aware(current, timezone.get_default_timezone())
+    return timezone.localtime(current, local_timezone)
+
+
+def _as_date(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def business_date_bounds(business, date_from=None, date_to=None):
+    """Return half-open aware bounds for business-local calendar dates."""
+    start_date = _as_date(date_from)
+    end_date = _as_date(date_to)
+    local_timezone = business_timezone(business)
+    start = (
+        datetime.combine(start_date, time.min, tzinfo=local_timezone)
+        if start_date else None
+    )
+    end = (
+        datetime.combine(end_date + timedelta(days=1), time.min,
+                         tzinfo=local_timezone)
+        if end_date else None
+    )
+    return start, end
+
+
+def filter_business_date_range(
+    queryset,
+    business,
+    *,
+    field_name,
+    date_from=None,
+    date_to=None,
+):
+    """Filter a datetime field by business-local dates, end date inclusive."""
+    start, end = business_date_bounds(business, date_from, date_to)
+    if start is not None:
+        queryset = queryset.filter(**{f"{field_name}__gte": start})
+    if end is not None:
+        queryset = queryset.filter(**{f"{field_name}__lt": end})
+    return queryset
 
 
 def current_month_date_range(business=None, *, now=None):
