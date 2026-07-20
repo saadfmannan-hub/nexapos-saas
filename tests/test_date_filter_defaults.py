@@ -288,5 +288,5 @@ class GlobalDateFilterDefaultTests(TenantTestCase):
 
         purchase_response = self.client.get(reverse("purchases:create"))
         self.assertEqual(purchase_response.status_code, 200)
-        self.assertEqual(purchase_response.context["today"], date(2026, 7, 15))
+        self.assertEqual(purchase_response.context["today"], self.today)
         self.assertContains(purchase_response, 'name="purchase_date"')

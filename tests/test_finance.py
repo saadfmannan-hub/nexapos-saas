@@ -72,6 +72,9 @@ class TaxAndDiscountTests(TenantTestCase):
         self.assertEqual(sale.total, D("21.000"))
 
     def test_no_tax_without_product_tax_or_enabled_business_vat(self):
+        settings_obj = self.business_a.settings
+        settings_obj.vat_enabled = False
+        settings_obj.save(update_fields=["vat_enabled"])
         product = Product.objects.create(
             business=self.business_a, name="No VAT", sku="NO-VAT",
             sale_price=D("20.000"), track_inventory=False, product_type="non_stock",

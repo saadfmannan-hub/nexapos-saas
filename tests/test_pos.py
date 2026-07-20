@@ -49,9 +49,8 @@ class SaleServiceTests(TenantTestCase):
         s1 = self.make_sale()
         s2 = self.make_sale()
         self.assertNotEqual(s1.invoice_number, s2.invoice_number)
-        # Numbering uses the configurable Business Settings prefix (default
-        # "INV"), not the branch's prefix. See tests/test_invoice_prefix.py.
-        self.assertTrue(s1.invoice_number.startswith("INV-"))
+        # Numbering uses the sale branch's configured invoice prefix.
+        self.assertTrue(s1.invoice_number.startswith("HO-"))
         n1 = int(s1.invoice_number.rsplit("-", 1)[1])
         n2 = int(s2.invoice_number.rsplit("-", 1)[1])
         self.assertEqual(n2, n1 + 1)
@@ -234,6 +233,66 @@ class PosEndpointTests(TenantTestCase):
         data = response.json()
         self.assertTrue(data["ok"], data)
         self.assertIn("invoice_number", data["sale"])
+
+    def test_disabled_business_vat_overrides_product_and_held_cart_rates(self):
+        from apps.sales.models import HeldSale
+
+        settings_obj = self.business_a.settings
+        settings_obj.vat_enabled = False
+        settings_obj.vat_percentage = D("0.000")
+        settings_obj.save(update_fields=["vat_enabled", "vat_percentage"])
+
+        pos_response = self.client.get(reverse("sales:pos"))
+        self.assertEqual(pos_response.context["vat_rate"], 0)
+
+        products_response = self.client.get(
+            reverse("sales:pos_products"),
+            {"warehouse_id": self.warehouse_a.id},
+        )
+        product = next(
+            item for item in products_response.json()["items"]
+            if item["product_id"] == self.product_a.id
+        )
+        self.assertEqual(product["tax_rate"], "0")
+
+        held = HeldSale.objects.create(
+            business=self.business_a,
+            branch=self.branch_a,
+            cashier=self.owner_a,
+            cart={
+                "checkout_token": "disabled-vat-held-cart",
+                "items": [{
+                    "product_id": self.product_a.id,
+                    "variant_id": None,
+                    "quantity": 1,
+                    "unit_price": "10.000",
+                    "tax_rate": "5.000",
+                }],
+            },
+        )
+        held_response = self.client.get(reverse("sales:pos_held_list"))
+        held_payload = next(
+            item for item in held_response.json()["held"] if item["id"] == held.id
+        )
+        self.assertEqual(held_payload["cart"]["items"][0]["tax_rate"], "0")
+
+        response = self.checkout({
+            "branch_id": self.branch_a.id,
+            "customer_id": self.walk_in_a.id,
+            "items": [{
+                "product_id": self.product_a.id,
+                "variant_id": None,
+                "quantity": "2",
+                "unit_price": "10.000",
+                "tax_rate": "5.000",
+            }],
+            "payments": [{"method_id": self.cash_a.id, "amount": "20.000"}],
+            "invoice_discount": "0",
+        })
+        self.assertTrue(response.json()["ok"], response.json())
+        sale = Sale.objects.get(public_id=response.json()["sale"]["public_id"])
+        self.assertEqual(sale.tax_amount, D("0.000"))
+        self.assertEqual(sale.total, D("20.000"))
 
     def test_checkout_endpoint_requires_delivery_date(self):
         self.enable_tailoring_product()
@@ -526,7 +585,7 @@ class PosEndpointTests(TenantTestCase):
         self.assertEqual(context["sale"].total, D("94.500"))
         self.assertEqual(context["sale"].amount_paid, D("80.500"))
         self.assertEqual(context["sale"].balance, D("14.000"))
-        self.assertEqual(context["invoice_label"], "INVOICE")
+        self.assertEqual(context["invoice_label"], "TAX INVOICE")
         self.assertEqual(context["copy_label"], "ORIGINAL COPY")
         self.assertEqual(context["returns"], [])
 
@@ -551,7 +610,7 @@ class PosEndpointTests(TenantTestCase):
     def test_receipt_context_values_include_commercial_labels(self):
         sale = self.discounted_credit_sale()
         response = self.client.get(reverse("sales:receipt", args=[sale.public_id]))
-        self.assertEqual(response.context["invoice_label"], "INVOICE")
+        self.assertEqual(response.context["invoice_label"], "TAX INVOICE")
         self.assertEqual(response.context["copy_label"], "ORIGINAL COPY")
         self.assertEqual(response.context["discounted_subtotal"], D("90.000"))
         self.assertEqual(response.context["vat_rate"], D("5.000"))
@@ -673,6 +732,13 @@ class PosEndpointTests(TenantTestCase):
         self.assertIn("Line A", html)
         self.assertIn("Customer Requirements", html)
         self.assertIn("Workshop Notes", html)
+        self.assertEqual(
+            html.count('<div class="label">Customer Requirements</div>'), 1
+        )
+        self.assertEqual(html.count('<div class="label">Workshop Notes</div>'), 1)
+        self.assertNotIn('<div class="label">Customer Notes</div>', html)
+        self.assertEqual(html.count("Loose fitting"), 1)
+        self.assertEqual(html.count("Press before packing"), 1)
         self.assertIn("Production Tracking", html)
         self.assertIn("Stage", html)
         self.assertIn("Done", html)

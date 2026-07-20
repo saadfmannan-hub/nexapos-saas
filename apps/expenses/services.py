@@ -5,10 +5,10 @@ from datetime import date, datetime
 
 from django.db import transaction
 from django.db.models import Q
-from django.utils import timezone
 
 from apps.audit import services as audit
 from apps.branches.models import Branch
+from apps.core.date_ranges import business_localdate
 from apps.subscriptions.access import AccessAction, evaluate_public_access
 from apps.subscriptions.exceptions import DenialCode
 
@@ -161,7 +161,7 @@ def ensure_recurring_expenses_for_range(
     max_months=120,
 ):
     """Ensure fixed expenses for each requested month, with a hard range cap."""
-    today = timezone.localdate()
+    today = business_localdate(business)
     start = _as_date(date_from) or today.replace(day=1)
     end = _as_date(date_to)
     if end is None:

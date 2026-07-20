@@ -16,17 +16,12 @@
     </div>
     {% for error in form.password.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
   </div>
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex align-items-center mb-3">
     <div class="form-check">
       {{ form.remember_me }}
       <label class="form-check-label small" for="{{ form.remember_me.id_for_label }}">Remember me</label>
     </div>
-    <a class="small" href="{% url 'accounts:password_reset' %}">Forgot password?</a>
   </div>
   <button class="btn btn-primary w-100 fw-semibold">Sign in</button>
 </form>
-<hr>
-<div class="text-center small">
-  New here? <a href="{% url 'tenants:register' %}" class="fw-semibold">Register your business</a>
-</div>
 {% endblock %}

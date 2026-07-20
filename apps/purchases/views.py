@@ -6,7 +6,6 @@ from django.db import IntegrityError
 from django.db.models import F, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
-from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.branches.models import Branch, Warehouse
@@ -229,7 +228,10 @@ def purchase_create(request):
             purchase = services.create_purchase(
                 business=request.business, supplier=supplier, branch=branch,
                 warehouse=warehouse, rows=rows, user=request.user,
-                purchase_date=request.POST.get("purchase_date") or timezone.now().date(),
+                purchase_date=(
+                    request.POST.get("purchase_date")
+                    or business_localdate(request.business)
+                ),
                 due_date=request.POST.get("due_date") or None,
                 supplier_invoice_number=request.POST.get("supplier_invoice_number", ""),
                 discount=D(request.POST.get("discount")),
@@ -252,7 +254,7 @@ def purchase_create(request):
     ).allowed
     return render(request, "purchases/form.html", {
         "suppliers": suppliers, "warehouses": warehouses, "branches": branches,
-        "active_nav": "purchases", "today": timezone.now().date(),
+        "active_nav": "purchases", "today": business_localdate(request.business),
         "quick_product_form": QuickProductForm(
             request.business,
             tailoring_enabled=quick_tailoring_enabled,

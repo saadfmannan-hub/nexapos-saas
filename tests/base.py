@@ -37,6 +37,13 @@ class TenantTestCase(TestCase):
             currency_precision=3,
         )
 
+        # The primary fixture is a genuinely VAT-enabled business. Tests that
+        # exercise VAT-disabled behavior turn the master switch off explicitly.
+        vat_settings = cls.business_a.settings
+        vat_settings.vat_enabled = True
+        vat_settings.vat_percentage = Decimal("5.000")
+        vat_settings.save(update_fields=["vat_enabled", "vat_percentage"])
+
         # These are controlled test tenants.  Production seed-plan data stays
         # untouched while legacy POS/catalog/customer/register/purchasing suites
         # exercise explicitly enabled commercial capabilities.

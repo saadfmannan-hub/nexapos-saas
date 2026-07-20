@@ -6,10 +6,13 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
-from django.utils import timezone
 from django.views.decorators.http import require_POST
 
-from apps.core.date_ranges import date_range_querystring, resolve_date_range
+from apps.core.date_ranges import (
+    business_localdate,
+    date_range_querystring,
+    resolve_date_range,
+)
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D, money
 from apps.customers import services as customer_services
@@ -260,7 +263,7 @@ def pos_view(request):
         "vat_enabled": settings_obj.vat_enabled,
         "vat_rate": vat_rate,
         "show_vat_on_invoice_receipt": settings_obj.show_vat_on_invoice_receipt,
-        "today": timezone.localdate(),
+        "today": business_localdate(request.business),
         "tailoring_enabled": _tailoring_enabled(request),
     })
 
@@ -764,7 +767,7 @@ def pos_checkout(request):
                 "error": "Invalid delivery date.",
                 "errors": {"delivery_date": "Enter a valid delivery date."},
             }, status=400)
-        if delivery_date < timezone.localdate():
+        if delivery_date < business_localdate(request.business):
             return JsonResponse({
                 "ok": False,
                 "error": "Delivery date cannot be in the past.",
@@ -915,7 +918,7 @@ def pos_held_list(request):
         str(product.id): product
         for product in Product.objects.for_business(request.business).filter(
             id__in=product_ids
-        ).select_related("unit")
+        ).select_related("unit", "tax_rate")
     }
     payload = []
     tailoring_enabled = _tailoring_enabled(request)
@@ -936,6 +939,9 @@ def pos_held_list(request):
             line = dict(raw_line)
             product = products.get(str(line.get("product_id")))
             if product is not None:
+                line["tax_rate"] = str(
+                    calculations.resolve_tax_rate(request.business, product)
+                )
                 line["is_tailoring_item"] = product.is_tailoring_item
                 line["is_meter_tailoring"] = product.is_meter_tailoring
                 line["is_legacy_tailoring"] = product.is_legacy_tailoring
@@ -1001,10 +1007,8 @@ def sale_list(request):
         sale_date__date__lte=date_to,
     )
 
-    # Delivery filters
-    from django.utils import timezone as _tz
-
-    today = _tz.localdate()
+    # Delivery filters use the same business-local date as range defaults.
+    today = business_localdate(request.business)
     tailoring_enabled = _tailoring_enabled(request)
     if tailoring_enabled:
         delivery = request.GET.get("delivery", "")

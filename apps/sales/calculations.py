@@ -18,20 +18,23 @@ class CalculationError(ValueError):
 def resolve_tax_rate(business, product, explicit_rate=None):
     """Return the effective rate for a product on a sale.
 
-    Product tax is an explicit commercial rule and wins when present. Business
-    VAT supplies the fallback default; when both are absent the item is untaxed.
+    The business VAT switch is the master control. When it is disabled every
+    new line is untaxed, even if the product or a stale cart carries a rate.
+    For VAT-enabled businesses, an explicit/product rate still wins and the
+    configured business percentage remains the fallback.
     """
+    settings_obj = business.settings if business is not None else None
+    if settings_obj is not None and not settings_obj.vat_enabled:
+        return ZERO
     if explicit_rate is not None:
         return D(explicit_rate)
     if product.is_meter_tailoring:
-        settings_obj = business.settings if business is not None else None
         if settings_obj and settings_obj.vat_enabled:
             return D(settings_obj.vat_percentage)
         return ZERO
     product_rate = D(product.effective_tax_rate())
     if product_rate > 0:
         return product_rate
-    settings_obj = business.settings if business is not None else None
     if settings_obj and settings_obj.vat_enabled:
         return D(settings_obj.vat_percentage)
     return ZERO

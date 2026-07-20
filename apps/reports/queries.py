@@ -25,7 +25,6 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce, Greatest, Round
-from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from apps.core.date_ranges import business_localdate, business_timezone
@@ -257,7 +256,7 @@ def current_year_financial_summary(
     from apps.core.money import money
     from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment, SaleReturn
 
-    today = today or timezone.localdate()
+    today = today or business_localdate(business)
     year_start = date(today.year, 1, 1)
     try:
         selected_branch_id = int(branch_id) if branch_id is not None else None

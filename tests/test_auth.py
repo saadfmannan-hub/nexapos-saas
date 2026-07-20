@@ -48,6 +48,14 @@ class RegistrationTests(TestCase):
 
 
 class LoginTests(TenantTestCase):
+    def test_login_has_no_public_registration_or_reset_links(self):
+        response = self.client.get(reverse("accounts:login"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Forgot password?")
+        self.assertNotContains(response, "Register your business")
+        self.assertNotContains(response, reverse("accounts:password_reset"))
+        self.assertNotContains(response, reverse("tenants:register"))
+
     def test_login_success(self):
         response = self.client.post(reverse("accounts:login"), {
             "email": "owner-a@example.com", "password": "StrongPass123!",

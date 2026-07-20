@@ -489,37 +489,69 @@ LIFETIME_SEQUENCE = 0
 
 
 def next_invoice_number(business, branch):
-    """Concurrency-safe invoice number driven by Business Settings.
+    """Return the next concurrency-safe number for the sale branch.
 
-    Format is the configured prefix + a simple zero-padded running number
-    (minimum 3 digits, growing past 999 naturally). No year, no second
-    sequence:
-
-        INV B-001, INV B-002, ... INV B-999, INV B-1000   (default)
-        INV B-HK-001                                       (per-branch opt-in)
+    A usable ``Branch.invoice_prefix`` is authoritative for that branch.
+    Branches without one retain the existing Business Settings fallback,
+    including its optional branch-code scheme.
 
     The counter is lifetime (does not reset per year). Historical invoice
     numbers are never touched — only new ones use this configuration.
     """
-    settings_obj = business.settings
-    base = (settings_obj.invoice_prefix or "INV").strip() or "INV"
-    include_branch = settings_obj.invoice_include_branch_code
+    from apps.tenants.models import Business
 
-    seq_branch = branch if include_branch else None
+    # Invoice numbers are unique per business, including when two branches
+    # happen to share a prefix. Serializing allocation on the tenant root
+    # makes the collision check below safe across branch-specific counters.
+    Business.objects.select_for_update().only("pk").get(pk=business.pk)
+
+    settings_obj = business.settings
+    branch_prefix = (branch.invoice_prefix or "").strip()
+    if branch_prefix:
+        base = branch_prefix
+        seq_branch = branch
+    else:
+        base = (settings_obj.invoice_prefix or "INV").strip() or "INV"
+        include_branch = settings_obj.invoice_include_branch_code
+        seq_branch = branch if include_branch else None
+        if include_branch:
+            segment = (branch.code or "").strip()
+            if segment:
+                base = f"{base}-{segment}"
+
+    # Respect an existing trailing separator and normalize the common form
+    # entry ``AH -`` to ``AH-`` rather than generating ``AH --001``.
+    if base.endswith("-"):
+        base = f"{base[:-1].rstrip()}-"
+    else:
+        base = f"{base}-"
+
     seq, _ = InvoiceSequence.objects.get_or_create(
         business=business, branch=seq_branch, year=LIFETIME_SEQUENCE
     )
     # select_for_update serializes concurrent finalizations on this counter
     seq = InvoiceSequence.objects.select_for_update().get(pk=seq.pk)
-    seq.last_number += 1
-    seq.save(update_fields=["last_number"])
-
-    number = f"{seq.last_number:03d}"  # 001..999, then 1000, 1001, ...
-    if include_branch:
-        segment = (branch.invoice_prefix or branch.code or "").strip()
-        if segment:
-            return f"{base}-{segment}-{number}"
-    return f"{base}-{number}"
+    while True:
+        seq.last_number += 1
+        candidate = f"{base}{seq.last_number:03d}"
+        if not Sale.objects.for_business(business).filter(
+            invoice_number=candidate
+        ).exists():
+            seq.save(update_fields=["last_number"])
+            return candidate
+        # A newly adopted branch prefix may already exist on historical
+        # invoices while its branch counter is still zero. Jump to the highest
+        # numeric suffix in one query instead of probing every old number.
+        historical_numbers = Sale.objects.for_business(business).filter(
+            invoice_number__startswith=base
+        ).values_list("invoice_number", flat=True)
+        used_suffixes = [
+            int(number[len(base):])
+            for number in historical_numbers
+            if number[len(base):].isdigit()
+        ]
+        if used_suffixes:
+            seq.last_number = max(seq.last_number, max(used_suffixes))
 
 
 def _resolve_price(product, variant):
