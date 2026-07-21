@@ -158,10 +158,11 @@ class GlobalBackNavigationTests(TenantTestCase):
         )
         self.assert_back_to(response, "branches:list")
 
-    def test_22_pos_sell_shows_back_disabled(self):
+    def test_22_pos_sell_uses_full_working_height_without_disabled_back(self):
         self.allow_no_shift()
         response = self.client.get(reverse("sales:pos"))
-        self.assert_back_disabled(response)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, NAV_MARKER)
         self.assertContains(response, "PAY <span", html=False)
 
     def test_23_no_browser_history_javascript_remains(self):

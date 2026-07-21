@@ -94,11 +94,14 @@
     <div class="card mt-3">
       <div class="card-header">Returns against this invoice</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Return #</th><th>Date</th><th class="text-end">Qty</th><th>Refund method</th><th class="text-end">Refund</th><th>By</th></tr></thead>
+        <thead><tr><th>Return #</th><th>Returned Item(s)</th><th>Date</th><th class="text-end">Qty</th><th>Refund method</th><th class="text-end">Refund</th><th>By</th></tr></thead>
         <tbody>
           {% for r in returns %}
           <tr>
             <td class="fw-semibold">{{ r.return_number }}</td>
+            <td class="small">
+              {% for item in r.items.all %}<div>{{ item.sale_item.product_name }}</div>{% empty %}&mdash;{% endfor %}
+            </td>
             <td class="small">{{ r.created_at|date:"Y-m-d H:i" }}</td>
             <td class="text-end">{{ r.display_returned_quantity }}</td>
             <td>{{ r.get_refund_method_display }}</td>

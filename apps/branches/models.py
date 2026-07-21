@@ -6,8 +6,17 @@ from apps.core.models import TenantModel
 
 
 class Branch(TenantModel):
+    class UsageType(models.TextChoices):
+        SALES_BRANCH = "sales_branch", "Sales Branch"
+        WORKSHOP_STOCK = "workshop_stock", "Workshop / Stock Location"
+
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=20)
+    usage_type = models.CharField(
+        max_length=20,
+        choices=UsageType.choices,
+        default=UsageType.SALES_BRANCH,
+    )
     address = models.CharField(max_length=255, blank=True)
     phone = models.CharField(max_length=30, blank=True)
     email = models.EmailField(blank=True)

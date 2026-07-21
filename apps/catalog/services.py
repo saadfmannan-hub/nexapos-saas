@@ -499,6 +499,17 @@ def products_visible_in_branch(queryset, *, business, branch):
 
     if branch is None or branch.business_id != business.id:
         return queryset.none()
+    from apps.inventory import services as inventory_services
+
+    shared_warehouse = inventory_services.configured_shared_fabric_warehouse(business)
+    shared_fabric = Q()
+    if shared_warehouse is not None:
+        shared_fabric = Q(
+            is_tailoring_item=True,
+            unit__is_meter=True,
+            stock_levels__business=business,
+            stock_levels__warehouse=shared_warehouse,
+        )
     return queryset.filter(
         Q(track_inventory=False)
         | Q(product_type__in=(Product.Type.SERVICE, Product.Type.NON_STOCK))
@@ -508,6 +519,7 @@ def products_visible_in_branch(queryset, *, business, branch):
             stock_levels__warehouse__branch=branch,
             stock_levels__warehouse__is_active=True,
         )
+        | shared_fabric
     ).distinct()
 
 
@@ -523,12 +535,21 @@ def product_is_visible_in_branch(*, business, product, branch, variant=None):
         return False
     if not product.is_stocked:
         return True
-    levels = StockLevel.objects.for_business(business).filter(
-        product=product,
-        warehouse__business=business,
-        warehouse__branch=branch,
-        warehouse__is_active=True,
-    )
+    from apps.inventory import services as inventory_services
+
+    shared_warehouse = inventory_services.configured_shared_fabric_warehouse(business)
+    if product.is_meter_tailoring and shared_warehouse is not None:
+        levels = StockLevel.objects.for_business(business).filter(
+            product=product,
+            warehouse=shared_warehouse,
+        )
+    else:
+        levels = StockLevel.objects.for_business(business).filter(
+            product=product,
+            warehouse__business=business,
+            warehouse__branch=branch,
+            warehouse__is_active=True,
+        )
     if variant is not None:
         if variant.business_id != business.id or variant.product_id != product.id:
             return False
@@ -547,7 +568,15 @@ def _as_bool(value, default=False):
 
 def _as_optional_variant_value(value):
     """Normalize import placeholders used for absent variant-only values."""
-    raw = str(value or "").strip()
+    raw = "" if value is None else str(value).strip()
+    if raw.casefold() in ("", "null", "-"):
+        return ""
+    return raw
+
+
+def _as_optional_barcode(value):
+    """Normalize Product Import placeholders used for an absent barcode."""
+    raw = "" if value is None else str(value).strip()
     if raw.casefold() in ("", "null", "-"):
         return ""
     return raw
@@ -616,6 +645,7 @@ def _resolve_warehouse(
 
 
 def _duplicate_code_exists(business, *, sku="", barcode="", exclude_product=None):
+    barcode = _as_optional_barcode(barcode)
     product_qs = Product.objects.for_business(business)
     variant_qs = ProductVariant.objects.for_business(business)
     if exclude_product is not None:
@@ -1080,7 +1110,7 @@ def import_products(
         try:
             name = r.get("product name") or r.get("name") or ""
             sku = r.get("sku", "")
-            barcode = r.get("barcode", "")
+            barcode = _as_optional_barcode(r.get("barcode"))
             variant_parent = _as_optional_variant_value(
                 r.get("variant parent")
             )
@@ -1092,7 +1122,7 @@ def import_products(
             )
             variant_name = _as_optional_variant_value(r.get("variant name"))
             variant_sku = _as_optional_variant_value(r.get("variant sku"))
-            variant_barcode = _as_optional_variant_value(
+            variant_barcode = _as_optional_barcode(
                 r.get("variant barcode")
             )
             is_variant_row = bool(

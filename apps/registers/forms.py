@@ -14,10 +14,17 @@ class RegisterForm(TenantStyledModelForm):
 
     def __init__(self, business, *args, membership=None, **kwargs):
         super().__init__(business, *args, **kwargs)
-        branches = Branch.objects.for_business(business).filter(is_active=True)
+        branches = Branch.objects.for_business(business).filter(
+            is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
+        )
         if self.instance.pk and self.instance.branch_id:
             branches = Branch.objects.for_business(business).filter(
-                Q(is_active=True) | Q(pk=self.instance.branch_id)
+                Q(
+                    is_active=True,
+                    usage_type=Branch.UsageType.SALES_BRANCH,
+                )
+                | Q(pk=self.instance.branch_id)
             )
         if membership and membership.allowed_branch_ids is not None:
             branches = branches.filter(pk__in=membership.allowed_branch_ids)
@@ -44,7 +51,10 @@ class RegisterForm(TenantStyledModelForm):
 
     def clean_branch(self):
         branch = self.cleaned_data["branch"]
-        if branch.business_id != self.business.id:
+        if (
+            branch.business_id != self.business.id
+            or branch.usage_type != Branch.UsageType.SALES_BRANCH
+        ):
             raise forms.ValidationError("Select a valid branch.")
         return branch
 

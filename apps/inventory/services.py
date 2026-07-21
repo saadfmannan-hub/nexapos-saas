@@ -111,6 +111,52 @@ def total_stock(business, product, variant=None):
     return agg["t"] or ZERO
 
 
+def configured_shared_fabric_warehouse(business):
+    """Return the active tenant-owned Workshop warehouse, when configured."""
+    from apps.branches.models import Branch, Warehouse
+    from apps.tenants.models import BusinessSettings
+
+    warehouse_id = (
+        BusinessSettings.objects.filter(business=business)
+        .values_list("shared_fabric_warehouse_id", flat=True)
+        .first()
+    )
+    if warehouse_id is None:
+        return None
+    return (
+        Warehouse.objects.for_business(business)
+        .select_related("branch")
+        .filter(
+            pk=warehouse_id,
+            is_active=True,
+            branch__business=business,
+            branch__is_active=True,
+            branch__usage_type=Branch.UsageType.WORKSHOP_STOCK,
+        )
+        .first()
+    )
+
+
+def stock_warehouse_for_sale_product(*, business, sale_warehouse, product):
+    """Route Meter tailoring stock to Workshop; preserve legacy fallback."""
+    if not product.is_meter_tailoring:
+        return sale_warehouse
+    shared_warehouse = configured_shared_fabric_warehouse(business)
+    if shared_warehouse is not None:
+        return shared_warehouse
+
+    from apps.tenants.models import BusinessSettings
+
+    if BusinessSettings.objects.filter(
+        business=business,
+        shared_fabric_warehouse__isnull=False,
+    ).exists():
+        raise ValidationError(
+            "The configured Shared Fabric Location is unavailable."
+        )
+    return sale_warehouse
+
+
 @transaction.atomic
 def record_movement(
     *,

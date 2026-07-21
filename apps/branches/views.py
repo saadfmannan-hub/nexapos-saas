@@ -60,7 +60,7 @@ def branch_form(request, public_id=None):
         branch = form.save(commit=False)
         branch.business = request.business
         branch.save()
-        if creating:
+        if creating and branch.usage_type == Branch.UsageType.SALES_BRANCH:
             from apps.customers.services import ensure_walk_in_customer
 
             ensure_walk_in_customer(request.business, branch)

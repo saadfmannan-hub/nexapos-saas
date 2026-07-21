@@ -26,7 +26,10 @@ class CustomerForm(TenantStyledModelForm):
         **kwargs,
     ):
         super().__init__(business, *args, **kwargs)
-        branch_qs = Branch.objects.for_business(business).filter(is_active=True)
+        branch_qs = Branch.objects.for_business(business).filter(
+            is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
+        )
         allowed = membership.allowed_branch_ids if membership is not None else None
         if allowed is not None:
             branch_qs = branch_qs.filter(pk__in=allowed)

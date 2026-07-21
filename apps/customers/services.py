@@ -55,7 +55,10 @@ def resolve_branch_context(
     required=False,
 ):
     """Resolve one active tenant branch without trusting request identifiers."""
-    branches = Branch.objects.for_business(business).filter(is_active=True)
+    branches = Branch.objects.for_business(business).filter(
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
+    )
     allowed = membership.allowed_branch_ids
     if allowed is not None:
         branches = branches.filter(pk__in=allowed)
@@ -93,13 +96,18 @@ def resolve_branch_context(
 def ensure_walk_in_customer(business, branch=None):
     if branch is None:
         branches = list(
-            Branch.objects.for_business(business).filter(is_active=True).order_by("id")[:2]
+            Branch.objects.for_business(business).filter(
+                is_active=True,
+                usage_type=Branch.UsageType.SALES_BRANCH,
+            ).order_by("id")[:2]
         )
         if len(branches) != 1:
             raise ValueError("Select a branch before creating a Walk-In Customer.")
         branch = branches[0]
     branch = Branch.objects.for_business(business).filter(
-        pk=getattr(branch, "pk", None), is_active=True
+        pk=getattr(branch, "pk", None),
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
     ).first()
     if branch is None:
         raise ValueError("Walk-In Customer branch must be active and tenant-owned.")

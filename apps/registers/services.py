@@ -14,6 +14,15 @@ from .models import CashRegister, Shift
 
 
 def create_default_register(business, branch):
+    from apps.branches.models import Branch
+
+    if (
+        branch.business_id != business.id
+        or branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
+        raise RegisterLifecycleError(
+            "Registers can only be created for a Sales Branch."
+        )
     register, _ = CashRegister.objects.get_or_create(
         business=business, code="REG1",
         defaults={"name": "Main Register", "branch": branch},
@@ -22,7 +31,12 @@ def create_default_register(business, branch):
 
 
 def get_open_shift(business, user, register=None, membership=None):
-    qs = Shift.objects.for_business(business).filter(status=Shift.Status.OPEN)
+    from apps.branches.models import Branch
+
+    qs = Shift.objects.for_business(business).filter(
+        status=Shift.Status.OPEN,
+        branch__usage_type=Branch.UsageType.SALES_BRANCH,
+    )
     if register is not None:
         qs = qs.filter(register=register)
     else:
@@ -205,6 +219,10 @@ def save_register(*, register, business, user, membership=None, request=None):
             request=request,
             scope_allowed=False,
         )
+    if branch.usage_type != Branch.UsageType.SALES_BRANCH:
+        raise RegisterLifecycleError(
+            "Registers can only be assigned to a Sales Branch."
+        )
     _require_register_write(
         business=business,
         user=user,
@@ -365,7 +383,12 @@ def reactivate_register(*, register, user, membership=None, request=None):
     )
     if register.is_active:
         raise RegisterLifecycleError("This register is already active.")
-    if not register.branch.is_active:
+    from apps.branches.models import Branch
+
+    if (
+        not register.branch.is_active
+        or register.branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
         raise RegisterLifecycleError(
             "Move this register to an active branch before reactivating it."
         )
@@ -439,7 +462,13 @@ def open_shift(*, business, register, cashier, opening_cash, notes="",
         membership=membership,
         request=request,
     )
-    if not register.is_active or not register.branch.is_active:
+    from apps.branches.models import Branch
+
+    if (
+        not register.is_active
+        or not register.branch.is_active
+        or register.branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
         raise ShiftError("This register is archived or its branch is inactive.")
     if Shift.objects.for_business(business).filter(
         register=register, status=Shift.Status.OPEN
@@ -597,7 +626,13 @@ def reopen_shift(*, shift, user, membership=None, request=None):
     )
     if shift.status not in (Shift.Status.CLOSED, Shift.Status.APPROVED):
         raise ShiftError("Only closed shifts can be reopened.")
-    if not shift.register.is_active or not shift.register.branch.is_active:
+    from apps.branches.models import Branch
+
+    if (
+        not shift.register.is_active
+        or not shift.register.branch.is_active
+        or shift.register.branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
         raise ShiftError("Archived registers cannot be reopened for operations.")
     if Shift.objects.for_business(shift.business).filter(
         register=shift.register, status=Shift.Status.OPEN

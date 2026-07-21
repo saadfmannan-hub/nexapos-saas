@@ -391,7 +391,10 @@ def hold_sale(
         request=request,
         branch=branch,
     )
-    if not branch.is_active:
+    if (
+        not branch.is_active
+        or branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
         raise SaleError("Invalid branch.")
     if not isinstance(cart, dict):
         raise SaleError("Invalid cart.")
@@ -712,7 +715,13 @@ def _validate_checkout_replay(existing, *, cashier, branch, customer):
 def _validate_sale_context(
     *, business, branch, warehouse, cashier, customer, membership, register, shift
 ):
-    if branch.business_id != business.id or not branch.is_active:
+    from apps.branches.models import Branch
+
+    if (
+        branch.business_id != business.id
+        or not branch.is_active
+        or branch.usage_type != Branch.UsageType.SALES_BRANCH
+    ):
         raise SaleError("Invalid branch.")
     if warehouse.business_id != business.id or not warehouse.is_active:
         raise SaleError("Invalid warehouse.")
@@ -1219,6 +1228,11 @@ def complete_sale(
     total_cost = ZERO
     for line, parts in totals["lines"]:
         product, variant = line["product"], line.get("variant")
+        stock_warehouse = inventory.stock_warehouse_for_sale_product(
+            business=business,
+            sale_warehouse=warehouse,
+            product=product,
+        )
         unit_cost = money(_resolve_cost(product, variant))
         inventory_quantity = (
             line["fabric_meter_used"]
@@ -1232,6 +1246,7 @@ def complete_sale(
             sale=sale,
             product=product,
             variant=variant,
+            stock_warehouse=stock_warehouse if product.is_stocked else None,
             product_name=(variant.__str__() if variant else product.name)[:240],
             sku=(variant.sku if variant else product.sku) or "",
             quantity=parts["quantity"],
@@ -1251,7 +1266,7 @@ def complete_sale(
         if product.is_stocked:
             inventory.record_movement(
                 business=business,
-                warehouse=warehouse,
+                warehouse=stock_warehouse,
                 product=product,
                 variant=variant,
                 movement_type="sale",
@@ -1260,6 +1275,7 @@ def complete_sale(
                 reference_type="Sale",
                 reference_id=sale.invoice_number,
                 user=cashier,
+                notes=f"Originating sales branch: {branch.code}"[:300],
             )
 
     sale.total_cost = money(total_cost)
@@ -1568,7 +1584,7 @@ def void_sale(*, sale, user, reason, membership=None, request=None):
     items = list(
         SaleItem.objects.select_for_update()
         .filter(sale=sale, business=sale.business)
-        .select_related("product", "variant")
+        .select_related("product", "variant", "stock_warehouse")
         .order_by("pk")
     )
     for item in items:
@@ -1576,7 +1592,7 @@ def void_sale(*, sale, user, reason, membership=None, request=None):
         if deducted_meter or item.product.is_stocked:
             inventory.record_movement(
                 business=sale.business,
-                warehouse=sale.warehouse,
+                warehouse=item.stock_warehouse or sale.warehouse,
                 product=item.product,
                 variant=item.variant,
                 movement_type="sale_return",
@@ -1692,7 +1708,7 @@ def process_return(
                 sale=sale,
                 pk__in=requested_ids,
             )
-            .select_related("product", "variant")
+            .select_related("product", "variant", "stock_warehouse")
             .order_by("pk")
         )
     }
@@ -1776,7 +1792,7 @@ def process_return(
             restore_quantity = item.fabric_meter_used if deducted_meter else qty
             inventory.record_movement(
                 business=business,
-                warehouse=sale.warehouse,
+                warehouse=item.stock_warehouse or sale.warehouse,
                 product=item.product,
                 variant=item.variant,
                 movement_type="sale_return",

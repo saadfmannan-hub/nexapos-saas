@@ -277,6 +277,14 @@ class SaleItem(TenantModel):
         "catalog.ProductVariant", on_delete=models.PROTECT, null=True, blank=True,
         related_name="sale_items",
     )
+    stock_warehouse = models.ForeignKey(
+        "branches.Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sale_items_stocked",
+        help_text="Physical warehouse used for this line's stock movement.",
+    )
     # Immutable snapshots
     product_name = models.CharField(max_length=240)
     sku = models.CharField(max_length=60, blank=True)

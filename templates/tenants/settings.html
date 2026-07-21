@@ -45,6 +45,7 @@
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Stock &amp; sales policies</div><div class="card-body">
       {% include "components/form_field.html" with field=form.negative_stock_policy %}
+      {% include "components/form_field.html" with field=form.shared_fabric_warehouse %}
       {% include "components/form_field.html" with field=form.return_window_days %}
       <div class="form-check mb-2">{{ form.allow_sale_without_shift }}
         <label class="form-check-label" for="{{ form.allow_sale_without_shift.id_for_label }}">Allow sales without an open shift</label></div>

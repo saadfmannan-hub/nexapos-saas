@@ -2,6 +2,7 @@
 import uuid
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -132,6 +133,15 @@ class BusinessSettings(TimeStampedModel):
     negative_stock_policy = models.CharField(
         max_length=10, choices=NegativeStock.choices, default=NegativeStock.BLOCK
     )
+    shared_fabric_warehouse = models.ForeignKey(
+        "branches.Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="shared_fabric_for_settings",
+        verbose_name="Shared Fabric Location",
+        help_text="Workshop warehouse used for shared fabric stock.",
+    )
     allow_sale_without_shift = models.BooleanField(default=False)
     max_discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=100)
     require_customer_for_credit = models.BooleanField(default=True)
@@ -161,6 +171,27 @@ class BusinessSettings(TimeStampedModel):
 
     def __str__(self):
         return f"Settings for {self.business}"
+
+    def clean(self):
+        super().clean()
+        warehouse = self.shared_fabric_warehouse
+        if warehouse is None:
+            return
+        from apps.branches.models import Branch
+
+        if (
+            warehouse.business_id != self.business_id
+            or not warehouse.is_active
+            or warehouse.branch_id is None
+            or warehouse.branch.business_id != self.business_id
+            or not warehouse.branch.is_active
+            or warehouse.branch.usage_type != Branch.UsageType.WORKSHOP_STOCK
+        ):
+            raise ValidationError({
+                "shared_fabric_warehouse": (
+                    "Select a Workshop / Stock Location from this business."
+                )
+            })
 
     @property
     def effective_vat_rate(self):

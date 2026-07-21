@@ -136,6 +136,7 @@ class BusinessSettingsForm(forms.ModelForm):
         "more_options": [f"more_option_label_{index}" for index in range(1, 16)],
         "policies": [
             "price_rounding", "max_discount_percent", "negative_stock_policy",
+            "shared_fabric_warehouse",
             "return_window_days", "allow_sale_without_shift",
             "require_customer_for_credit",
         ],
@@ -151,6 +152,25 @@ class BusinessSettingsForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        from apps.branches.models import Branch, Warehouse
+
+        business = self.instance.business
+        self.fields["shared_fabric_warehouse"].queryset = (
+            Warehouse.objects.for_business(business)
+            .filter(
+                is_active=True,
+                branch__is_active=True,
+                branch__usage_type=Branch.UsageType.WORKSHOP_STOCK,
+            )
+            .select_related("branch")
+            .order_by("branch__name", "name")
+        )
+        self.fields["shared_fabric_warehouse"].required = False
+        if not self.fields["shared_fabric_warehouse"].queryset.exists():
+            self.fields["shared_fabric_warehouse"].help_text = (
+                "No active warehouse is linked to a Workshop / Stock Location. "
+                "Create or edit the Workshop warehouse first."
+            )
         for f in self.fields.values():
             if isinstance(f.widget, forms.CheckboxInput):
                 f.widget.attrs.setdefault("class", "form-check-input")

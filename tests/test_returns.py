@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from django.urls import reverse
 
+from apps.catalog.models import Product, ProductVariant
 from apps.inventory import services as inventory
 from apps.sales import services as sales
 from apps.sales.models import Sale, SaleReturn
@@ -20,6 +21,91 @@ class ReturnTests(TenantTestCase):
             "product": self.product_a, "quantity": D("4"),
             "unit_price": D("10.000"),
         }])  # total 42.000 (40 + 5% tax)
+
+    def variant_sale(self, variant_names):
+        product = Product.objects.create(
+            business=self.business_a,
+            name="Saad Fabrics",
+            sku="RET-SAAD",
+            product_type=Product.Type.VARIANT,
+            track_inventory=False,
+            sale_price=D("10.000"),
+            tax_rate=self.tax_a,
+        )
+        variants = [
+            ProductVariant.objects.create(
+                business=self.business_a,
+                product=product,
+                name=name,
+                sku=f"RET-SAAD-{name}",
+                sale_price=D("10.000"),
+            )
+            for name in variant_names
+        ]
+        sale = self.make_sale(items=[
+            {
+                "product": product,
+                "variant": variant,
+                "quantity": D("1.000"),
+                "unit_price": D("10.000"),
+            }
+            for variant in variants
+        ])
+        return sale
+
+    def test_return_list_displays_single_returned_item_name(self):
+        sale = self.variant_sale(["1"])
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        self.client.force_login(self.owner_a)
+
+        response = self.client.get(reverse("sales:return_list"))
+
+        self.assertContains(response, "Returned Item(s)")
+        self.assertContains(response, "Saad Fabrics \N{EM DASH} 1")
+
+    def test_return_list_displays_multiple_returned_item_names_once(self):
+        sale = self.variant_sale(["1", "2"])
+        items = list(sale.items.order_by("pk"))
+        sale_return = sales.process_return(
+            sale=sale,
+            items=[
+                {"sale_item": item, "quantity": D("1.000")}
+                for item in items
+            ],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        self.client.force_login(self.owner_a)
+
+        response = self.client.get(reverse("sales:return_list"))
+
+        self.assertContains(response, "Saad Fabrics \N{EM DASH} 1")
+        self.assertContains(response, "Saad Fabrics \N{EM DASH} 2")
+        self.assertContains(response, sale_return.return_number, count=1)
+        self.assertEqual(len(response.context["page_obj"].object_list), 1)
+
+    def test_sale_detail_return_section_displays_exact_returned_item(self):
+        sale = self.variant_sale(["2"])
+        item = sale.items.get()
+        sales.process_return(
+            sale=sale,
+            items=[{"sale_item": item, "quantity": D("1.000")}],
+            refund_method=SaleReturn.RefundMethod.CASH,
+            user=self.owner_a,
+        )
+        self.client.force_login(self.owner_a)
+
+        response = self.client.get(reverse("sales:detail", args=[sale.public_id]))
+
+        self.assertContains(response, "Returns against this invoice")
+        self.assertContains(response, "Returned Item(s)")
+        self.assertContains(response, "Saad Fabrics \N{EM DASH} 2")
 
     def discounted_credit_sale(self, product=None):
         from apps.customers.models import Customer

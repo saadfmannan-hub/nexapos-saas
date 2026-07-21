@@ -93,6 +93,7 @@ class Customer(TenantModel):
             branches = Branch.objects.filter(
                 business_id=self.business_id,
                 is_active=True,
+                usage_type=Branch.UsageType.SALES_BRANCH,
             ).order_by("id")[:2]
             if len(branches) == 1:
                 self.home_branch = branches[0]

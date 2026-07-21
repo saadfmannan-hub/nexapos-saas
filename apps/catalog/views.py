@@ -212,24 +212,41 @@ def product_list(request):
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
 
-    # Attach total stock to page items (single query)
-    stock_qs = (
+    # Retail stock follows the selected sales warehouse/branch. Shared Meter
+    # fabric follows the configured Workshop warehouse, matching POS.
+    retail_stock_qs = (
         inventory.StockLevel.objects.for_business(request.business)
         .filter(product__in=[p.pk for p in page_obj])
     )
     if selected_warehouse is not None:
-        stock_qs = stock_qs.filter(warehouse=selected_warehouse)
+        retail_stock_qs = retail_stock_qs.filter(warehouse=selected_warehouse)
     elif selected_branch is not None:
-        stock_qs = stock_qs.filter(
+        retail_stock_qs = retail_stock_qs.filter(
             warehouse__branch=selected_branch,
             warehouse__is_active=True,
         )
-    stock = {
+    retail_stock = {
         row["product_id"]: row["total"]
-        for row in stock_qs.values("product_id").annotate(total=Sum("quantity"))
+        for row in retail_stock_qs.values("product_id").annotate(total=Sum("quantity"))
     }
+    shared_warehouse = inventory.configured_shared_fabric_warehouse(request.business)
+    shared_stock = {}
+    if shared_warehouse is not None:
+        shared_stock = {
+            row["product_id"]: row["total"]
+            for row in (
+                inventory.StockLevel.objects.for_business(request.business)
+                .filter(
+                    warehouse=shared_warehouse,
+                    product__in=[p.pk for p in page_obj],
+                )
+                .values("product_id")
+                .annotate(total=Sum("quantity"))
+            )
+        }
     for p in page_obj:
-        p.total_stock = stock.get(p.pk, 0)
+        source_stock = shared_stock if p.is_meter_tailoring else retail_stock
+        p.total_stock = source_stock.get(p.pk, 0)
 
     categories = Category.objects.for_business(request.business).filter(is_active=True)
     _p_cur, p_lim, _ = subscriptions.limit_state(request.business, "products")
@@ -243,6 +260,7 @@ def product_list(request):
         "selected_branch": selected_branch,
         "warehouses": warehouses,
         "selected_warehouse": selected_warehouse,
+        "has_active_warehouses": warehouses.exists(),
         "branch_locked": request.membership.allowed_branch_ids is not None,
         "context_ready": (
             selected_branch is not None and selected_warehouse is not None

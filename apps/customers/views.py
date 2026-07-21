@@ -71,7 +71,10 @@ def _selected_branch(request, *, required=False, post_field="branch"):
 def _branch_choices(request):
     from apps.branches.models import Branch
 
-    branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    branches = Branch.objects.for_business(request.business).filter(
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
+    )
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
         branches = branches.filter(pk__in=allowed)
@@ -522,7 +525,10 @@ def customer_statement(request, public_id):
     )
     from apps.branches.models import Branch
 
-    branches = Branch.objects.for_business(request.business).filter(is_active=True)
+    branches = Branch.objects.for_business(request.business).filter(
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
+    )
     allowed_branch_ids = request.membership.allowed_branch_ids
     if allowed_branch_ids is not None:
         branches = branches.filter(id__in=allowed_branch_ids)

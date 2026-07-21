@@ -115,9 +115,16 @@
         <tr><td colspan="7">
           <div class="empty-state">
             <i class="bi bi-box-seam d-block mb-2"></i>
+            {% if selected_branch and not has_active_warehouses %}
+            No active warehouse is linked to {{ selected_branch.name }}.
+            {% if module_capabilities.pos_core.can_write %}
+            <div class="mt-2"><a href="{% url 'branches:warehouse_create' %}" class="btn btn-sm btn-primary">Add or reactivate Warehouse</a></div>
+            {% endif %}
+            {% else %}
             No products yet.
             {% if context_ready and module_capabilities.pos_core.can_write and "products.manage" in business_perms and "inventory.adjust" in business_perms %}
             <div class="mt-2"><a href="{% url 'catalog:product_create' %}?branch={{ selected_branch.id }}&warehouse={{ selected_warehouse.id }}" class="btn btn-sm btn-primary">Add your first Product</a></div>
+            {% endif %}
             {% endif %}
           </div>
         </td></tr>

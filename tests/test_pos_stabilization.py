@@ -22,7 +22,7 @@ from apps.inventory import services as inventory
 from apps.inventory.models import StockMovement
 from apps.registers import services as register_services
 from apps.sales import services as sales
-from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment
+from apps.sales.models import HeldSale, PaymentMethod, Sale, SaleItem, SalePayment
 from apps.sales.services import SaleError
 
 from .base import TenantTestCase
@@ -617,6 +617,46 @@ class PosUiAndContractTests(TenantTestCase):
         self.assertContains(response, 'class="pos-totals"', count=1)
         self.assertContains(response, 'class="pos-cart-items"', count=1)
         self.assertContains(response, "PAY <span", count=1)
+
+    def test_pos_operational_controls_are_in_global_header_without_shift(self):
+        response = self.client.get(reverse("sales:pos"))
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        header_start = html.index('<header class="np-topbar">')
+        header_end = html.index("</header>", header_start)
+        header = html[header_start:header_end]
+
+        self.assertIn("POS operational status", header)
+        self.assertIn(self.branch_a.name, header)
+        self.assertIn("No open shift", header)
+        self.assertIn('data-bs-target="#heldModal"', header)
+        self.assertIn('@click="toggleFullscreen()"', header)
+        self.assertNotIn("pos-header-strip", html)
+        self.assertLess(header_end, html.index('class="pos-shell"'))
+
+    def test_open_shift_header_shows_register_status_and_held_count(self):
+        HeldSale.objects.create(
+            business=self.business_a,
+            branch=self.branch_a,
+            cashier=self.owner_a,
+            label="Header count",
+            cart={"items": [{"product_id": self.product_a.id}]},
+        )
+        register_services.open_shift(
+            business=self.business_a,
+            register=self.register_a,
+            cashier=self.owner_a,
+            opening_cash=D("0"),
+        )
+
+        html = self.client.get(reverse("sales:pos")).content.decode()
+        header_start = html.index('<header class="np-topbar">')
+        header = html[header_start:html.index("</header>", header_start)]
+        self.assertIn(self.branch_a.name, header)
+        self.assertIn(self.register_a.name, header)
+        self.assertIn("Shift Open", header)
+        self.assertIn('x-text="heldCount">1</span>', header)
+        self.assertIn('x-data="pos()"', html[:header_start])
 
     def test_delivery_control_exists_only_inside_payment_modal(self):
         html = self.client.get(reverse("sales:pos")).content.decode()

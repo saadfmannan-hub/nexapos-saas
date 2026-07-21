@@ -19,12 +19,13 @@
       </div>
       <div class="table-responsive">
         <table class="table table-hover mb-0">
-          <thead><tr><th>Name</th><th>Code</th><th>Phone</th><th>Status</th><th class="w-1"></th></tr></thead>
+          <thead><tr><th>Name</th><th>Code</th><th>Type</th><th>Phone</th><th>Status</th><th class="w-1"></th></tr></thead>
           <tbody>
             {% for b in branches %}
             <tr>
               <td class="fw-semibold">{{ b.name }} {% if b.is_head_office %}<span class="badge text-bg-dark ms-1">HQ</span>{% endif %}</td>
               <td>{{ b.code }}</td>
+              <td>{{ b.get_usage_type_display }}</td>
               <td>{{ b.phone|default:"—" }}</td>
               <td>{% if b.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
               <td>{% if module_capabilities.pos_core.can_write %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'branches:branch_edit' b.public_id %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>

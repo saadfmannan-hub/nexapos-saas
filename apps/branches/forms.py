@@ -21,9 +21,10 @@ class TenantStyledModelForm(forms.ModelForm):
 class BranchForm(TenantStyledModelForm):
     class Meta:
         model = Branch
-        fields = ["name", "code", "address", "phone", "email",
+        fields = ["name", "code", "usage_type", "address", "phone", "email",
                   "invoice_prefix", "receipt_footer", "is_active"]
         widgets = {"receipt_footer": forms.Textarea(attrs={"rows": 2})}
+        labels = {"usage_type": "Location type"}
 
     def clean_code(self):
         code = self.cleaned_data["code"].strip().upper()

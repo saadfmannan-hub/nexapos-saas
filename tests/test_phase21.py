@@ -417,6 +417,73 @@ class ProductImportTests(TenantTestCase):
         self.assertTrue(any("Duplicate SKU" in msg for msg in messages))
         self.assertTrue(any("Duplicate barcode" in msg for msg in messages))
 
+    def test_product_barcode_placeholders_are_stored_as_blank(self):
+        response = self._post(
+            "product name,sku,barcode\n"
+            "Blank Barcode,PLACEHOLDER-BC-BLANK,\n"
+            "Dash Barcode One,PLACEHOLDER-BC-DASH-1,-\n"
+            "Dash Barcode Two,PLACEHOLDER-BC-DASH-2,-\n"
+            "Upper Null Barcode,PLACEHOLDER-BC-NULL-UPPER,NULL\n"
+            "Lower Null Barcode,PLACEHOLDER-BC-NULL-LOWER,null\n"
+            'Whitespace Barcode,PLACEHOLDER-BC-WHITESPACE,"   "\n'
+        )
+
+        summary = response.context["results"]["summary"]
+        self.assertEqual(summary["created"], 6)
+        self.assertEqual(summary["failed"], 0)
+        products = Product.objects.for_business(self.business_a).filter(
+            sku__startswith="PLACEHOLDER-BC-"
+        )
+        self.assertEqual(products.count(), 6)
+        self.assertEqual(set(products.values_list("barcode", flat=True)), {""})
+
+    def test_variant_barcode_placeholders_are_stored_as_blank(self):
+        response = self._post(
+            "product name,sku,variant option name,variant option value,"
+            "variant sku,variant barcode\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Blank,"
+            "PLACEHOLDER-VBC-BLANK,\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Dash One,"
+            "PLACEHOLDER-VBC-DASH-1,-\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Dash Two,"
+            "PLACEHOLDER-VBC-DASH-2,-\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Upper Null,"
+            "PLACEHOLDER-VBC-NULL-UPPER,NULL\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Lower Null,"
+            "PLACEHOLDER-VBC-NULL-LOWER,null\n"
+            "Placeholder Variants,PLACEHOLDER-VBC-PARENT,Color,Whitespace,"
+            'PLACEHOLDER-VBC-WHITESPACE,"   "\n'
+        )
+
+        summary = response.context["results"]["summary"]
+        self.assertEqual(summary["created"], 7)
+        self.assertEqual(summary["failed"], 0)
+        variants = ProductVariant.objects.for_business(self.business_a).filter(
+            sku__startswith="PLACEHOLDER-VBC-"
+        )
+        self.assertEqual(variants.count(), 6)
+        self.assertEqual(set(variants.values_list("barcode", flat=True)), {""})
+
+    def test_duplicate_real_product_barcode_is_rejected(self):
+        response = self._post(
+            "product name,sku,barcode\n"
+            "Real Barcode One,REAL-BC-PRODUCT-1,REAL-DUPLICATE-BC\n"
+            "Real Barcode Two,REAL-BC-PRODUCT-2,REAL-DUPLICATE-BC\n"
+        )
+
+        summary = response.context["results"]["summary"]
+        self.assertEqual(summary["created"], 0)
+        self.assertEqual(summary["failed"], 2)
+        self.assertFalse(
+            Product.objects.for_business(self.business_a).filter(
+                sku__startswith="REAL-BC-PRODUCT-"
+            ).exists()
+        )
+        self.assertIn(
+            "Barcode is repeated in this file: REAL-DUPLICATE-BC",
+            response.context["results"]["errors"][0][1],
+        )
+
     def test_normal_product_without_variant_columns_stays_standard(self):
         response = self._post(
             "product name,sku,product type\n"
@@ -488,7 +555,7 @@ class ProductImportTests(TenantTestCase):
             response.context["results"]["errors"][0][1],
         )
 
-    def test_duplicate_non_empty_variant_barcode_is_rejected(self):
+    def test_duplicate_real_variant_barcode_is_rejected(self):
         response = self._post(
             "product name,sku,variant option name,variant option value,"
             "variant sku,variant barcode\n"

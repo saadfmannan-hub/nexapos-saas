@@ -3,7 +3,7 @@ import json
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Q, Sum
+from django.db.models import Prefetch, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
@@ -40,6 +40,7 @@ from .models import (
     Sale,
     SaleItem,
     SaleReturn,
+    SaleReturnItem,
 )
 from .printing import build_print_header
 from .services import SaleError
@@ -49,7 +50,10 @@ def _user_branches(request):
     """Branches the member may operate in."""
     from apps.branches.models import Branch
 
-    qs = Branch.objects.for_business(request.business).filter(is_active=True)
+    qs = Branch.objects.for_business(request.business).filter(
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
+    )
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
         qs = qs.filter(id__in=allowed)
@@ -274,9 +278,10 @@ def pos_view(request):
 @module_permission_required("pos_core", "sales.create")
 def pos_products(request):
     """JSON product grid/search for the POS screen."""
-    from apps.branches.models import Warehouse
+    from apps.branches.models import Branch, Warehouse
     from apps.catalog import services as catalog_services
     from apps.catalog.models import Product
+    from apps.inventory import services as inventory_services
 
     q = request.GET.get("q", "").strip()
     category_id = request.GET.get("category", "")
@@ -289,6 +294,7 @@ def pos_products(request):
         pk=warehouse_id,
         is_active=True,
         branch__isnull=False,
+        branch__usage_type=Branch.UsageType.SALES_BRANCH,
     )
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
@@ -321,25 +327,56 @@ def pos_products(request):
         )
     if category_id.isdigit():
         qs = qs.filter(Q(category_id=category_id) | Q(category__parent_id=category_id))
-    qs = qs.order_by("name")[:60]
+    products = list(qs.order_by("name")[:60])
+    product_ids = [product.pk for product in products]
+    shared_warehouse = inventory_services.configured_shared_fabric_warehouse(
+        request.business
+    )
+    stock_warehouse_ids = [warehouse.pk]
+    if shared_warehouse is not None:
+        stock_warehouse_ids.append(shared_warehouse.pk)
 
     stock_map = {}
     for row in StockLevel.objects.for_business(request.business).filter(
-        warehouse=warehouse, product__in=[p.pk for p in qs]
-    ).values("product_id", "variant_id", "quantity"):
-        stock_map[(row["product_id"], row["variant_id"])] = float(row["quantity"])
-    visible_variant_ids = set(
+        warehouse_id__in=stock_warehouse_ids,
+        product_id__in=product_ids,
+    ).values("warehouse_id", "product_id", "variant_id", "quantity"):
+        stock_map[
+            (row["warehouse_id"], row["product_id"], row["variant_id"])
+        ] = float(row["quantity"])
+    branch_variant_ids = set(
         StockLevel.objects.for_business(request.business)
         .filter(
             warehouse__branch=warehouse.branch,
-            product__in=[p.pk for p in qs],
+            product_id__in=product_ids,
             variant__isnull=False,
         )
         .values_list("variant_id", flat=True)
     )
+    shared_variant_ids = set()
+    if shared_warehouse is not None:
+        shared_variant_ids = set(
+            StockLevel.objects.for_business(request.business)
+            .filter(
+                warehouse=shared_warehouse,
+                product_id__in=product_ids,
+                variant__isnull=False,
+            )
+            .values_list("variant_id", flat=True)
+        )
 
     items = []
-    for p in qs:
+    for p in products:
+        source_warehouse = (
+            shared_warehouse
+            if p.is_meter_tailoring and shared_warehouse is not None
+            else warehouse
+        )
+        visible_variant_ids = (
+            shared_variant_ids
+            if p.is_meter_tailoring and shared_warehouse is not None
+            else branch_variant_ids
+        )
         tax_rate = calculations.resolve_tax_rate(request.business, p)
         brand_name = (
             p.brand.name
@@ -370,7 +407,9 @@ def pos_products(request):
                     "is_legacy_tailoring": p.is_legacy_tailoring,
                     "unit": p.unit.abbreviation if p.unit else "",
                     "min_price": str(p.minimum_sale_price),
-                    "stock": stock_map.get((p.id, v.id), None),
+                    "stock": stock_map.get(
+                        (source_warehouse.id, p.id, v.id), None
+                    ),
                     "image": v.image.url if v.image else (p.image.url if p.image else None),
                 })
         else:
@@ -388,7 +427,9 @@ def pos_products(request):
                 "is_legacy_tailoring": p.is_legacy_tailoring,
                 "unit": p.unit.abbreviation if p.unit else "",
                 "min_price": str(p.minimum_sale_price),
-                "stock": stock_map.get((p.id, None), None),
+                "stock": stock_map.get(
+                    (source_warehouse.id, p.id, None), None
+                ),
                 "image": p.image.url if p.image else None,
             })
     return JsonResponse({"items": items})
@@ -397,7 +438,7 @@ def pos_products(request):
 @module_permission_required("pos_core", "sales.create")
 def pos_barcode(request):
     """Exact barcode/SKU lookup — used by scanner input."""
-    from apps.branches.models import Warehouse
+    from apps.branches.models import Branch, Warehouse
     from apps.catalog import services as catalog_services
     from apps.catalog.models import Product, ProductVariant
 
@@ -413,6 +454,7 @@ def pos_barcode(request):
             pk=int(raw_warehouse),
             is_active=True,
             branch__isnull=False,
+            branch__usage_type=Branch.UsageType.SALES_BRANCH,
         )
         allowed = request.membership.allowed_branch_ids
         if allowed is not None:
@@ -504,6 +546,7 @@ def pos_customers(request):
         branch = Branch.objects.for_business(request.business).get(
             pk=request.GET.get("branch_id"),
             is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
         )
     except (Branch.DoesNotExist, ValueError):
         return JsonResponse({"results": [], "error": "Invalid branch."}, status=404)
@@ -544,6 +587,7 @@ def pos_quick_customer(request):
         branch = Branch.objects.for_business(request.business).get(
             pk=request.POST.get("branch_id"),
             is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
         )
     except (Branch.DoesNotExist, ValueError):
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=404)
@@ -601,7 +645,9 @@ def pos_checkout(request):
 
     try:
         branch = Branch.objects.for_business(request.business).get(
-            pk=payload.get("branch_id"), is_active=True
+            pk=payload.get("branch_id"),
+            is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
         )
     except Branch.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=400)
@@ -881,7 +927,9 @@ def pos_hold(request):
 
     try:
         branch = Branch.objects.for_business(request.business).get(
-            pk=payload.get("branch_id"), is_active=True
+            pk=payload.get("branch_id"),
+            is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
         )
     except Branch.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=400)
@@ -1072,7 +1120,9 @@ def sale_detail(request, public_id):
                 PaymentMethod.Kind.STORE_CREDIT,
             ]
         )
-    return_records = list(sale.returns.prefetch_related("items"))
+    return_records = list(sale.returns.prefetch_related(
+        _return_items_prefetch(request.business)
+    ))
     has_returns = bool(return_records)
     if not credit_access:
         return_records = [
@@ -1652,11 +1702,23 @@ def sale_void(request, public_id):
 # ---------------------------------------------------------------------------
 # Returns
 # ---------------------------------------------------------------------------
+def _return_items_prefetch(business):
+    return Prefetch(
+        "items",
+        queryset=(
+            SaleReturnItem.objects.for_business(business)
+            .select_related("sale_item")
+            .order_by("pk")
+        ),
+    )
+
+
 @module_permission_required("pos_core", "sales.refund")
 def return_list(request):
     qs = (
         SaleReturn.objects.for_business(request.business)
         .select_related("sale", "customer", "processed_by")
+        .prefetch_related(_return_items_prefetch(request.business))
     )
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:

@@ -75,13 +75,18 @@ def shift_list(request):
     )
     registers = (
         CashRegister.objects.for_business(request.business)
-        .filter(is_active=True, branch__is_active=True)
+        .filter(
+            is_active=True,
+            branch__is_active=True,
+            branch__usage_type=Branch.UsageType.SALES_BRANCH,
+        )
         .select_related("branch")
     )
     # All active branches for the business; restricted only when the
     # member is explicitly branch-limited (owners/admins see everything).
     branches = Branch.objects.for_business(request.business).filter(
-        is_active=True
+        is_active=True,
+        usage_type=Branch.UsageType.SALES_BRANCH,
     ).order_by("name")
     allowed = request.membership.allowed_branch_ids
     if allowed is not None:
