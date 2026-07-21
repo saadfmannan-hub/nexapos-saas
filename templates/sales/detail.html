@@ -34,7 +34,7 @@
       <div class="table-responsive"><table class="table table-sm mb-0">
         <thead><tr><th>Item</th><th class="text-end">Qty</th><th class="text-end">Price</th>
           <th class="text-end">Discount</th><th class="text-end">VAT</th><th class="text-end">Total</th>
-          {% if show_profit %}<th class="text-end">Profit</th>{% endif %}
+          {% if show_profit %}<th class="text-end">{% if has_returns %}Net Profit{% else %}Profit{% endif %}</th>{% endif %}
           <th class="text-end">Returned</th><th class="text-end">Production</th></tr></thead>
         <tbody>
           {% for item in items %}
@@ -63,7 +63,7 @@
             <td class="text-end">{% money item.discount_amount %}</td>
             <td class="text-end">{% money item.tax_amount %}</td>
             <td class="text-end fw-semibold">{% money item.display_subtotal %}</td>
-            {% if show_profit %}<td class="text-end">{% money item.gross_profit %}</td>{% endif %}
+            {% if show_profit %}<td class="text-end">{% money item.display_net_profit %}</td>{% endif %}
             <td class="text-end">{% if item.returned_quantity > 0 %}<span class="text-danger">{{ item.returned_quantity }}</span>{% else %}—{% endif %}</td>
             <td class="text-end">
               {% if show_tailoring and item.is_tailoring_line %}
@@ -146,8 +146,8 @@
         {% endif %}
         {% if credit_access %}<tr><th>Balance</th><td class="{% if sale.balance > 0 %}text-danger fw-bold{% endif %}">{% money sale.balance %}</td></tr>{% endif %}
         {% if show_profit %}
-        <tr><th>Cost</th><td>{% money sale.total_cost %}</td></tr>
-        <tr><th>Gross profit</th><td class="fw-bold text-success">{% money sale.gross_profit %}</td></tr>
+        <tr><th>{% if has_returns %}Net cost{% else %}Cost{% endif %}</th><td>{% money net_cost %}</td></tr>
+        <tr><th>{% if has_returns %}Net gross profit{% else %}Gross profit{% endif %}</th><td class="fw-bold text-success">{% money net_gross_profit %}</td></tr>
         {% endif %}
         {% if sale.status == "voided" %}
         <tr><th>Voided by</th><td>{{ sale.voided_by.full_name }} ({{ sale.voided_at|date:"Y-m-d H:i" }})</td></tr>

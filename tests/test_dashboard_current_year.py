@@ -9,7 +9,6 @@ from django.utils import timezone
 
 from apps.accounts.models import Membership, Role, User
 from apps.branches.models import Branch, Warehouse
-from apps.catalog.models import Product
 from apps.customers.models import Customer
 from apps.expenses.models import Expense, ExpenseCategory
 from apps.inventory import services as inventory
@@ -18,7 +17,6 @@ from apps.sales import services as sales
 from apps.sales.models import PaymentMethod, Sale, SalePayment, SaleReturn
 
 from .base import TenantTestCase
-
 
 D = Decimal
 
@@ -104,15 +102,22 @@ class CurrentYearDashboardTests(TenantTestCase):
             unit_cost=D("4.000"),
             user=self.owner_a,
         )
+        self.membership_a().branches.add(self.branch_a, branch)
         return branch, warehouse
 
     def make_branch_sale(self, branch, warehouse):
+        customer = Customer.objects.create(
+            business=self.business_a,
+            home_branch=branch,
+            code=f"CY-{branch.code}",
+            full_name=f"Current Year Customer {branch.code}",
+        )
         return sales.complete_sale(
             business=self.business_a,
             branch=branch,
             warehouse=warehouse,
             cashier=self.owner_a,
-            customer=self.walk_in_a,
+            customer=customer,
             membership=self.membership_a(),
             items=[{
                 "product": self.product_a,
@@ -252,7 +257,8 @@ class CurrentYearDashboardTests(TenantTestCase):
 
         result = self.summary()
 
-        self.assertEqual(result["total_sales"], D("21.000"))
+        self.assertEqual(result["gross_sales"], D("21.000"))
+        self.assertEqual(result["total_sales"], D("10.500"))
         self.assertEqual(result["total_returns"], D("10.500"))
         self.assertEqual(result["net_sales"], D("10.500"))
 

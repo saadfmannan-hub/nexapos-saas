@@ -2,7 +2,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db.models import Avg, Count, Max, Q, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -195,6 +195,7 @@ def customer_form(request, public_id=None):
 
 @module_permission_required("pos_core", "customers.view")
 def customer_detail(request, public_id):
+    from apps.sales import financials
     from apps.sales.models import Sale, SaleReturn
 
     customer = get_tenant_object(
@@ -208,13 +209,32 @@ def customer_detail(request, public_id):
         .select_related("branch")
         .order_by("-sale_date"),
     )
-    # Aggregate aliases must not shadow field names ("total" would break
-    # Avg("total") with "Cannot compute Avg('total'): 'total' is an aggregate").
-    stats = sales.exclude(status=Sale.Status.VOIDED).aggregate(
-        sum_total=Sum("total"), paid=Sum("amount_paid"), count=Count("id"),
-        avg=Avg("total"), last=Max("sale_date"),
+    valid_sales = sales.exclude(status=Sale.Status.VOIDED)
+    financial_totals = financials.sales_activity_summary(valid_sales)
+    metadata = valid_sales.aggregate(
+        count=Count("id"),
+        last=Max("sale_date"),
     )
-    stats["total"] = stats.pop("sum_total")
+    stats = {
+        "total": financial_totals.net_sales,
+        "paid": financial_totals.net_paid,
+        "count": metadata["count"],
+        "avg": (
+            financial_totals.net_sales / metadata["count"]
+            if metadata["count"]
+            else 0
+        ),
+        "last": metadata["last"],
+    }
+    recent_sales = list(
+        sales.prefetch_related("payments__method", "returns").order_by(
+            "-sale_date"
+        )[:25]
+    )
+    for sale in recent_sales:
+        summary = financials.financial_summary_for_sale(sale)
+        sale.display_net_total = summary.net_sales
+        sale.display_net_paid = summary.net_paid
     credit_access = _credit_decision(
         request, permission_code="customers.view"
     ).allowed
@@ -245,7 +265,7 @@ def customer_detail(request, public_id):
     ).allowed
     payment_form = CustomerPaymentForm(request.business) if can_collect else None
     return render(request, "customers/detail.html", {
-        "customer": customer, "sales": sales[:25], "stats": stats,
+        "customer": customer, "sales": recent_sales, "stats": stats,
         "payments": payments[:25], "returns": returns[:20],
         "payment_form": payment_form, "active_nav": "customers",
         "can_collect": can_collect,

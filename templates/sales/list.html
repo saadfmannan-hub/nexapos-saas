@@ -55,7 +55,7 @@
     <table class="table table-hover mb-0">
       <thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Branch</th>
         {% if tailoring_enabled %}<th>Delivery</th>{% endif %}
-        <th class="text-end">Discount</th><th class="text-end">Total</th><th class="text-end">Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
+        <th class="text-end">Net Discount</th><th class="text-end">Net Total</th><th class="text-end">Net Paid</th><th>Status</th><th class="w-1"></th></tr></thead>
       <tbody>
         {% for s in page_obj %}
         <tr>
@@ -69,9 +69,9 @@
               <span class="badge badge-status bs-{{ s.delivery_status }}">{{ s.get_delivery_status_display }}</span>
             {% else %}—{% endif %}
           </td>{% endif %}
-          <td class="text-end">{% money s.discount_amount %}</td>
-          <td class="text-end fw-semibold">{% money s.total %}</td>
-          <td class="text-end">{% money s.amount_paid %}</td>
+          <td class="text-end">{% money s.display_net_discount %}</td>
+          <td class="text-end fw-semibold">{% money s.display_net_total %}</td>
+          <td class="text-end">{% money s.display_net_paid %}</td>
           <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
           <td class="text-nowrap">
             <a class="btn btn-sm btn-outline-secondary" title="Receipt" target="_blank" href="{% url 'sales:receipt' s.public_id %}"><i class="bi bi-printer"></i></a>

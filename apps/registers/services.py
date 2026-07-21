@@ -497,16 +497,17 @@ def shift_totals(shift):
     """Aggregate payment/refund/expense figures for X/Z reports."""
     from apps.customers.models import CustomerPayment
     from apps.expenses.models import Expense
+    from apps.sales import financials
     from apps.sales.models import SalePayment, SaleReturn
 
     zero = Decimal("0")
     payments = (
         SalePayment.objects.for_business(shift.business)
         .filter(shift=shift)
-        .values("method__kind")
-        .annotate(total=Sum("amount"))
+        .exclude(sale__status__in=["draft", "voided"])
     )
-    by_kind = {row["method__kind"]: row["total"] or zero for row in payments}
+    returns = SaleReturn.objects.for_business(shift.business).filter(shift=shift)
+    tenders = financials.tender_summary_from_querysets(payments, returns)
 
     collections = (
         CustomerPayment.objects.for_business(shift.business)
@@ -518,11 +519,7 @@ def shift_totals(shift):
         row["payment_method__kind"]: row["total"] or zero for row in collections
     }
 
-    cash_refunds = (
-        SaleReturn.objects.for_business(shift.business)
-        .filter(shift=shift, refund_method=SaleReturn.RefundMethod.CASH)
-        .aggregate(t=Sum("refund_amount"))["t"] or zero
-    )
+    cash_refunds = tenders.refunded(financials.CASH)
     cash_expenses = (
         Expense.objects.for_business(shift.business)
         .filter(shift=shift, payment_method__kind="cash")
@@ -530,19 +527,28 @@ def shift_totals(shift):
         .aggregate(t=Sum("amount"))["t"] or zero
     )
 
-    cash_sales = by_kind.get("cash", zero)
+    gross_cash_sales = tenders.gross.get(financials.CASH, zero)
+    cash_sales = tenders.amount(financials.CASH)
     cash_collected = collections_by_kind.get("cash", zero)
     # Change is recorded on the sale; cash payments are stored net of change.
     expected_cash = (
-        shift.opening_cash + cash_sales + cash_collected - cash_refunds - cash_expenses
+        shift.opening_cash
+        + gross_cash_sales
+        + cash_collected
+        - cash_refunds
+        - cash_expenses
     )
     return {
+        "gross_cash_sales": gross_cash_sales,
         "cash_sales": cash_sales,
-        "card_sales": by_kind.get("card", zero),
-        "bank_sales": by_kind.get("bank", zero),
-        "credit_sales": by_kind.get("customer_credit", zero),
-        "store_credit_used": by_kind.get("store_credit", zero),
-        "other_sales": by_kind.get("other", zero) + by_kind.get("online", zero),
+        "card_sales": tenders.amount(financials.CARD),
+        "bank_sales": tenders.amount(financials.BANK),
+        "credit_sales": tenders.amount(financials.CUSTOMER_CREDIT),
+        "store_credit_used": tenders.amount(financials.STORE_CREDIT),
+        "other_sales": (
+            tenders.amount(financials.OTHER)
+            + tenders.amount(financials.ONLINE)
+        ),
         "customer_collections_cash": cash_collected,
         "cash_refunds": cash_refunds,
         "cash_expenses": cash_expenses,

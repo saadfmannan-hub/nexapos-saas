@@ -3,7 +3,7 @@ import json
 from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Prefetch, Q, Sum
+from django.db.models import Prefetch, Q
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
@@ -31,7 +31,7 @@ from apps.subscriptions.access import (
 from apps.subscriptions.decorators import module_permission_required
 from apps.subscriptions.exceptions import ModuleAccessDenied
 
-from . import calculations, services
+from . import calculations, financials, services
 from .forms import ActualFabricForm
 from .models import (
     MAX_FABRIC_TOTAL,
@@ -1076,13 +1076,43 @@ def sale_list(request):
         elif delivery == "scheduled":
             qs = qs.filter(delivery_date__isnull=False)
 
-    totals = qs.aggregate(
-        total=Sum("total"),
-        paid=Sum("amount_paid"),
-        discount=Sum("discount_amount"),
+    financial_totals = financials.sales_activity_summary(qs)
+    discount_items = (
+        SaleItem.objects.for_business(request.business)
+        .filter(sale__in=qs)
+        .select_related("sale")
+        .order_by("sale_id", "id")
+    )
+    net_discount = D("0")
+    sale_items = []
+    current_sale = None
+    for item in discount_items:
+        if current_sale is not None and item.sale_id != current_sale.pk:
+            net_discount += financials.net_sale_discount(
+                current_sale, items=sale_items
+            )
+            sale_items = []
+        current_sale = item.sale
+        sale_items.append(item)
+    if current_sale is not None:
+        net_discount += financials.net_sale_discount(
+            current_sale, items=sale_items
+        )
+    totals = {
+        "total": financial_totals.net_sales,
+        "paid": financial_totals.net_paid,
+        "discount": money(net_discount),
+    }
+    qs = qs.prefetch_related(
+        "returns", "payments__method", "items"
     )
     paginator = Paginator(qs, 25)
     page_obj = paginator.get_page(request.GET.get("page"))
+    for sale in page_obj.object_list:
+        summary = financials.financial_summary_for_sale(sale)
+        sale.display_net_total = summary.net_sales
+        sale.display_net_paid = summary.net_paid
+        sale.display_net_discount = financials.net_sale_discount(sale)
     return render(request, "sales/list.html", {
         "page_obj": page_obj, "q": q, "active_nav": "sales",
         "statuses": Sale.Status.choices, "branches": _user_branches(request),
@@ -1104,6 +1134,32 @@ def sale_detail(request, public_id):
     items = _invoice_display_items(list(
         sale.items.select_related("product__unit", "variant")
     ))
+    return_records = list(sale.returns.prefetch_related(
+        _return_items_prefetch(request.business)
+    ))
+    return_items = [
+        return_item
+        for sale_return in return_records
+        for return_item in sale_return.items.all()
+    ]
+    item_financials = financials.item_financial_summary_for_sale(
+        sale,
+        items=items,
+        return_items=return_items,
+    )
+    return_items_by_sale_item = {}
+    for return_item in return_items:
+        return_items_by_sale_item.setdefault(
+            return_item.sale_item_id, []
+        ).append(return_item)
+    for item in items:
+        values = financials.net_item_values(
+            item,
+            return_items=return_items_by_sale_item.get(item.pk, []),
+        )
+        item.display_net_profit = (
+            D("0") if sale.status == Sale.Status.VOIDED else values["profit"]
+        )
     access_context = get_access_context(request)
     show_tailoring = access_context.has_module("tailoring")
     has_tailoring_jobs = show_tailoring and any(
@@ -1120,9 +1176,6 @@ def sale_detail(request, public_id):
                 PaymentMethod.Kind.STORE_CREDIT,
             ]
         )
-    return_records = list(sale.returns.prefetch_related(
-        _return_items_prefetch(request.business)
-    ))
     has_returns = bool(return_records)
     if not credit_access:
         return_records = [
@@ -1167,6 +1220,8 @@ def sale_detail(request, public_id):
         "show_tailoring": show_tailoring,
         "can_edit_actual_fabric": can_edit_actual_fabric,
         "max_fabric_total": MAX_FABRIC_TOTAL,
+        "net_cost": item_financials.net.cost,
+        "net_gross_profit": item_financials.net.profit,
         "discounted_subtotal": money(sale.subtotal - sale.discount_amount),
         "invoice_label": "TAX INVOICE" if settings_obj.vat_enabled else "INVOICE",
         "show_vat": bool(settings_obj.show_vat_on_invoice_receipt and (vat_rate or sale.tax_amount)),

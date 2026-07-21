@@ -47,6 +47,8 @@ class ShiftTests(TenantTestCase):
             shift=shift,
         )
         totals = registers.shift_totals(shift)
+        self.assertEqual(totals["gross_cash_sales"], D("21.000"))
+        self.assertEqual(totals["cash_sales"], D("10.500"))
         self.assertEqual(totals["cash_refunds"], D("10.500"))
         self.assertEqual(totals["expected_cash"], D("60.500"))
 

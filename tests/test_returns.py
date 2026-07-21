@@ -306,6 +306,7 @@ class ReturnTests(TenantTestCase):
             if row[1] == sale.invoice_number
         ][0]
         self.assertEqual(summary[2], D("70.875"))
+        self.assertEqual(summary[7], D("7.500"))
         self.assertEqual(summary[8], D("3.375"))
         self.assertEqual(summary[9], D("67.500"))
         self.assertEqual(summary_data["totals"][2], D("112.875"))
@@ -316,6 +317,7 @@ class ReturnTests(TenantTestCase):
         self.assertEqual(customer[3], D("70.875"))
         self.assertEqual(customer[4], D("60.875"))
         self.assertEqual(customer[5], D("10.000"))
+        self.assertEqual(customer[6], D("7.500"))
 
         from apps.reports.queries import returns_report
 

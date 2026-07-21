@@ -173,6 +173,8 @@ def shift_open(request):
 
 @module_permission_required("pos_core", "shifts.open")
 def shift_detail(request, public_id):
+    from apps.sales import financials
+
     shift = _shift_for_request(
         request,
         public_id,
@@ -184,7 +186,15 @@ def shift_detail(request, public_id):
         from django.http import Http404
         raise Http404
     totals = services.shift_totals(shift)
-    sales = shift.sales.select_related("customer").order_by("-sale_date")[:100]
+    sales = list(
+        shift.sales.select_related("customer")
+        .prefetch_related("payments__method", "returns")
+        .order_by("-sale_date")[:100]
+    )
+    for sale in sales:
+        sale.display_net_total = financials.financial_summary_for_sale(
+            sale
+        ).net_sales
     return render(request, "registers/shift_detail.html", {
         "shift": shift, "totals": totals, "sales": sales,
         "active_nav": "registers",

@@ -34,6 +34,7 @@ from apps.core.date_ranges import (
     business_timezone,
     filter_business_date_range,
 )
+from apps.sales import financials
 
 ZERO = Decimal("0")
 
@@ -109,42 +110,7 @@ def _net_pos_meter(item, *, is_voided=False):
 
 
 def _net_item_values(item):
-    net_qty = item.quantity - item.returned_quantity
-    if not item.quantity:
-        return {
-            "qty": ZERO,
-            "returned": item.returned_quantity,
-            "revenue": ZERO,
-            "tax": ZERO,
-            "cost": ZERO,
-            "profit": ZERO,
-        }
-    ratio = net_qty / item.quantity
-    return {
-        "qty": net_qty,
-        "returned": item.returned_quantity,
-        "revenue": _money(item.line_total * ratio),
-        "discount": _money(item.discount_amount * ratio),
-        "tax": _money(item.tax_amount * ratio),
-        "cost": _money(item.unit_cost * item.inventory_quantity * ratio),
-        "profit": _money(item.gross_profit * ratio),
-    }
-
-
-def _payment_breakdown(sale):
-    from apps.sales.models import PaymentMethod
-
-    amounts = {"bank": ZERO, "card": ZERO, "cash": ZERO, "credit": ZERO}
-    for payment in sale.payments.all():
-        if payment.method.kind == PaymentMethod.Kind.BANK:
-            amounts["bank"] += payment.amount
-        elif payment.method.kind == PaymentMethod.Kind.CARD:
-            amounts["card"] += payment.amount
-        elif payment.method.kind == PaymentMethod.Kind.CASH:
-            amounts["cash"] += payment.amount
-        elif payment.method.kind == PaymentMethod.Kind.CUSTOMER_CREDIT:
-            amounts["credit"] += payment.amount
-    return {key: _money(value) for key, value in amounts.items()}
+    return financials.net_item_values(item)
 
 
 def _payment_method_summary(sale, *, include_customer_credit=True):
@@ -164,26 +130,6 @@ def _payment_method_summary(sale, *, include_customer_credit=True):
         if payment.method.name not in names:
             names.append(payment.method.name)
     return " + ".join(names) or "-"
-
-
-def _real_received(sale):
-    from apps.sales.models import SaleReturn
-
-    payments = _payment_breakdown(sale)
-    received = payments["bank"] + payments["card"] + payments["cash"]
-    cash_refunds = sum(
-        (
-            r.refund_amount
-            for r in sale.returns.all()
-            if r.refund_method in (
-                SaleReturn.RefundMethod.BANK,
-                SaleReturn.RefundMethod.CARD,
-                SaleReturn.RefundMethod.CASH,
-            )
-        ),
-        ZERO,
-    )
-    return _money(received - cash_refunds)
 
 
 def _net_sale_tax(sale):
@@ -257,13 +203,11 @@ def current_year_financial_summary(
 ):
     """Current-calendar-year dashboard totals, independent of date filters.
 
-    Receivable follows ``customer_receivables``: the current outstanding
-    amount on valid invoices created in the requested range. Real payments
-    are cash, card, and bank entries; cash/card/bank refunds are backed out
-    before the per-invoice balance is clamped at zero.
+    Sales and tender activity use their own transaction dates. Receivable is
+    the current net balance of valid invoices created in the year.
     """
     from apps.core.money import money
-    from apps.sales.models import PaymentMethod, Sale, SaleItem, SalePayment, SaleReturn
+    from apps.sales.models import Sale, SalePayment, SaleReturn
 
     today = today or business_localdate(business)
     year_start = date(today.year, 1, 1)
@@ -271,19 +215,6 @@ def current_year_financial_summary(
         selected_branch_id = int(branch_id) if branch_id is not None else None
     except (TypeError, ValueError):
         selected_branch_id = None
-
-    receivable_payment_kinds = (
-        PaymentMethod.Kind.CASH,
-        PaymentMethod.Kind.CARD,
-        PaymentMethod.Kind.BANK,
-    )
-    income_payment_kinds = receivable_payment_kinds + (
-        PaymentMethod.Kind.ONLINE,
-        PaymentMethod.Kind.OTHER,
-    )
-    amount_field = DecimalField(max_digits=30, decimal_places=3)
-    calculation_field = DecimalField(max_digits=38, decimal_places=12)
-    zero = Value(ZERO, output_field=amount_field)
 
     valid_sales = _sales_base(
         business,
@@ -300,77 +231,10 @@ def current_year_financial_summary(
         branch_id=selected_branch_id,
     )
 
-    if include_customer_credit:
-        payment_subquery = (
-            SalePayment.objects.for_business(business)
-            .filter(
-                sale_id=OuterRef("pk"),
-                method__kind__in=receivable_payment_kinds,
-            )
-            .values("sale_id")
-            .annotate(total=Sum("amount"))
-            .values("total")[:1]
-        )
-        return_subquery = (
-            SaleReturn.objects.for_business(business)
-            .filter(sale_id=OuterRef("pk"))
-            .values("sale_id")
-            .annotate(total=Sum("refund_amount"))
-            .values("total")[:1]
-        )
-        paid_refund_subquery = (
-            SaleReturn.objects.for_business(business)
-            .filter(
-                sale_id=OuterRef("pk"),
-                refund_method__in=receivable_payment_kinds,
-            )
-            .values("sale_id")
-            .annotate(total=Sum("refund_amount"))
-            .values("total")[:1]
-        )
-        sales_with_balance = valid_sales.annotate(
-            _real_received=Coalesce(
-                Subquery(payment_subquery, output_field=amount_field),
-                zero,
-                output_field=amount_field,
-            ),
-            _returned_total=Coalesce(
-                Subquery(return_subquery, output_field=amount_field),
-                zero,
-                output_field=amount_field,
-            ),
-            _paid_refunds=Coalesce(
-                Subquery(paid_refund_subquery, output_field=amount_field),
-                zero,
-                output_field=amount_field,
-            ),
-        ).annotate(
-            _receivable=Greatest(
-                ExpressionWrapper(
-                    F("total")
-                    - F("_returned_total")
-                    - F("_real_received")
-                    + F("_paid_refunds"),
-                    output_field=amount_field,
-                ),
-                zero,
-                output_field=amount_field,
-            )
-        )
-        sales_totals = sales_with_balance.aggregate(
-            total_sales=Sum("total", output_field=amount_field),
-            total_receivable=Sum("_receivable", output_field=amount_field),
-        )
-    else:
-        sales_totals = valid_sales.aggregate(
-            total_sales=Sum("total", output_field=amount_field),
-        )
-        sales_totals["total_receivable"] = None
-
     payments = SalePayment.objects.for_business(business).filter(
         payment_date__gte=year_start,
         payment_date__lte=today,
-        method__kind__in=income_payment_kinds,
+        method__kind__in=financials.INCOME_PAYMENT_KINDS,
     ).exclude(sale__status__in=[Sale.Status.DRAFT, Sale.Status.VOIDED])
     payments = _scope_to_membership_branches(
         payments,
@@ -387,24 +251,6 @@ def current_year_financial_summary(
             Q(sale__warehouse__branch_id__in=allowed_branch_ids)
             | Q(sale__warehouse__branch__isnull=True)
         )
-    total_income = payments.aggregate(total=Sum("amount"))["total"] or ZERO
-
-    total_expenses = None
-    if include_expenses:
-        from apps.expenses.models import Expense
-
-        expenses = Expense.objects.for_business(business).filter(
-            expense_date__gte=year_start,
-            expense_date__lte=today,
-            status__in=[Expense.Status.APPROVED, Expense.Status.PAID],
-        )
-        expenses = _scope_to_membership_branches(
-            expenses,
-            business=business,
-            membership=membership,
-            branch_id=selected_branch_id,
-        )
-        total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
 
     returns = filter_business_date_range(
         SaleReturn.objects.for_business(business),
@@ -431,56 +277,66 @@ def current_year_financial_summary(
             Q(sale__warehouse__branch_id__in=allowed_branch_ids)
             | Q(sale__warehouse__branch__isnull=True)
         )
-    total_returns = returns.aggregate(total=Sum("refund_amount"))["total"] or ZERO
+
+    sales_activity = financials.sales_activity_summary(valid_sales, returns)
+    tender_activity = financials.tender_summary_from_querysets(payments, returns)
+    total_receivable = None
+    if include_customer_credit:
+        financial_sales = valid_sales.prefetch_related(
+            "payments__method", "returns"
+        )
+        total_receivable = money(sum(
+            (
+                financials.financial_summary_for_sale(sale).receivable
+                for sale in financial_sales
+            ),
+            ZERO,
+        ))
+
+    total_expenses = None
+    if include_expenses:
+        from apps.expenses.models import Expense
+
+        expenses = Expense.objects.for_business(business).filter(
+            expense_date__gte=year_start,
+            expense_date__lte=today,
+            status__in=[Expense.Status.APPROVED, Expense.Status.PAID],
+        )
+        expenses = _scope_to_membership_branches(
+            expenses,
+            business=business,
+            membership=membership,
+            branch_id=selected_branch_id,
+        )
+        total_expenses = expenses.aggregate(total=Sum("amount"))["total"] or ZERO
 
     gross_profit = None
     if include_profit:
-        net_quantity = ExpressionWrapper(
-            F("quantity") - F("returned_quantity"),
-            output_field=calculation_field,
+        item_activity = financials.item_activity_summary(
+            valid_sales,
+            returns,
+            include_discount=False,
         )
-        proportional_profit = ExpressionWrapper(
-            F("gross_profit") * net_quantity / F("quantity"),
-            output_field=calculation_field,
-        )
-        rounded_profit = ExpressionWrapper(
-            Round(proportional_profit, precision=3),
-            output_field=amount_field,
-        )
-        gross_profit = (
-            SaleItem.objects.for_business(business)
-            .filter(sale__in=valid_sales)
-            .aggregate(
-                total=Sum(
-                    Case(
-                        When(quantity=0, then=zero),
-                        default=rounded_profit,
-                        output_field=amount_field,
-                    ),
-                    output_field=amount_field,
-                )
-            )["total"]
-            or ZERO
-        )
+        gross_profit = item_activity.net.profit
 
-    total_sales = money(sales_totals["total_sales"] or ZERO)
-    total_receivable = (
-        money(sales_totals["total_receivable"] or ZERO)
-        if include_customer_credit
-        else None
-    )
-    total_income = money(total_income)
+    total_sales = sales_activity.net_sales
+    gross_sales = sales_activity.gross_sales
+    net_income = tender_activity.received(financials.INCOME_PAYMENT_KINDS)
     total_expenses = money(total_expenses) if total_expenses is not None else None
-    total_returns = money(total_returns)
-    net_sales = money(total_sales - total_returns)
+    total_returns = sales_activity.returns
+    net_sales = sales_activity.net_sales
     gross_profit = money(gross_profit) if gross_profit is not None else None
 
     return {
         "year": today.year,
         "start_date": year_start,
         "end_date": today,
+        # Legacy aliases remain for existing callers; dashboard labels use the
+        # explicit gross/net keys below.
         "total_sales": total_sales,
-        "total_income": total_income,
+        "gross_sales": gross_sales,
+        "total_income": net_income,
+        "net_income": net_income,
         "total_receivable": total_receivable,
         "total_expenses": total_expenses,
         "total_returns": total_returns,
@@ -495,8 +351,6 @@ def current_year_financial_summary(
 
 
 def sales_summary(business, f):
-    from apps.sales.models import PaymentMethod
-
     qs = (
         _sales_base(business, f)
         .prefetch_related("returns", "items", "payments__method")
@@ -504,25 +358,17 @@ def sales_summary(business, f):
     )
     rows = []
     for sale in qs:
-        payments = {"bank": ZERO, "card": ZERO, "cash": ZERO}
-        for payment in sale.payments.all():
-            if payment.method.kind == PaymentMethod.Kind.BANK:
-                payments["bank"] += payment.amount
-            elif payment.method.kind == PaymentMethod.Kind.CARD:
-                payments["card"] += payment.amount
-            elif payment.method.kind == PaymentMethod.Kind.CASH:
-                payments["cash"] += payment.amount
-        received = payments["bank"] + payments["card"] + payments["cash"]
-        receivable = _money(sale.net_total - received)
+        summary = financials.financial_summary_for_sale(sale)
+        discount = financials.net_sale_discount(sale)
         rows.append([
             business_localtime(business, value=sale.sale_date).date(),
             sale.invoice_number,
-            _money(sale.net_total),
-            _money(payments["bank"]),
-            _money(payments["card"]),
-            _money(payments["cash"]),
-            receivable,
-            _money(sale.discount_amount),
+            summary.net_sales,
+            summary.tenders.amount(financials.BANK),
+            summary.tenders.amount(financials.CARD),
+            summary.tenders.amount(financials.CASH),
+            summary.receivable,
+            discount,
             _money(_net_sale_tax(sale)),
             _money(_net_sale_profit(sale)),
         ])
@@ -573,6 +419,7 @@ def sales_detailed(business, f):
         qs = qs.filter(garment_classification=f["garment_classification"])
 
     rows = []
+    sale_financials = {}
     pieces = {"adult": ZERO, "child": ZERO, "legacy": ZERO}
     fabric_totals = {"estimated": ZERO, "actual": ZERO, "variance": ZERO}
     has_fabric = {"estimated": False, "actual": False, "variance": False}
@@ -580,6 +427,10 @@ def sales_detailed(business, f):
     has_pos_meter = False
     for item in qs[:2000]:
         sale = item.sale
+        summary = sale_financials.get(sale.pk)
+        if summary is None:
+            summary = financials.financial_summary_for_sale(sale)
+            sale_financials[sale.pk] = summary
         quantity = item.quantity - item.returned_quantity
         if sale.status == Sale.Status.VOIDED:
             quantity = ZERO
@@ -646,9 +497,9 @@ def sales_detailed(business, f):
                 sale,
                 include_customer_credit=customer_credit_enabled,
             ),
-            sale.net_total,
-            sale.net_amount_paid,
-            sale.balance,
+            summary.net_sales,
+            summary.net_paid,
+            summary.receivable,
             sale.get_status_display(),
             pos_meter,
             net_pos_meter,
@@ -783,8 +634,9 @@ def cashier_sales(business, f):
     for sale in (
         _sales_base(business, f)
         .select_related("cashier")
-        .prefetch_related("returns", "items")
+        .prefetch_related("returns", "items", "payments__method")
     ):
+        summary = financials.financial_summary_for_sale(sale)
         name = sale.cashier.full_name
         row = by_cashier.setdefault(name, {
             "invoices": 0,
@@ -792,7 +644,7 @@ def cashier_sales(business, f):
             "profit": ZERO,
         })
         row["invoices"] += 1
-        row["total"] += sale.net_total
+        row["total"] += summary.net_sales
         row["profit"] += _net_sale_profit(sale)
     rows = [[name, r["invoices"], _money(r["total"]),
              round((_money(r["total"]) / r["invoices"]) if r["invoices"] else ZERO, 3),
@@ -808,23 +660,23 @@ def payment_methods_report(business, f):
     qs = (
         _sales_base(business, f)
         .select_related("customer")
-        .prefetch_related("payments__method")
+        .prefetch_related("payments__method", "returns")
         .order_by("sale_date", "invoice_number")
     )
     rows = []
     for sale in qs:
-        payments = _payment_breakdown(sale)
-        total_received = payments["cash"] + payments["card"] + payments["bank"]
+        summary = financials.financial_summary_for_sale(sale)
+        tenders = summary.tenders
         rows.append([
             business_localtime(business, value=sale.sale_date).date(),
             sale.invoice_number,
             sale.customer.full_name,
             sale.customer.mobile or "-",
-            payments["cash"],
-            payments["card"],
-            payments["bank"],
-            payments["credit"],
-            _money(total_received),
+            tenders.amount(financials.CASH),
+            tenders.amount(financials.CARD),
+            tenders.amount(financials.BANK),
+            tenders.amount(financials.CUSTOMER_CREDIT),
+            tenders.received(),
         ])
     totals = [
         "TOTAL", "", "", "",
@@ -1611,18 +1463,17 @@ def customer_receivables(business, f):
     )
     rows = []
     for sale in qs:
-        paid = _real_received(sale)
-        receivable = _money(sale.net_total - paid)
-        if receivable <= 0:
+        summary = financials.financial_summary_for_sale(sale)
+        if summary.receivable <= 0:
             continue
         rows.append([
             sale.customer.full_name,
             sale.customer.mobile or "-",
             sale.invoice_number,
             business_localtime(business, value=sale.sale_date).date(),
-            _money(sale.net_total),
-            paid,
-            receivable,
+            summary.net_sales,
+            summary.net_paid,
+            summary.receivable,
             sale.delivery_date or "-",
             sale.payment_state,
         ])
@@ -1643,12 +1494,13 @@ def top_customers(business, f):
         _sales_base(business, f)
         .exclude(customer__is_walk_in=True)
         .select_related("customer")
-        .prefetch_related("returns")
+        .prefetch_related("returns", "payments__method")
     ):
+        summary = financials.financial_summary_for_sale(sale)
         key = (sale.customer.full_name, sale.customer.mobile)
         row = by_customer.setdefault(key, {"invoices": 0, "total": ZERO})
         row["invoices"] += 1
-        row["total"] += sale.net_total
+        row["total"] += summary.net_sales
     rows = [[name, mobile, r["invoices"], _money(r["total"])]
             for (name, mobile), r in sorted(
                 by_customer.items(), key=lambda item: item[1]["total"],
@@ -1845,15 +1697,41 @@ def profit_loss(business, f):
     """Profit & Loss: revenue → COGS → gross profit → expenses by
     category → estimated net profit."""
     from apps.expenses.models import Expense
+    from apps.sales.models import SaleReturn
 
-    revenue = cost = gross = discount = ZERO
-    for sale in _sales_base(business, f).prefetch_related("items"):
-        discount += sale.discount_amount
-        for item in sale.items.all():
-            values = _net_item_values(item)
-            revenue += values["revenue"] - values["tax"]
-            cost += values["cost"]
-            gross += values["profit"]
+    sales = _sales_base(business, f)
+    returns = filter_business_date_range(
+        SaleReturn.objects.for_business(business),
+        business,
+        field_name="created_at",
+        date_from=f.get("date_from"),
+        date_to=f.get("date_to"),
+    )
+    if f.get("branch_id"):
+        returns = returns.filter(branch_id=f["branch_id"])
+    if f.get("warehouse_id"):
+        returns = returns.filter(warehouse_id=f["warehouse_id"])
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        returns = returns.filter(
+            branch_id__in=allowed_branch_ids,
+            warehouse__business=business,
+            sale__business=business,
+            sale__branch_id__in=allowed_branch_ids,
+        ).filter(
+            Q(warehouse__branch_id__in=allowed_branch_ids)
+            | Q(warehouse__branch__isnull=True)
+        )
+
+    activity = financials.item_activity_summary(sales, returns)
+    net_revenue = activity.net.revenue_excluding_tax
+    cost = activity.net.cost
+    gross = activity.net.profit
+    discount = activity.net.discount
+    # Line totals already include discounts. Add them back to the revenue
+    # presentation so the following discount row is one visible deduction,
+    # while gross profit remains net revenue less COGS.
+    revenue = _money(net_revenue + discount)
     exp_qs = Expense.objects.for_business(business).exclude(
         status__in=["rejected", "cancelled"])
     if f.get("date_from"):
@@ -1862,13 +1740,28 @@ def profit_loss(business, f):
         exp_qs = exp_qs.filter(expense_date__lte=f["date_to"])
     if f.get("branch_id"):
         exp_qs = exp_qs.filter(branch_id=f["branch_id"])
-    allowed_branch_ids = f.get("allowed_branch_ids")
+    if f.get("warehouse_id"):
+        from apps.branches.models import Warehouse
+
+        warehouse_branch_id = (
+            Warehouse.objects.for_business(business)
+            .filter(pk=f["warehouse_id"])
+            .values_list("branch_id", flat=True)
+            .first()
+        )
+        if (
+            warehouse_branch_id is None
+            or f.get("branch_id")
+            and str(f["branch_id"]) != str(warehouse_branch_id)
+        ):
+            exp_qs = exp_qs.none()
+        else:
+            exp_qs = exp_qs.filter(branch_id=warehouse_branch_id)
     if allowed_branch_ids is not None:
         exp_qs = exp_qs.filter(branch_id__in=allowed_branch_ids)
     by_category = exp_qs.values("category__name").annotate(
         t=Sum("amount")).order_by("-t")
 
-    revenue = _money(revenue)
     cost = _money(cost)
     gross = _money(gross)
     rows = [
@@ -1916,13 +1809,13 @@ def cash_flow(business, f):
             qs = qs.filter(**{f"{field}__in": allowed_branch_ids})
         return qs
 
-    sale_pay = (
+    sale_payments = (
         branch_scoped(
-            ranged(SalePayment.objects.for_business(business), "created_at__date"),
+            ranged(SalePayment.objects.for_business(business), "payment_date"),
             "sale__branch_id",
         )
-        .exclude(method__kind__in=["customer_credit", "store_credit"])
-        .values("method__name").annotate(t=Sum("amount")).order_by("-t")
+        .exclude(sale__status__in=["draft", "voided"])
+        .filter(method__kind__in=financials.INCOME_PAYMENT_KINDS)
     )
     collections = branch_scoped(
         ranged(
@@ -1962,19 +1855,27 @@ def cash_flow(business, f):
     ).aggregate(t=Sum("amount"))["t"] or ZERO
     refunds = branch_scoped(
         ranged(
-            SaleReturn.objects.for_business(business).filter(
-                refund_method__in=["cash", "card", "bank"]
-            ),
+            SaleReturn.objects.for_business(business),
             "created_at__date",
         ),
         "branch_id",
-    ).aggregate(t=Sum("refund_amount"))["t"] or ZERO
+    )
+    tenders = financials.tender_summary_from_querysets(sale_payments, refunds)
 
     rows = [["CASH IN", ""]]
     total_in = ZERO
-    for row in sale_pay:
-        rows.append([f"  Sales — {row['method__name']}", row["t"] or ZERO])
-        total_in += row["t"] or ZERO
+    tender_labels = {
+        financials.CASH: "Cash",
+        financials.CARD: "Card",
+        financials.BANK: "Bank Transfer",
+        financials.ONLINE: "Online Payment",
+        financials.OTHER: "Other",
+    }
+    for kind in financials.INCOME_PAYMENT_KINDS:
+        amount = tenders.amount(kind)
+        if amount or tenders.gross.get(kind) or tenders.refunds.get(kind):
+            rows.append([f"  Net sales — {tender_labels[kind]}", amount])
+            total_in += amount
     rows.append(["  Customer collections", collections])
     total_in += collections
     rows += [
@@ -1983,10 +1884,9 @@ def cash_flow(business, f):
         ["CASH OUT", ""],
         ["  Supplier payments", -supplier_pay],
         ["  Expenses", -expenses],
-        ["  Refunds paid out", -refunds],
-        ["Total out", -(supplier_pay + expenses + refunds)],
+        ["Total out", -(supplier_pay + expenses)],
         ["", ""],
-        ["NET CASH FLOW", total_in - supplier_pay - expenses - refunds],
+        ["NET CASH FLOW", total_in - supplier_pay - expenses],
     ]
     return {"columns": ["Line", "Amount"], "rows": rows, "totals": None}
 
@@ -2063,12 +1963,13 @@ def customer_sales(business, f):
             "tax": ZERO,
             "profit": ZERO,
         })
-        paid = _real_received(sale)
+        summary = financials.financial_summary_for_sale(sale)
+        discount = financials.net_sale_discount(sale)
         row["invoices"] += 1
-        row["total"] += sale.net_total
-        row["paid"] += paid
-        row["receivable"] += _money(sale.net_total - paid)
-        row["discount"] += sale.discount_amount
+        row["total"] += summary.net_sales
+        row["paid"] += summary.net_paid
+        row["receivable"] += summary.receivable
+        row["discount"] += discount
         row["tax"] += _net_sale_tax(sale)
         row["profit"] += _net_sale_profit(sale)
     rows = [[name, mobile or "-", r["invoices"], _money(r["total"]),

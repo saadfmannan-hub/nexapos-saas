@@ -74,7 +74,7 @@
         <div><div class="kpi-label">Today Sales</div><div class="kpi-value">{% money kpis.today_sales %}</div></div>
         <div class="kpi-icon" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-receipt"></i></div>
       </div>
-      <div class="small text-secondary mt-1">Booked invoice value</div>
+      <div class="small text-secondary mt-1">Net of returns</div>
     </div>
   </div>
   <div class="col-6 col-xl-2">
@@ -161,7 +161,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0d6efd,#60a5fa)">
         <div class="d-flex justify-content-between align-items-start gap-2">
-          <div><div class="kpi-label">Total Sales &mdash; This Year</div><div class="kpi-value">{% money current_year.total_sales %}</div></div>
+          <div><div class="kpi-label">Gross Sales &mdash; This Year</div><div class="kpi-value">{% money current_year.gross_sales %}</div></div>
           <div class="kpi-icon flex-shrink-0" style="background:#e7f1ff;color:#0d6efd"><i class="bi bi-receipt" aria-hidden="true"></i></div>
         </div>
         <div class="small text-secondary mt-1">This Year</div>
@@ -170,7 +170,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="kpi-pro p-3 h-100" style="--kpi-accent: linear-gradient(90deg,#0ea5a4,#5eead4)">
         <div class="d-flex justify-content-between align-items-start gap-2">
-          <div><div class="kpi-label">Total Income Received &mdash; This Year</div><div class="kpi-value">{% money current_year.total_income %}</div></div>
+          <div><div class="kpi-label">Net Income Received &mdash; This Year</div><div class="kpi-value">{% money current_year.net_income %}</div></div>
           <div class="kpi-icon flex-shrink-0" style="background:#e0f2f1;color:#0ea5a4"><i class="bi bi-cash-coin" aria-hidden="true"></i></div>
         </div>
         <div class="small text-secondary mt-1">This Year</div>
@@ -237,11 +237,11 @@
 
 <div class="row g-3 mb-3">
   <div class="col-lg-8">
-    <div class="card chart-card"><div class="card-header">Monthly sales &amp; income trend</div>
+    <div class="card chart-card"><div class="card-header">Monthly net sales &amp; income trend</div>
       <div class="card-body"><div class="chart-frame chart-frame-trend"><canvas id="trendChart"></canvas></div></div></div>
   </div>
   <div class="col-lg-4">
-    <div class="card chart-card"><div class="card-header">Payment method breakdown</div>
+    <div class="card chart-card"><div class="card-header">Net payment method breakdown</div>
       <div class="card-body"><div class="chart-frame chart-frame-method"><canvas id="methodChart"></canvas></div></div></div>
   </div>
   {% if advanced_reports_access %}<div class="col-lg-4">
@@ -311,16 +311,16 @@
       </div>
       <div class="table-responsive">
         <table class="table table-sm commercial-table mb-0">
-          <thead><tr><th>Invoice No</th><th>Customer</th><th>Phone</th><th class="text-end">Total</th><th class="text-end">Paid</th>{% if customer_credit_access %}<th class="text-end">Balance</th>{% endif %}<th>Status</th></tr></thead>
+          <thead><tr><th>Invoice No</th><th>Customer</th><th>Phone</th><th class="text-end">Net Total</th><th class="text-end">Net Paid</th>{% if customer_credit_access %}<th class="text-end">Balance</th>{% endif %}<th>Status</th></tr></thead>
           <tbody>
             {% for s in widgets.recent_sales %}
             <tr>
               <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
               <td class="name-cell">{{ s.customer.full_name }}</td>
               <td>{{ s.customer.mobile|default:"-" }}</td>
-              <td class="text-end">{% money s.total %}</td>
-              <td class="text-end">{% money s.amount_paid %}</td>
-              {% if customer_credit_access %}<td class="text-end {% if s.balance > 0 %}text-warning fw-semibold{% endif %}">{% money s.balance %}</td>{% endif %}
+              <td class="text-end">{% money s.display_net_total %}</td>
+              <td class="text-end">{% money s.display_net_paid %}</td>
+              {% if customer_credit_access %}<td class="text-end {% if s.display_net_balance > 0 %}text-warning fw-semibold{% endif %}">{% money s.display_net_balance %}</td>{% endif %}
               <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
             </tr>
             {% empty %}<tr><td colspan="{% if customer_credit_access %}7{% else %}6{% endif %}" class="text-secondary small">No sales yet.</td></tr>{% endfor %}
@@ -418,7 +418,7 @@
   grad.addColorStop(0, 'rgba(13,110,253,.22)');
   grad.addColorStop(1, 'rgba(13,110,253,0)');
   const datasets = [
-    {label: 'Sales booked', data: trend.sales, borderColor: '#0d6efd',
+    {label: 'Net sales', data: trend.sales, borderColor: '#0d6efd',
       backgroundColor: grad, fill: true, tension: .35, pointRadius: 2},
     {label: 'Income received', data: trend.income, borderColor: '#0f766e',
       backgroundColor: 'transparent', tension: .35, pointRadius: 2, borderDash: [5, 4]}
@@ -460,7 +460,7 @@
 
   const branchesData = get('branch-data');
   new Chart(document.getElementById('branchChart'), {type: 'bar',
-    data: {labels: branchesData.labels, datasets: [{label: 'Sales',
+    data: {labels: branchesData.labels, datasets: [{label: 'Net sales',
       data: branchesData.data, backgroundColor: '#0ea5a4',
       hoverBackgroundColor: '#0ea5a4', borderRadius: 6}]},
     options: {animation: false, layout: chartLayout({right: 14, left: 8}),
@@ -471,7 +471,7 @@
 
   const hourly = get('hourly-data');
   new Chart(document.getElementById('hourlyChart'), {type: 'bar',
-    data: {labels: hourly.labels, datasets: [{label: 'Sales', data: hourly.data,
+    data: {labels: hourly.labels, datasets: [{label: 'Net sales', data: hourly.data,
       backgroundColor: hourly.data.map(v => v > 0 ? '#0d6efd' : '#e2e8f0'),
       borderRadius: 4}]},
     options: {animation: false, layout: chartLayout({right: 12, left: 8}),

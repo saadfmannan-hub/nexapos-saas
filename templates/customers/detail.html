@@ -40,16 +40,16 @@
     <div class="card">
       <div class="card-header">Recent invoices</div>
       <div class="table-responsive"><table class="table table-sm table-hover mb-0">
-        <thead><tr><th>Invoice</th><th>Date</th><th>Branch</th><th class="text-end">Total</th>
-          <th class="text-end">Paid</th><th>Status</th></tr></thead>
+        <thead><tr><th>Invoice</th><th>Date</th><th>Branch</th><th class="text-end">Net Total</th>
+          <th class="text-end">Net Paid</th><th>Status</th></tr></thead>
         <tbody>
           {% for s in sales %}
           <tr>
             <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
             <td class="small">{{ s.sale_date|date:"Y-m-d" }}</td>
             <td class="small">{{ s.branch.name }}</td>
-            <td class="text-end">{% money s.total %}</td>
-            <td class="text-end">{% money s.amount_paid %}</td>
+            <td class="text-end">{% money s.display_net_total %}</td>
+            <td class="text-end">{% money s.display_net_paid %}</td>
             <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
           </tr>
           {% empty %}<tr><td colspan="6" class="text-center text-secondary py-3">No purchases yet</td></tr>{% endfor %}

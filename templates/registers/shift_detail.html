@@ -33,7 +33,7 @@
         <tr><th>Opened</th><td>{{ shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
         {% if shift.closed_at %}<tr><th>Closed</th><td>{{ shift.closed_at|date:"Y-m-d H:i" }}</td></tr>{% endif %}
         <tr><th>Opening cash</th><td>{% money shift.opening_cash %}</td></tr>
-        <tr><th>+ Cash sales</th><td>{% money totals.cash_sales %}</td></tr>
+        <tr><th>+ Gross cash sales</th><td>{% money totals.gross_cash_sales %}</td></tr>
         <tr><th>+ Cash collections</th><td>{% money totals.customer_collections_cash %}</td></tr>
         <tr><th>− Cash refunds</th><td>{% money totals.cash_refunds %}</td></tr>
         <tr><th>− Cash expenses</th><td>{% money totals.cash_expenses %}</td></tr>
@@ -45,7 +45,7 @@
         {% endif %}
       </table>
     </div></div>
-    <div class="card mt-3"><div class="card-header">Sales by payment type</div><div class="card-body">
+    <div class="card mt-3"><div class="card-header">Net sales by payment type</div><div class="card-body">
       <table class="table table-sm mb-0">
         <tr><th>Cash</th><td class="text-end">{% money totals.cash_sales %}</td></tr>
         <tr><th>Card</th><td class="text-end">{% money totals.card_sales %}</td></tr>
@@ -59,14 +59,14 @@
   <div class="col-lg-7">
     <div class="card"><div class="card-header">Sales in this shift</div>
       <div class="table-responsive"><table class="table table-sm table-hover mb-0">
-        <thead><tr><th>Invoice</th><th>Time</th><th>Customer</th><th class="text-end">Total</th><th>Status</th></tr></thead>
+        <thead><tr><th>Invoice</th><th>Time</th><th>Customer</th><th class="text-end">Net Total</th><th>Status</th></tr></thead>
         <tbody>
           {% for s in sales %}
           <tr>
             <td><a href="{% url 'sales:detail' s.public_id %}">{{ s.invoice_number }}</a></td>
             <td class="small">{{ s.sale_date|date:"H:i" }}</td>
             <td class="small">{{ s.customer.full_name }}</td>
-            <td class="text-end">{{ s.total }}</td>
+            <td class="text-end">{{ s.display_net_total }}</td>
             <td><span class="badge badge-status bs-{{ s.status }}">{{ s.get_status_display }}</span></td>
           </tr>
           {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No sales in this shift yet</td></tr>{% endfor %}
