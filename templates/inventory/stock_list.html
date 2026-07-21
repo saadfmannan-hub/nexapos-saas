@@ -68,7 +68,7 @@
     <tbody>
       {% for level in page_obj %}
       <tr>
-        <td>{% if module_capabilities.pos_core.enabled and "products.view" in business_perms %}<a class="text-reset fw-semibold" href="{% url 'catalog:product_detail' level.product.public_id %}">{{ level.product.name }}</a>{% else %}<span class="fw-semibold">{{ level.product.name }}</span>{% endif %}</td>
+        <td>{% if module_capabilities.pos_core.enabled and "products.view" in business_perms %}<a class="text-reset fw-semibold" href="{% url 'catalog:product_detail' level.product.public_id %}?branch={{ selected_branch.id }}&amp;warehouse={{ selected_warehouse.id }}">{{ level.product.name }}</a>{% else %}<span class="fw-semibold">{{ level.product.name }}</span>{% endif %}</td>
         <td class="small">{{ level.variant.name|default:"—" }}</td>
         <td class="small">{{ level.warehouse.name }}</td>
         <td class="text-end fw-semibold {% if level.quantity <= 0 %}text-danger{% elif level.product.reorder_level and level.quantity <= level.product.reorder_level %}text-warning{% endif %}">{{ level.quantity }}</td>
