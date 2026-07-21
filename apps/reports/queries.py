@@ -6,6 +6,7 @@ Filters: date_from, date_to (date objects or None), branch_id, warehouse_id.
 The same data feeds HTML tables and CSV/Excel/PDF exports, so exported
 numbers always match what is on screen.
 """
+import calendar
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
@@ -1656,6 +1657,99 @@ def top_customers(business, f):
             "rows": rows, "totals": None}
 
 
+def _fixed_expense_occurrences(business, f):
+    """Return applicable, not-yet-generated monthly fixed expenses."""
+    from apps.branches.models import Branch
+    from apps.expenses.models import Expense, RecurringExpenseTemplate
+
+    date_from = f.get("date_from")
+    date_to = f.get("date_to")
+    if isinstance(date_from, datetime):
+        date_from = date_from.date()
+    elif date_from and not isinstance(date_from, date):
+        date_from = parse_date(str(date_from))
+    if isinstance(date_to, datetime):
+        date_to = date_to.date()
+    elif date_to and not isinstance(date_to, date):
+        date_to = parse_date(str(date_to))
+    if not date_from or not date_to or date_to < date_from:
+        return []
+
+    first_month = date_from.replace(day=1)
+    last_month = date_to.replace(day=1)
+    templates = list(
+        RecurringExpenseTemplate.objects.for_business(business)
+        .filter(is_active=True, start_date__lte=date_to)
+        .filter(Q(end_date__isnull=True) | Q(end_date__gte=first_month))
+        .select_related("branch", "category")
+        .order_by("id")
+    )
+    if not templates:
+        return []
+
+    generated = set(
+        Expense.objects.for_business(business)
+        .filter(
+            recurring_template_id__in=[template.pk for template in templates],
+            generated_for_month__gte=first_month,
+            generated_for_month__lte=last_month,
+        )
+        .values_list("recurring_template_id", "generated_for_month")
+    )
+    legacy_branches = list(
+        Branch.objects.for_business(business).filter(is_active=True).order_by("id")[:2]
+    )
+    sole_legacy_branch = legacy_branches[0] if len(legacy_branches) == 1 else None
+    selected_branch_id = f.get("branch_id")
+    allowed_branch_ids = f.get("allowed_branch_ids")
+    if allowed_branch_ids is not None:
+        allowed_branch_ids = set(allowed_branch_ids)
+
+    occurrences = []
+    for template in templates:
+        branch = template.branch or sole_legacy_branch
+        if branch is None:
+            # Match generation safety: never assign an ambiguous legacy template
+            # to an arbitrary branch.
+            continue
+        if selected_branch_id and branch.pk != selected_branch_id:
+            continue
+        if allowed_branch_ids is not None and branch.pk not in allowed_branch_ids:
+            continue
+
+        month = first_month
+        while month <= last_month:
+            month_end = month.replace(
+                day=calendar.monthrange(month.year, month.month)[1]
+            )
+            due_date = month.replace(day=min(template.due_day, month_end.day))
+            applicable = (
+                template.start_date <= month_end
+                and (template.end_date is None or template.end_date >= month)
+            )
+            if (
+                applicable
+                and date_from <= due_date <= date_to
+                and (template.pk, month) not in generated
+            ):
+                occurrences.append({
+                    "number": f"REC-{month:%Y%m}-{template.pk}",
+                    "date": due_date,
+                    "category": template.category.name,
+                    "source": "Fixed",
+                    "payee": template.name,
+                    "branch": branch.name,
+                    "amount": template.default_amount,
+                    "status": Expense.Status.APPROVED.label,
+                })
+            month = (
+                month.replace(year=month.year + 1, month=1)
+                if month.month == 12
+                else month.replace(month=month.month + 1)
+            )
+    return occurrences
+
+
 def expenses_report(business, f):
     from apps.expenses.models import Expense
 
@@ -1677,6 +1771,13 @@ def expenses_report(business, f):
              e.source_display,
              e.payee or (e.supplier.name if e.supplier else ""), e.branch.name,
              e.amount, e.get_status_display()] for e in qs[:2000]]
+    rows.extend([
+        [row["number"], str(row["date"]), row["category"], row["source"],
+         row["payee"], row["branch"], row["amount"], row["status"]]
+        for row in _fixed_expense_occurrences(business, f)
+    ])
+    rows.sort(key=lambda row: (row[1], row[0]), reverse=True)
+    rows = rows[:2000]
     totals = ["TOTAL", "", "", "", "", "",
               sum((r[6] or ZERO) for r in rows), ""]
     return {"columns": ["Number", "Date", "Category", "Source", "Payee",
@@ -1904,9 +2005,35 @@ def expense_analysis(business, f):
     allowed_branch_ids = f.get("allowed_branch_ids")
     if allowed_branch_ids is not None:
         qs = qs.filter(branch_id__in=allowed_branch_ids)
-    data = qs.values("category__name").annotate(
+    data = list(qs.values("category__name").annotate(
         count=Count("id"), total=Sum("amount"), avg=Avg("amount")
-    ).order_by("-total")
+    ))
+    by_category = {
+        row["category__name"]: {
+            "count": row["count"],
+            "total": row["total"] or ZERO,
+        }
+        for row in data
+    }
+    for occurrence in _fixed_expense_occurrences(business, f):
+        category = by_category.setdefault(
+            occurrence["category"], {"count": 0, "total": ZERO}
+        )
+        category["count"] += 1
+        category["total"] += occurrence["amount"]
+    data = sorted(
+        (
+            {
+                "category__name": name,
+                "count": values["count"],
+                "total": values["total"],
+                "avg": values["total"] / values["count"],
+            }
+            for name, values in by_category.items()
+        ),
+        key=lambda row: row["total"],
+        reverse=True,
+    )
     grand = sum((r["total"] or ZERO) for r in data)
     rows = []
     for r in data:

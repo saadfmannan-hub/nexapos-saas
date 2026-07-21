@@ -701,7 +701,7 @@ def product_detail(request, public_id):
     )
     movements = (
         inventory.StockMovement.objects.for_business(request.business)
-        .filter(product=product).select_related("warehouse", "user")
+        .filter(product=product).select_related("warehouse", "variant", "user")
     )
     levels = levels.filter(warehouse=selected_warehouse)
     movements = movements.filter(warehouse=selected_warehouse)

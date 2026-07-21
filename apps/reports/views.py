@@ -334,6 +334,21 @@ def dashboard(request):
         period_returns_qs = period_returns_qs.filter(branch_id=branch_id)
     returns_total = period_returns_qs.aggregate(t=Sum("refund_amount"))["t"] or ZERO
     if inventory_access:
+        stock_value_warehouse_ids = inventory_warehouse_ids
+        if branch_id.isdigit():
+            from apps.branches.models import Warehouse
+
+            branch_warehouse_ids = set(
+                Warehouse.objects.for_business(business)
+                .filter(branch_id=int(branch_id))
+                .values_list("id", flat=True)
+            )
+            if stock_value_warehouse_ids is None:
+                stock_value_warehouse_ids = branch_warehouse_ids
+            else:
+                stock_value_warehouse_ids = (
+                    set(stock_value_warehouse_ids) & branch_warehouse_ids
+                )
         low_stock_qs = StockLevel.objects.for_business(business).filter(
             product__reorder_level__gt=0,
             quantity__lte=F("product__reorder_level"),
@@ -350,7 +365,7 @@ def dashboard(request):
         stock_value = (
             inventory.stock_value(
                 business,
-                allowed_warehouse_ids=inventory_warehouse_ids,
+                allowed_warehouse_ids=stock_value_warehouse_ids,
                 include_tailoring=tailoring_access,
             )
             if show_profit

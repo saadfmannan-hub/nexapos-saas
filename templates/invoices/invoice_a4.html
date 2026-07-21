@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <title>Invoice {{ sale.invoice_number }}</title>
 <style>
-  @page { size: A4; margin: 11mm; }
+  @page { size: A4 portrait; margin: 9mm; }
   * { box-sizing: border-box; }
   body {
     font-family: Helvetica, Arial, sans-serif;
-    font-size: 9.4pt;
-    line-height: 1.35;
+    font-size: 8.8pt;
+    line-height: 1.25;
     color: #172033;
     margin: 0;
     background: #fff;
   }
-  .no-print { text-align: right; margin-bottom: 8px; }
+  .no-print { text-align: right; margin-bottom: 6px; }
   .no-print button, .no-print a {
     border: 1px solid #cbd5e1;
     background: #fff;
@@ -27,31 +27,32 @@
   table { width: 100%; border-collapse: collapse; }
   .r { text-align: right; }
   .c { text-align: center; }
-  .muted { color: #667085; font-size: 8.3pt; }
-  .label { color: #667085; font-size: 7.4pt; text-transform: uppercase; letter-spacing: .04em; }
+  .muted { color: #667085; font-size: 7.7pt; }
   .header {
     border-bottom: 2px solid #111827;
-    padding-bottom: 13px;
-    margin-bottom: 12px;
+    padding-bottom: 8px;
+    margin-bottom: 7px;
   }
-  .brand-cell { width: 56%; vertical-align: top; }
-  .doc-cell { width: 44%; vertical-align: top; text-align: right; }
-  .brand-name { font-size: 19pt; font-weight: 700; margin: 0 0 2px; color: #101828; }
-  h1 { font-size: 18pt; margin: 0 0 5px; color: #101828; }
+  .brand-cell { width: 55%; vertical-align: top; padding-right: 12px; }
+  .doc-cell { width: 45%; vertical-align: top; text-align: right; }
+  .brand-name { font-size: 17pt; font-weight: 700; margin: 0 0 2px; color: #101828; }
+  h1 { font-size: 17pt; margin: 0 0 3px; color: #101828; }
   .status {
     display: inline-block;
+    width: 64px;
+    text-align: center;
     border: 1px solid #101828;
     border-radius: 999px;
-    padding: 3px 11px;
-    margin: 4px 0 8px;
-    font-size: 8pt;
+    padding: 2px 9px;
+    margin: 2px 0 5px;
+    font-size: 7.4pt;
     font-weight: 700;
     text-transform: uppercase;
   }
-  .status.paid { border-color: #047857; color: #047857; background: #ecfdf5; }
-  .status.partially-paid { border-color: #b45309; color: #92400e; background: #fffbeb; }
-  .status.unpaid { border-color: #b91c1c; color: #991b1b; background: #fef2f2; }
-  .status.refunded { border-color: #4338ca; color: #3730a3; background: #eef2ff; }
+  .status.paid { border-color: #047857; color: #047857; background: #fff; }
+  .status.partially-paid { border-color: #b45309; color: #92400e; background: #fff; }
+  .status.unpaid { border-color: #b91c1c; color: #991b1b; background: #fff; }
+  .status.refunded { border-color: #4338ca; color: #3730a3; background: #fff; }
   .badge-void {
     color: #b91c1c;
     border: 3px solid #b91c1c;
@@ -61,33 +62,43 @@
     display: inline-block;
     transform: rotate(-6deg);
   }
-  .info-grid { margin: 10px 0 13px; }
+  .invoice-meta { margin: 4px 0 0 auto; width: 92%; }
+  .invoice-meta td { padding: 1px 0 1px 8px; border: 0; }
+  .invoice-meta .meta-label {
+    color: #667085;
+    font-size: 7.2pt;
+    text-transform: uppercase;
+    text-align: left;
+  }
+  .invoice-meta .meta-value { color: #101828; font-weight: 700; text-align: right; }
+  .info-grid { margin: 6px 0 7px; }
   .info-grid td {
-    width: 33.333%;
     vertical-align: top;
     border: 1px solid #e4e7ec;
-    padding: 8px 10px;
+    padding: 5px 8px;
   }
-  .info-title { font-size: 8pt; color: #667085; text-transform: uppercase; margin-bottom: 3px; }
+  .info-grid .customer-cell { width: 55%; }
+  .info-grid .sale-cell { width: 45%; }
+  .info-title { font-size: 7.3pt; color: #667085; text-transform: uppercase; margin-bottom: 2px; }
   .info-value { font-weight: 700; color: #101828; }
   .items {
     table-layout: fixed;
     border: 1px solid #d9dee8;
-    margin-top: 8px;
+    margin-top: 5px;
   }
   .items th {
     background: #f3f5f8;
     border-bottom: 1px solid #cdd5df;
     color: #344054;
-    font-size: 7.6pt;
+    font-size: 7.1pt;
     font-weight: 700;
-    padding: 7px 6px;
+    padding: 4px 5px;
     text-align: left;
     text-transform: uppercase;
   }
   .items td {
     border-bottom: 1px solid #edf0f4;
-    padding: 7px 6px;
+    padding: 4px 5px;
     vertical-align: top;
   }
   .items tr:last-child td { border-bottom: 0; }
@@ -102,30 +113,30 @@
     word-break: normal;
     overflow-wrap: anywhere;
   }
-  .sku-small { color: #667085; font-size: 8pt; margin-top: 2px; }
-  .summary-layout { margin-top: 12px; page-break-inside: avoid; }
+  .sku-small { color: #667085; font-size: 7.4pt; margin-top: 1px; }
+  .summary-layout { margin-top: 7px; page-break-inside: avoid; }
   .summary-layout > tbody > tr > td { vertical-align: top; }
-  .left-panel { width: 56%; padding-right: 14px; }
-  .right-panel { width: 44%; }
+  .left-panel { width: 55%; padding-right: 10px; }
+  .right-panel { width: 45%; }
   .section {
     border: 1px solid #e4e7ec;
-    padding: 9px 10px;
-    margin-bottom: 8px;
+    padding: 6px 8px;
+    margin-bottom: 5px;
   }
   .section-title {
-    font-size: 8pt;
+    font-size: 7.3pt;
     color: #667085;
     font-weight: 700;
     text-transform: uppercase;
-    margin-bottom: 6px;
+    margin-bottom: 3px;
   }
-  .ledger td { padding: 4px 0; border-bottom: 1px solid #f0f2f5; }
+  .ledger td { padding: 2px 0; border-bottom: 1px solid #f0f2f5; }
   .ledger tr:last-child td { border-bottom: 0; }
   .totals {
     border: 1px solid #cdd5df;
   }
   .totals td {
-    padding: 5px 9px;
+    padding: 3px 7px;
     border-bottom: 1px solid #edf0f4;
   }
   .totals tr:last-child td { border-bottom: 0; }
@@ -133,24 +144,23 @@
     background: #f8fafc;
     font-weight: 700;
   }
-  .totals .grand td {
+  .totals .grand td, .totals .key-total td {
     background: #111827;
     color: #fff;
-    font-size: 12pt;
+    font-size: 10.5pt;
     font-weight: 700;
     border-bottom: 0;
   }
-  .notes {
-    min-height: 42px;
-    white-space: pre-line;
-  }
+  .totals .key-paid td { background: #ecfdf5; color: #047857; font-weight: 700; }
+  .totals .key-balance td { background: #fff7ed; color: #9a3412; font-weight: 700; }
+  .notes { white-space: pre-line; }
   .signatures {
-    margin-top: 22px;
+    margin-top: 12px;
     page-break-inside: avoid;
   }
   .signatures td {
     width: 50%;
-    padding-top: 24px;
+    padding-top: 16px;
   }
   .line {
     border-top: 1px solid #98a2b3;
@@ -160,11 +170,11 @@
     font-size: 8pt;
   }
   .footer {
-    margin-top: 15px;
+    margin-top: 9px;
     border-top: 1px solid #e4e7ec;
-    padding-top: 8px;
+    padding-top: 5px;
     color: #475467;
-    font-size: 8.4pt;
+    font-size: 7.6pt;
   }
   @media print { .no-print { display: none; } .invoice { max-width: none; } }
 </style>
@@ -193,26 +203,25 @@
       <div class="status {{ invoice_status_class }}">{{ invoice_status_label }}</div>
       {% if sale.status == "voided" %}<div class="badge-void">VOIDED</div>{% endif %}
       <div class="muted"><em>{{ copy_label }}</em></div>
+      <table class="invoice-meta">
+        <tr><td class="meta-label">Invoice</td><td class="meta-value">{{ sale.invoice_number }}</td></tr>
+        <tr><td class="meta-label">Issued</td><td class="meta-value">{{ sale_local_datetime|date:"Y-m-d H:i" }}</td></tr>
+        <tr><td class="meta-label">Cashier</td><td class="meta-value">{{ sale.cashier.full_name }}</td></tr>
+      </table>
     </td>
   </tr>
 </table>
 
 <table class="info-grid">
   <tr>
-    <td>
-      <div class="info-title">Invoice</div>
-      <div class="info-value">{{ sale.invoice_number }}</div>
-      <div class="muted">{{ sale_local_datetime|date:"Y-m-d H:i" }}</div>
-    </td>
-    <td>
+    <td class="customer-cell">
       <div class="info-title">Customer</div>
       <div class="info-value">{{ sale.customer.full_name }}</div>
       {% if sale.customer.mobile %}<div class="muted">Phone: {{ sale.customer.mobile }}</div>{% endif %}
     </td>
-    <td>
+    <td class="sale-cell">
       <div class="info-title">Sale Details</div>
       <div class="muted">Branch: {{ sale.branch.name }}</div>
-      <div class="muted">Cashier: {{ sale.cashier.full_name }}</div>
       {% if show_tailoring and sale.delivery_date %}
         <div class="muted">Delivery: {{ sale.delivery_date|date:"d-M-Y" }} ({{ sale.get_delivery_status_display }})</div>
       {% endif %}
@@ -302,10 +311,10 @@
       </div>
       {% endif %}
 
-      <div class="section notes">
+      {% if sale.notes %}<div class="section notes">
         <div class="section-title">Notes</div>
-        {% if sale.notes %}{{ sale.notes }}{% else %}<span class="muted">No notes</span>{% endif %}
-      </div>
+        {{ sale.notes }}
+      </div>{% endif %}
     </td>
     <td class="right-panel">
       <table class="totals">
@@ -316,15 +325,15 @@
         <tr class="emphasis"><td>Original Total</td><td class="r">{{ sale.total }}</td></tr>
         {% if sale.returned_amount > 0 %}
         <tr><td>Returned/Refunded</td><td class="r">-{{ sale.returned_amount }}</td></tr>
-        <tr class="grand"><td>NET TOTAL</td><td class="r">{{ sale.net_total }} {{ business.currency_display }}</td></tr>
+        <tr class="key-total"><td>NET TOTAL</td><td class="r">{{ sale.net_total }} {% if pdf_mode %}{{ business.currency_code }}{% else %}{{ business.currency_display }}{% endif %}</td></tr>
         {% else %}
         <tr><td>Returned/Refunded</td><td class="r">0.000</td></tr>
-        <tr class="grand"><td>TOTAL</td><td class="r">{{ sale.total }} {{ business.currency_display }}</td></tr>
+        <tr class="key-total"><td>TOTAL</td><td class="r">{{ sale.total }} {% if pdf_mode %}{{ business.currency_code }}{% else %}{{ business.currency_display }}{% endif %}</td></tr>
         {% endif %}
-        <tr><td>Paid</td><td class="r">{{ sale.amount_paid }}</td></tr>
+        <tr class="key-paid"><td>PAID</td><td class="r">{{ sale.amount_paid }}</td></tr>
         <tr><td>Refunded</td><td class="r">-{{ sale.refunded_amount }}</td></tr>
         <tr class="emphasis"><td>Net Paid</td><td class="r">{{ sale.net_amount_paid }}</td></tr>
-        {% if show_credit %}<tr class="emphasis"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
+        {% if show_credit %}<tr class="key-balance"><td>BALANCE DUE</td><td class="r">{{ sale.balance }}</td></tr>{% endif %}
         {% if sale.change_due > 0 %}<tr><td>Change</td><td class="r">{{ sale.change_due }}</td></tr>{% endif %}
       </table>
     </td>

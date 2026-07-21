@@ -118,12 +118,13 @@
     <div class="card">
       <div class="card-header">Recent stock movements</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Date</th><th>Type</th><th>Warehouse</th><th class="text-end">Qty</th>
+        <thead><tr><th>Date</th><th>Variant</th><th>Type</th><th>Warehouse</th><th class="text-end">Qty</th>
                    <th class="text-end">Balance</th><th>Reference</th><th>By</th></tr></thead>
         <tbody>
           {% for m in movements %}
           <tr>
             <td class="small">{{ m.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="small">{{ m.variant.name|default:"—" }}</td>
             <td><span class="badge text-bg-light border">{{ m.get_movement_type_display }}</span></td>
             <td class="small">{{ m.warehouse.name }}</td>
             <td class="text-end {% if m.quantity < 0 %}text-danger{% else %}text-success{% endif %}">{{ m.quantity }}</td>
@@ -131,7 +132,7 @@
             <td class="small">{{ m.reference_type }} {{ m.reference_id }}</td>
             <td class="small">{{ m.user.full_name|default:"—" }}</td>
           </tr>
-          {% empty %}<tr><td colspan="7" class="text-center text-secondary py-3">No movements yet</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="8" class="text-center text-secondary py-3">No movements yet</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>
