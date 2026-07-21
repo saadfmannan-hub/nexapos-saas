@@ -186,7 +186,34 @@ body.app-body {
   flex-direction: column;
   overflow: hidden;
 }
-.pos-header-strip { flex-shrink: 0; }
+.pos-topbar-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .4rem;
+  min-width: 0;
+}
+.pos-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  min-height: 26px;
+  max-width: min(15rem, 24vw);
+  font-weight: 600;
+}
+.pos-status-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pos-shift-chip { flex: 0 0 auto; }
+.pos-topbar-control {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  white-space: nowrap;
+}
 .pos-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 420px;
@@ -753,13 +780,6 @@ a { text-decoration: none; }
   .widget-card { border-radius: 16px; }
 
   .pos-page { height: calc(100vh - 78px - 2.9rem); }
-  .pos-header-strip {
-    background: rgba(255,255,255,.72);
-    border: 1px solid rgba(223, 231, 241, .9);
-    border-radius: 14px;
-    padding: .55rem .65rem;
-    box-shadow: 0 10px 28px -26px rgba(8, 26, 51, .36);
-  }
   .pos-products-pane .input-group,
   .pos-products-pane > .d-flex:first-child > .form-control {
     box-shadow: 0 10px 24px -24px rgba(8, 26, 51, .4);
@@ -846,7 +866,6 @@ a { text-decoration: none; }
     .np-content { padding: 1rem; }
     .card-body { padding: .9rem; }
     .pos-page { height: calc(100vh - 66px - 2rem); }
-    .pos-header-strip { padding: .45rem; }
     .btn { gap: .25rem; }
   }
 }
@@ -862,6 +881,7 @@ a { text-decoration: none; }
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
+  padding: .75rem 1rem 1rem;
 }
 .pos-page {
   flex: 1;
@@ -912,7 +932,6 @@ a { text-decoration: none; }
 .pos-payment-modal .modal-body { overflow-y: auto; }
 
 @media (min-width: 992px) and (max-height: 820px) {
-  .pos-header-strip { padding: .35rem .5rem; margin-bottom: .4rem !important; }
   .pos-grid { gap: .45rem; }
   .pos-product-card { padding: .45rem; }
   .pos-product-card img { height: 52px !important; }
@@ -924,13 +943,25 @@ a { text-decoration: none; }
   .pos-payment-modal .modal-body { padding-top: .75rem; padding-bottom: .75rem; }
 }
 
+@media (max-width: 1199.98px) {
+  .pos-status-chip { max-width: 10rem; }
+  .pos-action-label { display: none; }
+}
+
 @media (max-width: 991.98px) {
   .pos-shell {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, .65fr) minmax(360px, 1.35fr);
     grid-template-areas:
       "products"
       "cart";
   }
+  .pos-totals { padding: .5rem .65rem; }
+  .pos-totals .my-2 {
+    margin-top: .35rem !important;
+    margin-bottom: .35rem !important;
+  }
+  .btn-pos-pay { padding: .55rem; }
 }
 
 @media (max-width: 575.98px) {
@@ -944,6 +975,19 @@ a { text-decoration: none; }
     padding-left: .55rem;
     padding-right: .55rem;
   }
+}
+
+@media (max-width: 767.98px) {
+  .np-main-pos .np-topbar { flex-wrap: wrap; gap: .45rem; }
+  .pos-topbar-status {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: nowrap;
+  }
+  .pos-branch-chip,
+  .pos-register-chip { flex: 1 1 auto; }
+  .pos-status-chip { max-width: none; }
+  .np-content-pos { padding: .6rem; }
 }
 
 @media (max-width: 359.98px) {

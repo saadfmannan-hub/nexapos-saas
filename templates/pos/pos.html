@@ -1,5 +1,40 @@
 {% extends "layouts/base.html" %}
 {% block title %}POS — {{ PRODUCT_NAME }}{% endblock %}
+{% block main_attributes %} x-data="pos()" x-init="init()" @keydown.window="hotkeys($event)"{% endblock %}
+{% block topbar_status %}
+<div class="pos-topbar-status" aria-label="POS operational status">
+  <span class="badge text-bg-dark pos-status-chip pos-branch-chip" title="Current branch: {{ branch.name }}">
+    <i class="bi bi-shop" aria-hidden="true"></i>
+    <span class="pos-status-value">{{ branch.name }}</span>
+  </span>
+  {% if shift %}
+    <span class="badge text-bg-light border text-dark pos-status-chip pos-register-chip"
+          title="Current register: {{ shift.register.name }}">
+      <i class="bi bi-cash-stack" aria-hidden="true"></i>
+      <span class="pos-status-value">{{ shift.register.name }}</span>
+    </span>
+    <span class="badge text-bg-success pos-status-chip pos-shift-chip">
+      <i class="bi bi-check-circle-fill" aria-hidden="true"></i>Shift Open
+    </span>
+  {% else %}
+    <span class="badge text-bg-warning pos-status-chip pos-shift-chip">No open shift</span>
+  {% endif %}
+</div>
+{% endblock %}
+{% block topbar_actions %}
+<button type="button" class="btn btn-sm btn-outline-secondary pos-topbar-control"
+        @click="loadHeld()" data-bs-toggle="modal" data-bs-target="#heldModal"
+        title="Held sales" aria-label="Held sales">
+  <i class="bi bi-pause-circle" aria-hidden="true"></i>
+  <span class="pos-action-label">Held</span>
+  <span class="badge text-bg-secondary" x-text="heldCount">{{ held_sales|length }}</span>
+</button>
+<button type="button" class="btn btn-sm btn-outline-secondary pos-topbar-control"
+        @click="toggleFullscreen()" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+  <i class="bi bi-fullscreen" aria-hidden="true"></i>
+  <span class="pos-action-label">Fullscreen</span>
+</button>
+{% endblock %}
 {% block content %}
 {% if not shift and not can_sell_without_shift %}
 <div class="alert alert-warning d-flex justify-content-between align-items-center">
@@ -11,22 +46,7 @@
 </div>
 {% endif %}
 
-<div class="pos-page" x-data="pos()" x-init="init()" @keydown.window="hotkeys($event)">
-  <!-- Header strip -->
-  <div class="pos-header-strip d-flex align-items-center gap-3 mb-2 flex-wrap">
-    <span class="badge text-bg-dark"><i class="bi bi-shop me-1"></i>{{ branch.name }}</span>
-    {% if shift %}
-      <span class="badge text-bg-success"><i class="bi bi-cash-stack me-1"></i>{{ shift.register.name }} — shift open</span>
-    {% else %}
-      <span class="badge text-bg-warning">No open shift</span>
-    {% endif %}
-    <div class="ms-auto d-flex gap-2">
-      <button class="btn btn-sm btn-outline-secondary" @click="loadHeld()" data-bs-toggle="modal" data-bs-target="#heldModal">
-        <i class="bi bi-pause-circle"></i> Held (<span x-text="heldCount">{{ held_sales|length }}</span>)</button>
-      <button class="btn btn-sm btn-outline-secondary" @click="toggleFullscreen()"><i class="bi bi-fullscreen"></i></button>
-    </div>
-  </div>
-
+<div class="pos-page">
   <div class="pos-shell">
     <!-- Product workspace -->
     <div class="pos-products-pane d-flex flex-column gap-2">

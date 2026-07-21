@@ -116,7 +116,7 @@
   </div>
 </aside>
 
-<div class="np-main{% if active_nav == 'pos' %} np-main-pos{% endif %}">
+<div class="np-main{% if active_nav == 'pos' %} np-main-pos{% endif %}"{% block main_attributes %}{% endblock %}>
   {% if request.support_session %}
   <div class="support-banner no-print">
     <i class="bi bi-shield-lock"></i>
@@ -135,7 +135,9 @@
     <div class="d-none d-md-block">
       {% block breadcrumbs %}{% endblock %}
     </div>
+    {% block topbar_status %}{% endblock %}
     <div class="ms-auto d-flex align-items-center gap-2">
+      {% block topbar_actions %}{% endblock %}
       {% if request.subscription and request.subscription.effective_status == 'trial' %}
         <a href="{% url 'subscriptions:status' %}" class="badge text-bg-warning text-decoration-none d-none d-sm-inline">
           Trial — ends {{ request.subscription.trial_ends_at|date:"M d" }}
@@ -190,7 +192,7 @@
   </header>
 
   <main class="np-content{% if active_nav == 'pos' %} np-content-pos{% endif %}">
-    {% include "components/back_navigation.html" %}
+    {% if active_nav != 'pos' %}{% include "components/back_navigation.html" %}{% endif %}
     {% if messages %}
       <div class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1080">
         {% for message in messages %}
