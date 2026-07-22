@@ -270,7 +270,6 @@ body.pa-admin .table td {
 }
 body.pa-admin .table > :not(caption) > * > * { background: transparent; color: var(--pa-text); }
 body.pa-admin .table-hover tbody tr { transition: background .12s ease; }
-body.pa-admin .table-hover tbody tr:hover > * { background: rgba(255,255,255,.035); }
 body.pa-admin .table .fw-semibold { color: var(--pa-text); }
 
 /* ---------------- Status badges (override light app.css, scoped) ---------------- */
@@ -447,6 +446,19 @@ body.pa-admin .alert-primary { background: rgba(37,99,235,.12);  color: #93b4ff;
 
 /* ---------------- Misc surfaces used by sub-pages ---------------- */
 body.pa-admin .list-group-item { background: var(--pa-surface); color: var(--pa-text); border-color: var(--pa-border); }
+body.pa-admin .modal-content {
+  background: var(--pa-surface);
+  color: var(--pa-text);
+  border-color: var(--pa-border-strong);
+}
+body.pa-admin .modal-header,
+body.pa-admin .modal-footer { border-color: var(--pa-border); }
+body.pa-admin .btn-close { filter: invert(1) grayscale(1); }
+body.pa-admin .errorlist {
+  margin: .35rem 0 0;
+  color: #fca5a5;
+  font-size: .78rem;
+}
 body.pa-admin .empty-state { color: var(--pa-muted); }
 body.pa-admin a { color: #93b4ff; }
 body.pa-admin a.btn,
@@ -483,36 +495,36 @@ body.pa-admin .text-reset { color: var(--pa-text) !important; }
 
 /* --- Table rows ------------------------------------------------- */
 body.pa-admin .table {
-  --bs-table-hover-bg: rgba(37, 99, 235, 0.12);
+  --bs-table-hover-bg: var(--pa-surface-2);
   --bs-table-hover-color: #F9FAFB;
   --bs-table-active-bg: rgba(37, 99, 235, 0.16);
   --bs-table-active-color: #F9FAFB;
 }
-body.pa-admin .table-hover > tbody > tr:hover,
-body.pa-admin .table-hover tbody tr:hover {
-  background-color: rgba(37, 99, 235, 0.12) !important;
-  color: #F9FAFB !important;
+body.pa-admin .table-hover > tbody > tr:hover {
+  /* app.css redefines this variable on the hovered row. Override it at
+     the same cascade level so Bootstrap's inset cell layer stays dark. */
+  --bs-table-hover-bg: var(--pa-surface-2);
+  --bs-table-hover-color: var(--pa-text);
+  background-color: var(--pa-surface-2) !important;
 }
-body.pa-admin .table-hover > tbody > tr:hover > *,
-body.pa-admin .table-hover tbody tr:hover > * {
-  background-color: rgba(37, 99, 235, 0.12) !important;
-  color: #F9FAFB !important;
-}
-body.pa-admin .table-hover tbody tr:hover .fw-semibold { color: #F9FAFB !important; }
-body.pa-admin .table-hover tbody tr:hover .text-secondary,
-body.pa-admin .table-hover tbody tr:hover .small,
-body.pa-admin .table-hover tbody tr:hover .text-muted { color: #E5E7EB !important; }
-/* Badges stay readable on a hovered row */
-body.pa-admin .table-hover tbody tr:hover .badge-status,
-body.pa-admin .table-hover tbody tr:hover .sub-badge { color: inherit; }
 
 /* --- Sidebar nav ------------------------------------------------ */
-body.pa-admin .np-sidebar .nav-link:hover,
-body.pa-admin .np-sidebar .nav-link:focus {
+body.pa-admin .np-sidebar .nav-link:not(.active):hover,
+body.pa-admin .np-sidebar .nav-link:not(.active):focus {
   background: var(--pa-surface-2) !important;
   color: #F9FAFB !important;
 }
 body.pa-admin .np-sidebar .nav-link:hover i { color: #93b4ff; }
+body.pa-admin .np-sidebar .nav-link:focus-visible,
+body.pa-admin .pa-action:focus-visible,
+body.pa-admin .pa-icon-btn:focus-visible,
+body.pa-admin .dropdown-item:focus-visible,
+body.pa-admin .nav-tabs .nav-link:focus-visible,
+body.pa-admin .nav-pills .nav-link:focus-visible,
+body.pa-admin .list-group-item-action:focus-visible {
+  outline: 2px solid #93b4ff;
+  outline-offset: 2px;
+}
 
 /* --- Buttons ---------------------------------------------------- */
 body.pa-admin .btn-outline-primary:hover,
@@ -562,19 +574,19 @@ body.pa-admin .pa-profile .btn:focus { background: transparent !important; color
 /* --- Dropdown menus (Bootstrap) -------------------------------- */
 body.pa-admin .dropdown-menu { background: var(--pa-surface); border-color: var(--pa-border); }
 body.pa-admin .dropdown-item { color: #E5E7EB; }
-body.pa-admin .dropdown-item:hover,
-body.pa-admin .dropdown-item:focus { background-color: var(--pa-surface-2) !important; color: #F9FAFB !important; }
+body.pa-admin .dropdown-item:not(.active):hover,
+body.pa-admin .dropdown-item:not(.active):focus { background-color: var(--pa-surface-2) !important; color: #F9FAFB !important; }
 
 /* --- Tabs / pills / list-group action -------------------------- */
-body.pa-admin .nav-tabs .nav-link:hover,
-body.pa-admin .nav-tabs .nav-link:focus {
+body.pa-admin .nav-tabs .nav-link:not(.active):hover,
+body.pa-admin .nav-tabs .nav-link:not(.active):focus {
   background: var(--pa-surface-2) !important; color: #F9FAFB !important;
   border-color: var(--pa-border) !important;
 }
-body.pa-admin .nav-pills .nav-link:hover,
-body.pa-admin .nav-pills .nav-link:focus { background: var(--pa-surface-2) !important; color: #F9FAFB !important; }
-body.pa-admin .list-group-item-action:hover,
-body.pa-admin .list-group-item-action:focus {
+body.pa-admin .nav-pills .nav-link:not(.active):hover,
+body.pa-admin .nav-pills .nav-link:not(.active):focus { background: var(--pa-surface-2) !important; color: #F9FAFB !important; }
+body.pa-admin .list-group-item-action:not(.active):hover,
+body.pa-admin .list-group-item-action:not(.active):focus {
   background-color: var(--pa-surface-2) !important; color: #F9FAFB !important;
 }
 

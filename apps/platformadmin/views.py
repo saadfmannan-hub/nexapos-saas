@@ -15,9 +15,11 @@ from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Count, Q, Sum
-from django.shortcuts import redirect, render
+from django.http import HttpResponseBadRequest
+from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.crypto import get_random_string
+from django.views.decorators.http import require_POST
 
 from apps.accounts.models import LoginHistory, Membership, User
 from apps.audit import services as audit
@@ -25,6 +27,13 @@ from apps.audit.models import AuditLog
 from apps.core.currencies import currency_choices, precision_for
 from apps.core.date_ranges import business_localtime, business_timezone
 from apps.subscriptions.models import Coupon, Plan, Subscription, SubscriptionPayment
+from apps.subscriptions.services import (
+    PaymentAlreadyReversed,
+    PaymentReversalReasonRequired,
+    capture_subscription_state,
+    payment_audit_values,
+    reverse_subscription_payment,
+)
 from apps.tenants.models import Business
 
 from .models import Announcement, SupportAccessGrant
@@ -73,11 +82,15 @@ def build_subscription_history(business, subscription):
             "detail": f"Trial on {subscription.plan.name}",
         })
     for payment in SubscriptionPayment.objects.filter(business=business)[:25]:
+        reversed_suffix = (
+            f" (reversed: {payment.reversal_reason})"
+            if payment.is_reversed else ""
+        )
         history.append({
             "date": payment.created_at,
-            "label": "Payment recorded",
+            "label": "Payment reversed" if payment.is_reversed else "Payment recorded",
             "detail": f"{payment.amount} {payment.currency_code} via "
-                      f"{payment.get_method_display()}",
+                      f"{payment.get_method_display()}{reversed_suffix}",
         })
     for row in AuditLog.objects.filter(
         business=business,
@@ -85,6 +98,8 @@ def build_subscription_history(business, subscription):
             "platform.business_created", "platform.business_suspended",
             "platform.business_reactivated", "platform.subscription_renewed",
             "platform.subscription_plan_changed", "platform.subscription_payment_recorded",
+            "platform.subscription_payment_edited",
+            "platform.subscription_payment_reversed",
             "platform.subscription_extended", "platform.trial_extended",
         ],
     )[:50]:
@@ -130,7 +145,7 @@ def dashboard(request):
     }
 
     # ---- revenue metrics ---------------------------------------------------
-    payments = SubscriptionPayment.objects
+    payments = SubscriptionPayment.objects.active()
     revenue_total = payments.aggregate(t=Sum("amount"))["t"] or Decimal("0")
     revenue_this_month = payments.filter(
         created_at__date__gte=month_start).aggregate(t=Sum("amount"))["t"] or Decimal("0")
@@ -215,8 +230,11 @@ def business_detail(request, public_id):
     sub = getattr(business, "subscription", None)
     members = Membership.objects.filter(business=business).select_related(
         "user", "role")
-    payments = SubscriptionPayment.objects.filter(
-        subscription__business=business).select_related("recorded_by")[:10]
+    payment_queryset = SubscriptionPayment.objects.filter(
+        subscription__business=business,
+    ).select_related("recorded_by", "reversed_by")
+    payments = payment_queryset[:10]
+    last_active_payment = payment_queryset.active().first()
     grants = SupportAccessGrant.objects.filter(business=business)[:10]
     plans = Plan.objects.filter(is_active=True)
     # Operational metadata only — counts, not data
@@ -239,7 +257,7 @@ def business_detail(request, public_id):
         "users": members.count(),
         "storage_mb": None,
     }
-    payment_summary = SubscriptionPayment.objects.filter(
+    payment_summary = SubscriptionPayment.objects.active().filter(
         business=business,
     ).aggregate(total=Sum("amount"), count=Count("id"))
     renewal_initial = {"plan": sub.plan_id if sub else None}
@@ -266,6 +284,7 @@ def business_detail(request, public_id):
         "payments": payments, "grants": grants, "plans": plans, "usage": usage,
         "payment_summary": payment_summary, "renewal_form": renewal_form,
         "plan_change_form": plan_change_form, "payment_form": payment_form,
+        "last_active_payment": last_active_payment,
         "history": build_subscription_history(business, sub),
         "now": timezone.now(), "pa_nav": "businesses",
     })
@@ -283,6 +302,8 @@ def record_subscription_payment(
     period_end=None,
     notes="",
     user=None,
+    subscription_state_before=None,
+    subscription_state_after=None,
 ):
     return SubscriptionPayment.objects.create(
         business=business,
@@ -296,6 +317,117 @@ def record_subscription_payment(
         period_end=period_end,
         recorded_by=user,
         notes=notes,
+        subscription_state_before=subscription_state_before or {},
+        subscription_state_after=subscription_state_after or {},
+    )
+
+
+@platform_admin_required
+@transaction.atomic
+def subscription_payment_edit(request, business_public_id, payment_public_id):
+    business = get_object_or_404(Business, public_id=business_public_id)
+    payment = get_object_or_404(
+        SubscriptionPayment.objects.select_for_update().select_related(
+            "subscription",
+        ),
+        public_id=payment_public_id,
+        business=business,
+        subscription__business=business,
+    )
+    if payment.is_reversed:
+        return HttpResponseBadRequest("Reversed payments cannot be edited.")
+
+    old_values = payment_audit_values(payment)
+    form = SubscriptionPaymentEditForm(request.POST or None, instance=payment)
+    if request.method == "POST" and form.is_valid():
+        payment = form.save(commit=False)
+        payment.save(update_fields=[
+            "payment_date", "method", "reference", "amount", "notes",
+            "updated_at",
+        ])
+        audit.log(
+            "platform.subscription_payment_edited",
+            business=business,
+            user=request.user,
+            request=request,
+            module="platformadmin",
+            obj=payment,
+            old_values=old_values,
+            new_values=payment_audit_values(payment),
+            description=(
+                f"Subscription payment edited: {payment.amount} "
+                f"{payment.currency_code}."
+            ),
+        )
+        messages.success(request, "Payment updated.")
+        return redirect(
+            "platformadmin:business_detail",
+            public_id=business.public_id,
+        )
+
+    return render(request, "platformadmin/payment_edit.html", {
+        "business": business,
+        "payment": payment,
+        "form": form,
+        "pa_nav": "businesses",
+    })
+
+
+@platform_admin_required
+@require_POST
+@transaction.atomic
+def subscription_payment_reverse(request, business_public_id, payment_public_id):
+    business = get_object_or_404(Business, public_id=business_public_id)
+    payment = get_object_or_404(
+        SubscriptionPayment,
+        public_id=payment_public_id,
+        business=business,
+        subscription__business=business,
+    )
+    form = SubscriptionPaymentReversalForm(request.POST)
+    if not form.is_valid():
+        return HttpResponseBadRequest("A reversal reason is required.")
+
+    try:
+        (
+            payment,
+            payment_before,
+            subscription_before,
+            subscription_after,
+        ) = reverse_subscription_payment(
+            payment_id=payment.pk,
+            reversed_by=request.user,
+            reason=form.cleaned_data["reversal_reason"],
+        )
+    except PaymentAlreadyReversed:
+        return HttpResponseBadRequest("This payment has already been reversed.")
+    except PaymentReversalReasonRequired:
+        return HttpResponseBadRequest("A reversal reason is required.")
+
+    audit.log(
+        "platform.subscription_payment_reversed",
+        business=business,
+        user=request.user,
+        request=request,
+        module="platformadmin",
+        obj=payment,
+        old_values={
+            "payment": payment_before,
+            "subscription": subscription_before,
+        },
+        new_values={
+            "payment": payment_audit_values(payment),
+            "subscription": subscription_after,
+        },
+        description=(
+            f"Subscription payment reversed: {payment.amount} "
+            f"{payment.currency_code}. Reason: {payment.reversal_reason}"
+        ),
+    )
+    messages.success(request, "Payment reversed and subscription totals updated.")
+    return redirect(
+        "platformadmin:business_detail",
+        public_id=business.public_id,
     )
 
 
@@ -375,6 +507,7 @@ def business_action(request, public_id, action):
                     if sub.current_period_end else None
                 ),
             }
+            subscription_state_before = capture_subscription_state(sub)
             sub.plan = plan
             sub.status = Subscription.Status.ACTIVE
             sub.trial_ends_at = None
@@ -382,6 +515,7 @@ def business_action(request, public_id, action):
             sub.current_period_end = period_end
             sub.notes = cd.get("notes", "")
             sub.save()
+            subscription_state_after = capture_subscription_state(sub)
             if not business.is_active:
                 business.is_active = True
                 business.suspended_at = None
@@ -402,6 +536,8 @@ def business_action(request, public_id, action):
                 period_end=period_end,
                 notes=cd.get("notes", ""),
                 user=request.user,
+                subscription_state_before=subscription_state_before,
+                subscription_state_after=subscription_state_after,
             )
             audit.log(
                 "platform.subscription_renewed", business=business,
@@ -490,6 +626,7 @@ def business_action(request, public_id, action):
     elif action == "extend" and sub:
         days = int(request.POST.get("days", 30))
         plan_id = request.POST.get("plan_id")
+        subscription_state_before = capture_subscription_state(sub)
         if plan_id:
             sub.plan = Plan.objects.get(pk=plan_id)
         base = sub.current_period_end or timezone.now()
@@ -499,16 +636,20 @@ def business_action(request, public_id, action):
         sub.current_period_end = base + timedelta(days=days)
         sub.status = Subscription.Status.ACTIVE
         sub.save()
+        subscription_state_after = capture_subscription_state(sub)
         amount = request.POST.get("amount", "")
         if amount:
-            SubscriptionPayment.objects.create(
-                subscription=sub, amount=amount,
-                currency_code=sub.plan.currency_code,
+            record_subscription_payment(
+                business=business,
+                subscription=sub,
+                amount=amount,
                 method=request.POST.get("method", "manual"),
                 reference=request.POST.get("reference", "")[:120],
                 period_start=sub.current_period_start,
                 period_end=sub.current_period_end,
-                recorded_by=request.user,
+                user=request.user,
+                subscription_state_before=subscription_state_before,
+                subscription_state_after=subscription_state_after,
             )
         audit.log("platform.subscription_extended", business=business,
                   user=request.user, request=request, module="platformadmin",
@@ -706,6 +847,49 @@ class SubscriptionPaymentForm(forms.Form):
         attrs={**INPUT, "rows": 2}))
 
 
+class SubscriptionPaymentEditForm(forms.ModelForm):
+    class Meta:
+        model = SubscriptionPayment
+        fields = ("payment_date", "method", "reference", "amount", "notes")
+        widgets = {
+            "payment_date": forms.DateInput(attrs={
+                "class": "form-control form-control-sm",
+                "type": "date",
+            }),
+            "method": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "reference": forms.TextInput(attrs={
+                "class": "form-control form-control-sm",
+            }),
+            "amount": forms.NumberInput(attrs={
+                "class": "form-control form-control-sm",
+                "min": "0.001",
+                "step": "0.001",
+            }),
+            "notes": forms.Textarea(attrs={
+                "class": "form-control form-control-sm",
+                "rows": 3,
+            }),
+        }
+
+    def clean_amount(self):
+        amount = self.cleaned_data["amount"]
+        if amount <= 0:
+            raise forms.ValidationError("Amount must be greater than zero.")
+        return amount
+
+
+class SubscriptionPaymentReversalForm(forms.Form):
+    reversal_reason = forms.CharField(
+        max_length=400,
+        strip=True,
+        widget=forms.Textarea(attrs={
+            "class": "form-control",
+            "rows": 3,
+            "required": True,
+        }),
+    )
+
+
 @platform_admin_required
 def business_create(request):
     form = BusinessCreateForm(request.POST or None)
@@ -745,20 +929,25 @@ def business_create(request):
             if cd["subscription_mode"] == "active":
                 # Mirror the existing "extend" action: active paid period.
                 period_days = days or 30
+                subscription_state_before = capture_subscription_state(sub)
                 sub.status = Subscription.Status.ACTIVE
                 sub.current_period_start = now
                 sub.current_period_end = now + timedelta(days=period_days)
                 sub.save()
+                subscription_state_after = capture_subscription_state(sub)
                 amount = cd.get("amount")
                 if amount:
-                    SubscriptionPayment.objects.create(
-                        subscription=sub, amount=amount,
-                        currency_code=sub.plan.currency_code,
+                    record_subscription_payment(
+                        business=business,
+                        subscription=sub,
+                        amount=amount,
                         method="manual",
                         reference=cd.get("reference", "")[:120],
                         period_start=sub.current_period_start,
                         period_end=sub.current_period_end,
-                        recorded_by=request.user,
+                        user=request.user,
+                        subscription_state_before=subscription_state_before,
+                        subscription_state_after=subscription_state_after,
                     )
             elif days:
                 # Trial with an explicit length overriding the plan default.

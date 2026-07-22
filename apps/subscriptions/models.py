@@ -287,6 +287,11 @@ class Coupon(TimeStampedModel):
         return self.code
 
 
+class SubscriptionPaymentQuerySet(models.QuerySet):
+    def active(self):
+        return self.filter(reversed_at__isnull=True)
+
+
 class SubscriptionPayment(TimeStampedModel):
     """Platform revenue record (manual activation / bank transfer /
     future gateway). Gateway-agnostic by design."""
@@ -322,6 +327,19 @@ class SubscriptionPayment(TimeStampedModel):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
     )
     notes = models.TextField(blank=True)
+    reversed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reversed_subscription_payments",
+    )
+    reversal_reason = models.CharField(max_length=400, blank=True)
+    subscription_state_before = models.JSONField(default=dict, blank=True)
+    subscription_state_after = models.JSONField(default=dict, blank=True)
+
+    objects = SubscriptionPaymentQuerySet.as_manager()
 
     class Meta:
         ordering = ["-payment_date", "-created_at"]
@@ -341,6 +359,10 @@ class SubscriptionPayment(TimeStampedModel):
     @property
     def created_by(self):
         return self.recorded_by
+
+    @property
+    def is_reversed(self):
+        return self.reversed_at is not None
 
     def save(self, *args, **kwargs):
         if self.business_id is None and self.subscription_id:

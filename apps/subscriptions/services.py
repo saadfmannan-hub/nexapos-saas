@@ -1,10 +1,13 @@
-"""Subscription limit enforcement.
+"""Subscription enforcement and payment-ledger services.
 
 All creation paths for limited resources call `check_limit` (raising
 LimitExceeded) or `limit_state` (for UI badges). Limits live on the
 Plan; 0 means unlimited. Existing data is never deleted when a limit
 is exceeded — creation of new records is simply blocked.
 """
+from datetime import datetime
+
+from django.db import transaction
 from django.utils import timezone
 
 
@@ -160,3 +163,165 @@ def has_tailoring_module(business) -> bool:
 
 def has_executive_dashboard(business) -> bool:
     return has_feature(business, "executive_dashboard")
+
+
+SUBSCRIPTION_STATE_FIELDS = (
+    "plan_id",
+    "status",
+    "billing_cycle",
+    "trial_ends_at",
+    "current_period_start",
+    "current_period_end",
+    "cancelled_at",
+    "notes",
+)
+SUBSCRIPTION_PERIOD_FIELDS = (
+    "current_period_start",
+    "current_period_end",
+)
+SUBSCRIPTION_DATETIME_FIELDS = {
+    "trial_ends_at",
+    "current_period_start",
+    "current_period_end",
+    "cancelled_at",
+}
+
+
+class PaymentAlreadyReversed(Exception):
+    pass
+
+
+class PaymentReversalReasonRequired(Exception):
+    pass
+
+
+def _serialize_state_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def capture_subscription_state(subscription):
+    """Return a JSON-safe snapshot sufficient to reverse a period change."""
+    return {
+        field: _serialize_state_value(getattr(subscription, field))
+        for field in SUBSCRIPTION_STATE_FIELDS
+    }
+
+
+def _deserialize_state_value(field, value):
+    if field in SUBSCRIPTION_DATETIME_FIELDS and value:
+        return datetime.fromisoformat(value)
+    return value
+
+
+def _state_matches(subscription, expected):
+    if not expected:
+        return False
+    current = capture_subscription_state(subscription)
+    return all(current.get(field) == expected.get(field)
+               for field in SUBSCRIPTION_STATE_FIELDS)
+
+
+def _restore_subscription_state(subscription, state, *, period_only=False):
+    fields = SUBSCRIPTION_PERIOD_FIELDS if period_only else SUBSCRIPTION_STATE_FIELDS
+    for field in fields:
+        if field in state:
+            setattr(
+                subscription,
+                field,
+                _deserialize_state_value(field, state[field]),
+            )
+    subscription.save(update_fields=[*fields, "updated_at"])
+
+
+def payment_audit_values(payment):
+    return {
+        "amount": str(payment.amount),
+        "method": payment.method,
+        "reference": payment.reference,
+        "payment_date": str(payment.payment_date),
+        "notes": payment.notes,
+        "reversed_at": (
+            payment.reversed_at.isoformat() if payment.reversed_at else None
+        ),
+        "reversed_by": payment.reversed_by_id,
+        "reversal_reason": payment.reversal_reason,
+    }
+
+
+@transaction.atomic
+def reverse_subscription_payment(*, payment_id, reversed_by, reason):
+    """Soft-reverse a payment and safely restore its subscription effect.
+
+    New payment-linked period changes carry exact before/after snapshots. Legacy
+    rows fall back to the latest remaining period-bearing payment, or to the
+    reversed row's period start. The fallback is deliberately conservative and
+    never leaves the reversed period end in force.
+    """
+    from apps.subscriptions.models import Subscription, SubscriptionPayment
+
+    reason = (reason or "").strip()
+    if not reason:
+        raise PaymentReversalReasonRequired
+
+    payment = (
+        SubscriptionPayment.objects.select_for_update()
+        .select_related("subscription")
+        .get(pk=payment_id)
+    )
+    if payment.reversed_at:
+        raise PaymentAlreadyReversed
+
+    subscription = Subscription.objects.select_for_update().get(
+        pk=payment.subscription_id
+    )
+    payment_before = payment_audit_values(payment)
+    subscription_before = capture_subscription_state(subscription)
+
+    payment.reversed_at = timezone.now()
+    payment.reversed_by = reversed_by
+    payment.reversal_reason = reason[:400]
+    payment.save(update_fields=[
+        "reversed_at", "reversed_by", "reversal_reason", "updated_at",
+    ])
+
+    if payment.period_end and subscription.current_period_end == payment.period_end:
+        if payment.subscription_state_before:
+            restore_full_state = _state_matches(
+                subscription, payment.subscription_state_after
+            )
+            _restore_subscription_state(
+                subscription,
+                payment.subscription_state_before,
+                period_only=not restore_full_state,
+            )
+        else:
+            latest_period_payment = (
+                SubscriptionPayment.objects.active()
+                .filter(
+                    subscription=subscription,
+                    period_end__isnull=False,
+                )
+                .exclude(pk=payment.pk)
+                .order_by("-period_end", "-created_at")
+                .first()
+            )
+            subscription.current_period_start = (
+                latest_period_payment.period_start
+                if latest_period_payment else None
+            )
+            subscription.current_period_end = (
+                latest_period_payment.period_end
+                if latest_period_payment else payment.period_start
+            )
+            subscription.save(update_fields=[
+                "current_period_start", "current_period_end", "updated_at",
+            ])
+
+    return (
+        payment,
+        payment_before,
+        subscription_before,
+        capture_subscription_state(subscription),
+    )

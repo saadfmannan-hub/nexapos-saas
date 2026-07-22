@@ -9,6 +9,18 @@ urlpatterns = [
     path("businesses/", views.business_list, name="business_list"),
     path("businesses/new/", views.business_create, name="business_create"),
     path("businesses/<uuid:public_id>/", views.business_detail, name="business_detail"),
+    path(
+        "businesses/<uuid:business_public_id>/payments/"
+        "<uuid:payment_public_id>/edit/",
+        views.subscription_payment_edit,
+        name="payment_edit",
+    ),
+    path(
+        "businesses/<uuid:business_public_id>/payments/"
+        "<uuid:payment_public_id>/reverse/",
+        views.subscription_payment_reverse,
+        name="payment_reverse",
+    ),
     path("businesses/<uuid:public_id>/support-access/", views.support_access, name="support_access"),
     path("businesses/<uuid:public_id>/login-as/", views.support_login_as, name="login_as"),
     path("support/exit/", views.support_exit, name="support_exit"),

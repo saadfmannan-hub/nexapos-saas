@@ -115,7 +115,7 @@
       <div class="row g-3 small">
         <div class="col-sm-4"><div class="text-secondary">Payments</div><div class="fs-5 fw-semibold">{{ payment_summary.count|default:0 }}</div></div>
         <div class="col-sm-4"><div class="text-secondary">Total paid</div><div class="fs-5 fw-semibold">{{ payment_summary.total|default:"0.000" }} {% if sub %}{{ sub.plan.currency_code }}{% endif %}</div></div>
-        <div class="col-sm-4"><div class="text-secondary">Last payment</div><div class="fs-5 fw-semibold">{% if payments.0 %}{{ payments.0.payment_date|date:"Y-m-d" }}{% else %}-{% endif %}</div></div>
+        <div class="col-sm-4"><div class="text-secondary">Last payment</div><div class="fs-5 fw-semibold">{% if last_active_payment %}{{ last_active_payment.payment_date|date:"Y-m-d" }}{% else %}-{% endif %}</div></div>
       </div>
     </div></div>
 
@@ -190,18 +190,62 @@
     </div>
 
     <div class="card mt-3"><div class="card-header">Subscription payments</div>
-      <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Recorded by</th><th class="text-end">Amount</th></tr></thead>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Date</th><th>Method</th><th>Reference</th><th>Recorded by</th><th class="text-end">Amount</th><th class="text-end">Actions</th></tr></thead>
         <tbody>
           {% for p in payments %}
           <tr><td class="small">{{ p.payment_date|date:"Y-m-d" }}</td>
               <td>{{ p.get_method_display }}</td><td class="small">{{ p.reference|default:"-" }}</td>
               <td class="small">{% if p.recorded_by %}{{ p.recorded_by.email }}{% else %}-{% endif %}</td>
-              <td class="text-end">{{ p.amount }} {{ p.currency_code }}</td></tr>
-          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-2">No payments recorded</td></tr>{% endfor %}
+              <td class="text-end">{{ p.amount }} {{ p.currency_code }}</td>
+              <td class="text-end text-nowrap">
+                {% if p.is_reversed %}
+                <span class="badge badge-status bs-suspended">Reversed</span>
+                <div class="small text-secondary mt-1" title="{{ p.reversal_reason }}">
+                  {{ p.reversed_at|date:"Y-m-d" }}{% if p.reversed_by %} by {{ p.reversed_by.email }}{% endif %}
+                </div>
+                {% else %}
+                <a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:payment_edit' business.public_id p.public_id %}">Edit</a>
+                <button type="button" class="btn btn-sm btn-outline-danger"
+                        data-bs-toggle="modal" data-bs-target="#reversePayment{{ p.public_id }}">
+                  Reverse
+                </button>
+                {% endif %}
+              </td></tr>
+          {% empty %}<tr><td colspan="6" class="text-center text-secondary py-2">No payments recorded</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>
+
+    {% for p in payments %}{% if not p.is_reversed %}
+    <div class="modal fade" id="reversePayment{{ p.public_id }}" tabindex="-1"
+         aria-labelledby="reversePaymentLabel{{ p.public_id }}" aria-hidden="true">
+      <div class="modal-dialog"><div class="modal-content">
+        <form method="post" action="{% url 'platformadmin:payment_reverse' business.public_id p.public_id %}">
+          {% csrf_token %}
+          <div class="modal-header">
+            <h5 class="modal-title" id="reversePaymentLabel{{ p.public_id }}">Reverse payment</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-warning small">
+              Reverse <strong>{{ p.amount }} {{ p.currency_code }}</strong>
+              recorded on {{ p.payment_date|date:"Y-m-d" }}? The original record
+              will remain in the audit trail and any linked subscription period
+              will be recalculated.
+            </div>
+            <label class="form-label required-star" for="reversalReason{{ p.public_id }}">Reason</label>
+            <textarea class="form-control" id="reversalReason{{ p.public_id }}"
+                      name="reversal_reason" rows="3" maxlength="400" required></textarea>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-danger">Reverse payment</button>
+          </div>
+        </form>
+      </div></div>
+    </div>
+    {% endif %}{% endfor %}
 
     <div class="card mt-3"><div class="card-header">Support access (audited)</div><div class="card-body">
       <p class="small text-secondary">Platform staff cannot see tenant business data without an explicit, time-limited, audited grant.</p>

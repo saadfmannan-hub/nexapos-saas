@@ -1,0 +1,53 @@
+{% extends "platformadmin/_base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="page-title mb-1">Edit subscription payment</h1>
+    <div class="small text-secondary">{{ business.name }} · {{ payment.currency_code }}</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary"
+     href="{% url 'platformadmin:business_detail' business.public_id %}">Back</a>
+</div>
+
+<div class="card pa-plan-card">
+  <form method="post">
+    {% csrf_token %}
+    <div class="pa-plan-section">
+      <div class="alert alert-warning small">
+        Changes are audited. Business ownership, subscription, currency, and
+        the original recorded-by user cannot be changed.
+      </div>
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.payment_date.id_for_label }}">Payment date</label>
+          {{ form.payment_date }}{{ form.payment_date.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.method.id_for_label }}">Payment method</label>
+          {{ form.method }}{{ form.method.errors }}
+        </div>
+        <div class="col-md-4">
+          <label class="form-label" for="{{ form.amount.id_for_label }}">Amount</label>
+          {{ form.amount }}{{ form.amount.errors }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.reference.id_for_label }}">Reference</label>
+          {{ form.reference }}{{ form.reference.errors }}
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="{{ form.notes.id_for_label }}">Notes</label>
+          {{ form.notes }}{{ form.notes.errors }}
+        </div>
+      </div>
+    </div>
+    <div class="pa-plan-section pa-plan-actions">
+      <a class="btn btn-outline-secondary"
+         href="{% url 'platformadmin:business_detail' business.public_id %}">Cancel</a>
+      <button class="btn btn-primary" type="submit">Save payment</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
