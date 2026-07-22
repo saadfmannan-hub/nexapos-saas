@@ -507,6 +507,18 @@ body.pa-admin .table-hover > tbody > tr:hover {
   --bs-table-hover-color: var(--pa-text);
   background-color: var(--pa-surface-2) !important;
 }
+body.pa-admin .table-hover > tbody > tr:hover > * {
+  /* Bootstrap paints table state on each cell with a 9999px inset shadow.
+     Set both the state inputs and the rendered layer on the actual cells so
+     app.css/build ordering cannot reintroduce its light hover palette. */
+  --bs-table-hover-bg: var(--pa-surface-2);
+  --bs-table-hover-color: var(--pa-text);
+  --bs-table-bg-state: var(--pa-surface-2);
+  --bs-table-color-state: var(--pa-text);
+  background-color: var(--pa-surface-2) !important;
+  color: var(--pa-text) !important;
+  box-shadow: inset 0 0 0 9999px var(--pa-surface-2) !important;
+}
 
 /* --- Sidebar nav ------------------------------------------------ */
 body.pa-admin .np-sidebar .nav-link:not(.active):hover,
