@@ -86,17 +86,22 @@
         {% endif %}
       </div>
       <div class="table-responsive"><table class="table table-sm table-hover mb-0">
-        <thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th>{% if not product.is_meter_tailoring or not product.unit_id %}<th class="text-end">Price</th>{% endif %}<th></th></tr></thead>
+        <thead><tr><th>Variant</th><th>SKU</th><th>Barcode</th>{% if not product.is_meter_tailoring or not product.unit_id %}<th class="text-end">Price</th>{% endif %}<th class="text-end">Current stock</th><th></th></tr></thead>
         <tbody>
           {% for v in variants %}
           <tr>
             <td>{{ v.name }}</td><td class="small">{{ v.sku|default:"—" }}</td>
             <td class="small">{{ v.barcode|default:"—" }}</td>
             {% if not product.is_meter_tailoring or not product.unit_id %}<td class="text-end">{{ v.sale_price }}</td>{% endif %}
-            <td class="w-1">{% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
-              <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
+            <td class="text-end fw-semibold">{{ v.current_stock }}</td>
+            <td class="w-1 text-nowrap">
+              {% if v.is_active and product.is_stocked and module_capabilities.inventory.can_write and "inventory.adjust" in business_perms %}
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'inventory:adjustment_create' %}?branch={{ selected_branch.id }}&amp;warehouse={{ selected_warehouse.id }}&amp;product={{ product.id }}&amp;variant={{ v.id }}">Adjust Stock</a>
+              {% endif %}
+              {% if module_capabilities.pos_core.can_write and "products.manage" in business_perms %}
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'catalog:variant_edit' product.public_id v.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}&amp;warehouse={{ selected_warehouse.id }}{% endif %}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
           </tr>
-          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No variants yet</td></tr>{% endfor %}
+          {% empty %}<tr><td colspan="6" class="text-center text-secondary py-3">No variants yet</td></tr>{% endfor %}
         </tbody>
       </table></div>
     </div>

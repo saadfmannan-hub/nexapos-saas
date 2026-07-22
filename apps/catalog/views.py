@@ -712,7 +712,7 @@ def product_detail(request, public_id):
     _require_tailoring_product_access(
         request, product, permission_code="products.view"
     )
-    variants = product.variants.all()
+    variants = list(product.variants.all())
     levels = (
         inventory.StockLevel.objects.for_business(request.business)
         .filter(product=product).select_related("warehouse", "variant")
@@ -721,7 +721,14 @@ def product_detail(request, public_id):
         inventory.StockMovement.objects.for_business(request.business)
         .filter(product=product).select_related("warehouse", "variant", "user")
     )
-    levels = levels.filter(warehouse=selected_warehouse)
+    levels = list(levels.filter(warehouse=selected_warehouse))
+    stock_by_variant = {
+        level.variant_id: level.quantity
+        for level in levels
+        if level.variant_id is not None
+    }
+    for variant in variants:
+        variant.current_stock = stock_by_variant.get(variant.id, Decimal("0"))
     movements = movements.filter(warehouse=selected_warehouse)
     movements = movements[:30]
     show_cost = request.membership.has_perm("cost.view")

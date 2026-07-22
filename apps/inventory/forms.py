@@ -98,6 +98,14 @@ def parse_item_rows(
         qty = D(quantities[i] if i < len(quantities) else 0)
         if qty == 0:
             continue
+        if (
+            product.unit_id
+            and not product.unit.allow_decimal
+            and qty != qty.to_integral_value()
+        ):
+            raise forms.ValidationError(
+                f"{variant or product} requires a whole-number quantity."
+            )
         if qty < 0 and not allow_negative:
             raise forms.ValidationError("Transfer quantities must be greater than zero.")
         if (

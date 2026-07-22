@@ -2,7 +2,7 @@ from django import forms as django_forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db.models import F, Q
+from django.db.models import F, Prefetch, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
 
@@ -341,23 +341,46 @@ def movement_list(request):
 # ---------------------------------------------------------------------------
 @module_permission_required("inventory", "inventory.view")
 def item_search(request):
-    from apps.catalog.models import Product
+    from apps.catalog.models import Product, ProductVariant
 
     q = request.GET.get("q", "").strip()
     if len(q) < 2:
         return JsonResponse({"results": []})
+    product_match = (
+        Q(name__icontains=q)
+        | Q(sku__icontains=q)
+        | Q(barcode__icontains=q)
+    )
+    variant_match = Q(variants__is_active=True) & (
+        Q(variants__name__icontains=q)
+        | Q(variants__sku__icontains=q)
+        | Q(variants__barcode__icontains=q)
+    )
     products = (
         Product.objects.for_business(request.business)
         .filter(is_active=True, is_archived=False)
-        .filter(Q(name__icontains=q) | Q(sku__icontains=q) | Q(barcode__icontains=q))
+        .filter(product_match | variant_match)
+        .select_related("unit")
     )
     if not get_access_context(request).has_module("tailoring"):
         products = products.filter(is_tailoring_item=False)
-    products = products.prefetch_related("variants")[:15]
+    products = products.distinct().prefetch_related(
+        Prefetch(
+            "variants",
+            queryset=ProductVariant.objects.filter(is_active=True),
+            to_attr="active_variants",
+        )
+    )[:15]
     results = []
     include_parent_meter_repair = request.GET.get("parent_meter_repair") == "1"
+    query = q.casefold()
     for p in products:
-        if p.has_variants:
+        parent_matches = any(
+            query in str(value or "").casefold()
+            for value in (p.name, p.sku, p.barcode)
+        )
+        variants = p.active_variants
+        if variants:
             if (
                 include_parent_meter_repair
                 and p.is_meter_tailoring
@@ -371,13 +394,89 @@ def item_search(request):
                     "label": f"{p.name} — Legacy parent stock (correct to zero)",
                     "sku": p.sku,
                 })
-            for v in p.variants.filter(is_active=True):
+            if not parent_matches:
+                variants = [
+                    variant
+                    for variant in variants
+                    if any(
+                        query in str(value or "").casefold()
+                        for value in (variant.name, variant.sku, variant.barcode)
+                    )
+                ]
+            for v in variants:
                 results.append({"product_id": p.id, "variant_id": v.id,
-                                "label": str(v), "sku": v.sku or p.sku})
-        else:
+                                "label": str(v), "sku": v.sku or p.sku,
+                                "allow_decimal": bool(
+                                    p.unit_id is None or p.unit.allow_decimal
+                                )})
+        elif not p.has_variants:
             results.append({"product_id": p.id, "variant_id": None,
-                            "label": p.name, "sku": p.sku})
+                            "label": p.name, "sku": p.sku,
+                            "allow_decimal": bool(
+                                p.unit_id is None or p.unit.allow_decimal
+                            )})
     return JsonResponse({"results": results})
+
+
+def _adjustment_prefill(request):
+    """Resolve an optional catalog-to-adjustment link within request scope."""
+    from apps.catalog.models import Product, ProductVariant
+
+    initial = {}
+    raw_warehouse = request.GET.get("warehouse", "")
+    raw_branch = request.GET.get("branch", "")
+    if raw_warehouse:
+        if not raw_warehouse.isdigit():
+            raise Http404
+        warehouse = _warehouse_queryset(request).filter(pk=int(raw_warehouse)).first()
+        if warehouse is None:
+            raise Http404
+        if raw_branch:
+            if not raw_branch.isdigit() or warehouse.branch_id != int(raw_branch):
+                raise Http404
+        initial["warehouse"] = warehouse
+
+    raw_product = request.GET.get("product", "")
+    raw_variant = request.GET.get("variant", "")
+    if not raw_product and not raw_variant:
+        return initial, []
+    if not raw_product.isdigit() or (raw_variant and not raw_variant.isdigit()):
+        raise Http404
+    product = (
+        Product.objects.for_business(request.business)
+        .select_related("unit")
+        .filter(pk=int(raw_product), is_active=True, is_archived=False)
+        .first()
+    )
+    if product is None:
+        raise Http404
+    if product.is_tailoring_item and not get_access_context(request).has_module(
+        "tailoring"
+    ):
+        raise Http404
+
+    variant = None
+    if raw_variant:
+        variant = (
+            ProductVariant.objects.for_business(request.business)
+            .filter(pk=int(raw_variant), product=product, is_active=True)
+            .first()
+        )
+        if variant is None:
+            raise Http404
+    elif product.has_variants:
+        raise Http404
+
+    return initial, [{
+        "product_id": product.id,
+        "variant_id": variant.id if variant else None,
+        "label": str(variant or product),
+        "sku": (variant.sku if variant else product.sku) or product.sku,
+        "allow_decimal": bool(
+            product.unit_id is None or product.unit.allow_decimal
+        ),
+        "quantity": 1,
+    }]
 
 
 # ---------------------------------------------------------------------------
@@ -497,10 +596,14 @@ def adjustment_list(request):
 
 @module_permission_required("inventory", "inventory.adjust")
 def adjustment_create(request):
+    initial, initial_item_rows = (
+        _adjustment_prefill(request) if request.method == "GET" else ({}, [])
+    )
     form = AdjustmentForm(
         request.business,
         request.POST or None,
         membership=request.membership,
+        initial=initial,
     )
     if request.method == "POST" and form.is_valid():
         try:
@@ -539,6 +642,7 @@ def adjustment_create(request):
                       "form": form,
                       "active_nav": "inventory",
                       "allow_parent_meter_repair": True,
+                      "initial_item_rows": initial_item_rows,
                   })
 
 
