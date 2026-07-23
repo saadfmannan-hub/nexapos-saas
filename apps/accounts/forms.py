@@ -84,17 +84,21 @@ class EmployeeForm(forms.Form):
             self.fields["password"].required = True
 
     def clean_email(self):
-        email = self.cleaned_data["email"].lower()
+        email = User.objects.normalize_email(self.cleaned_data["email"])
         qs = User.objects.filter(email__iexact=email)
         if self.editing is not None:
             qs = qs.exclude(pk=self.editing.user_id)
         existing = qs.first()
         if existing is not None:
+            if self.editing is not None:
+                raise forms.ValidationError(
+                    "An account with this email already exists."
+                )
             # Allow attaching an existing platform user only if they are not
             # already a member of this business.
             if Membership.objects.filter(business=self.business, user=existing).exists():
                 raise forms.ValidationError(
-                    "A user with this email is already a member of this business."
+                    "An account with this email already exists."
                 )
         return email
 

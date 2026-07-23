@@ -256,7 +256,9 @@ def user_edit(request, public_id):
         with transaction.atomic():
             user = membership.user
             old_role = membership.role.name
+            old_email = user.email
             user.full_name = form.cleaned_data["full_name"]
+            user.email = form.cleaned_data["email"]
             user.phone = form.cleaned_data["phone"]
             if form.cleaned_data["password"]:
                 user.set_password(form.cleaned_data["password"])
@@ -267,8 +269,8 @@ def user_edit(request, public_id):
             membership.save()
             membership.branches.set(form.cleaned_data["branches"])
             audit.log("user.updated", request=request, module="accounts", obj=user,
-                      old_values={"role": old_role},
-                      new_values={"role": membership.role.name},
+                      old_values={"email": old_email, "role": old_role},
+                      new_values={"email": user.email, "role": membership.role.name},
                       description=f"Employee {user.email} updated.")
         messages.success(request, "Employee updated.")
         return redirect("accounts:user_list")

@@ -13,6 +13,11 @@ from apps.core.models import TenantManager, TimeStampedModel
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
+    @classmethod
+    def normalize_email(cls, email):
+        """Use one canonical representation for the login identifier."""
+        return super().normalize_email(email).strip().lower()
+
     def _create_user(self, email, password, **extra_fields):
         if not email:
             raise ValueError("Email is required")
