@@ -147,6 +147,24 @@ def onboarding_view(request):
     })
 
 
+@require_POST
+@require_permission("settings.manage")
+def dismiss_onboarding_banner(request):
+    business = request.business
+    if not business.onboarding_banner_dismissed:
+        business.onboarding_banner_dismissed = True
+        business.save(update_fields=["onboarding_banner_dismissed", "updated_at"])
+        audit.log(
+            "business.onboarding_banner_dismissed",
+            request=request,
+            module="tenants",
+            obj=business,
+            description="Dashboard onboarding banner permanently dismissed.",
+        )
+    messages.success(request, "The setup reminder has been dismissed.")
+    return redirect("dashboard")
+
+
 @require_permission("settings.manage")
 def profile_view(request):
     form = BusinessProfileForm(

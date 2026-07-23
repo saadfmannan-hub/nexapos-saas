@@ -806,6 +806,9 @@ def product_delete(request, public_id):
     from . import services as catalog_services
 
     selected_branch, _branches = _catalog_branch_context(request)
+    selected_warehouse, _warehouses = _catalog_warehouse_context(
+        request, selected_branch
+    )
     product = get_tenant_object(
         _catalog_product_object_queryset(request, selected_branch),
         request.business,
@@ -826,9 +829,16 @@ def product_delete(request, public_id):
             )
         except catalog_services.ProductInUse as exc:
             messages.error(request, str(exc))
-            target = reverse("catalog:product_detail", args=[public_id])
-            if selected_branch is not None:
-                target += f"?branch={selected_branch.pk}"
+            if selected_branch is not None and selected_warehouse is not None:
+                target = reverse("catalog:product_detail", args=[public_id])
+                target += (
+                    f"?branch={selected_branch.pk}"
+                    f"&warehouse={selected_warehouse.pk}"
+                )
+            else:
+                target = reverse("catalog:product_list")
+                if selected_branch is not None:
+                    target += f"?branch={selected_branch.pk}"
             return redirect(target)
         audit.log("product.deleted", request=request, module="catalog",
                   description=f"Product '{name}' ({ref}) hard-deleted "
@@ -841,6 +851,8 @@ def product_delete(request, public_id):
     target = reverse("catalog:product_detail", args=[public_id])
     if selected_branch is not None:
         target += f"?branch={selected_branch.pk}"
+        if selected_warehouse is not None:
+            target += f"&warehouse={selected_warehouse.pk}"
     return redirect(target)
 
 

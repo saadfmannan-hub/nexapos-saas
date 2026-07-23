@@ -26,7 +26,10 @@
     {% if module_capabilities.pos_core.can_write and "products.delete" in business_perms %}
     <form method="post" action="{% url 'catalog:product_delete' product.public_id %}{% if selected_branch %}?branch={{ selected_branch.id }}{% endif %}"
           onsubmit="return confirm('Permanently delete this product? Only possible if it was never used in any transaction.')">
-      {% csrf_token %}<button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
+      {% csrf_token %}
+      {% if selected_branch %}<input type="hidden" name="branch" value="{{ selected_branch.id }}">{% endif %}
+      {% if selected_warehouse %}<input type="hidden" name="warehouse" value="{{ selected_warehouse.id }}">{% endif %}
+      <button class="btn btn-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
     </form>
     {% endif %}
   </div>

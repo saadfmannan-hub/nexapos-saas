@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Max, Sum
+from django.db.models import Max, Q, Sum
 
 from apps.core.money import D, money
 from apps.core.money import qty as q3
@@ -387,7 +387,8 @@ def inventory_export_dataset(
         StockLevel.objects.for_business(business)
         .select_related("product", "variant", "warehouse", "warehouse__branch",
                         "product__category", "product__unit")
-        .filter(product__is_archived=False)
+        .filter(product__is_active=True, product__is_archived=False)
+        .filter(Q(variant__isnull=True) | Q(variant__is_active=True))
     )
     if allowed_warehouse_ids is not None:
         qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
@@ -784,9 +785,19 @@ def stock_value(
     *,
     allowed_warehouse_ids=None,
     include_tailoring=True,
+    active_only=False,
 ):
-    """Total stock value at average cost."""
+    """Total stock value at average cost.
+
+    ``active_only`` is used by operational Current Stock surfaces. Historical
+    reports retain the complete ledger-backed behavior unless they opt in.
+    """
     qs = StockLevel.objects.for_business(business).filter(quantity__gt=0)
+    if active_only:
+        qs = qs.filter(
+            product__is_active=True,
+            product__is_archived=False,
+        ).filter(Q(variant__isnull=True) | Q(variant__is_active=True))
     if allowed_warehouse_ids is not None:
         qs = qs.filter(warehouse_id__in=allowed_warehouse_ids)
     if not include_tailoring:

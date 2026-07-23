@@ -1,0 +1,21 @@
+<div class="table-responsive">
+  <table class="table table-hover mb-0">
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Branches</th><th>Status</th><th class="w-1"></th></tr></thead>
+    <tbody>
+      {% for m in memberships %}
+      <tr>
+        <td><span class="avatar-sm me-2">{{ m.user.full_name|first|upper }}</span>{{ m.user.full_name }}</td>
+        <td>{{ m.user.email }}</td>
+        <td><span class="badge {% if m.role.is_owner %}text-bg-dark{% else %}text-bg-light border{% endif %}">{{ m.role.name }}</span></td>
+        <td class="small">
+          {% for b in m.branches.all %}{{ b.name }}{% if not forloop.last %}, {% endif %}{% empty %}All branches{% endfor %}
+        </td>
+        <td>{% if m.is_active %}<span class="badge-status bs-active badge">Active</span>{% else %}<span class="badge-status bs-suspended badge">Inactive</span>{% endif %}</td>
+        <td>{% if module_capabilities.pos_core.can_write %}<a class="btn btn-sm btn-outline-secondary" href="{% url 'accounts:user_edit' m.public_id %}" aria-label="Edit {{ m.user.full_name }}"><i class="bi bi-pencil"></i></a>{% endif %}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="6"><div class="empty-state py-4">{{ empty_message }}</div></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

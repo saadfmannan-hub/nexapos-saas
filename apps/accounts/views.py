@@ -181,27 +181,37 @@ class PasswordResetCompleteView(auth_views.PasswordResetCompleteView):
 # ---------------------------------------------------------------------------
 @module_permission_required("pos_core", "users.manage")
 def user_list(request):
-    memberships = (
+    memberships = list(
         Membership.objects.for_business(request.business)
         .select_related("user", "role")
         .prefetch_related("branches")
-        .order_by("user__full_name")
+        .order_by("user__full_name", "user__email")
     )
+    active_memberships = [membership for membership in memberships if membership.is_active]
+    inactive_memberships = [
+        membership for membership in memberships if not membership.is_active
+    ]
     current, limit, _allowed = subscriptions.limit_state(request.business, "users")
     return render(request, "accounts/user_list.html", {
-        "memberships": memberships, "active_nav": "users",
+        "active_memberships": active_memberships,
+        "inactive_memberships": inactive_memberships,
+        "active_user_count": len(active_memberships),
+        "inactive_user_count": len(inactive_memberships),
+        "active_nav": "users",
         "user_count": current, "user_limit": limit,
     })
 
 
+def _lock_and_check_user_seat(business):
+    """Serialize active-seat allocation for creates and reactivations."""
+    from apps.tenants.models import Business
+
+    Business.objects.select_for_update().only("pk").get(pk=business.pk)
+    subscriptions.check_limit(business, "users")
+
+
 @module_permission_required("pos_core", "users.manage")
 def user_create(request):
-    from apps.subscriptions.helpers import guard_limit
-
-    blocked = guard_limit(request, "users")
-    if blocked:
-        return blocked
-
     _require_custom_role_assignment(request)
     custom_roles_enabled = _custom_roles_enabled(request)
     form = EmployeeForm(
@@ -210,26 +220,36 @@ def user_create(request):
         custom_roles_enabled=custom_roles_enabled,
     )
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
-            email = form.cleaned_data["email"]
-            user = User.objects.filter(email__iexact=email).first()
-            if user is None:
-                user = User.objects.create_user(
-                    email=email,
-                    password=form.cleaned_data["password"],
-                    full_name=form.cleaned_data["full_name"],
-                    phone=form.cleaned_data["phone"],
+        try:
+            with transaction.atomic():
+                if form.cleaned_data["is_active"]:
+                    _lock_and_check_user_seat(request.business)
+                email = form.cleaned_data["email"]
+                user = User.objects.filter(email__iexact=email).first()
+                if user is None:
+                    user = User.objects.create_user(
+                        email=email,
+                        password=form.cleaned_data["password"],
+                        full_name=form.cleaned_data["full_name"],
+                        phone=form.cleaned_data["phone"],
+                    )
+                membership = Membership.objects.create(
+                    business=request.business,
+                    user=user,
+                    role=form.cleaned_data["role"],
+                    is_active=form.cleaned_data["is_active"],
                 )
-            membership = Membership.objects.create(
-                business=request.business,
-                user=user,
-                role=form.cleaned_data["role"],
-                is_active=form.cleaned_data["is_active"],
-            )
-            membership.branches.set(form.cleaned_data["branches"])
-            audit.log("user.created", request=request, module="accounts", obj=user,
-                      description=f"Employee {user.email} added with role "
-                                  f"{form.cleaned_data['role'].name}.")
+                membership.branches.set(form.cleaned_data["branches"])
+                audit.log("user.created", request=request, module="accounts", obj=user,
+                          description=f"Employee {user.email} added with role "
+                                      f"{form.cleaned_data['role'].name}.")
+        except (
+            subscriptions.LimitExceeded,
+            subscriptions.SubscriptionInactive,
+        ) as exc:
+            from apps.subscriptions.helpers import limit_blocked_response
+
+            return limit_blocked_response(request, exc, resource="users")
         messages.success(request, "Employee added.")
         return redirect("accounts:user_list")
     return render(request, "accounts/user_form.html",
@@ -253,25 +273,43 @@ def user_edit(request, public_id):
                         editing=membership, initial=initial,
                         custom_roles_enabled=custom_roles_enabled)
     if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
-            user = membership.user
-            old_role = membership.role.name
-            old_email = user.email
-            user.full_name = form.cleaned_data["full_name"]
-            user.email = form.cleaned_data["email"]
-            user.phone = form.cleaned_data["phone"]
-            if form.cleaned_data["password"]:
-                user.set_password(form.cleaned_data["password"])
-            user.save()
-            if not membership.role.is_owner:
-                membership.role = form.cleaned_data["role"]
-                membership.is_active = form.cleaned_data["is_active"]
-            membership.save()
-            membership.branches.set(form.cleaned_data["branches"])
-            audit.log("user.updated", request=request, module="accounts", obj=user,
-                      old_values={"email": old_email, "role": old_role},
-                      new_values={"email": user.email, "role": membership.role.name},
-                      description=f"Employee {user.email} updated.")
+        reactivating = (
+            not membership.is_active
+            and form.cleaned_data["is_active"]
+            and not membership.role.is_owner
+        )
+        try:
+            with transaction.atomic():
+                if reactivating:
+                    _lock_and_check_user_seat(request.business)
+                user = membership.user
+                old_role = membership.role.name
+                old_email = user.email
+                old_active = membership.is_active
+                user.full_name = form.cleaned_data["full_name"]
+                user.email = form.cleaned_data["email"]
+                user.phone = form.cleaned_data["phone"]
+                if form.cleaned_data["password"]:
+                    user.set_password(form.cleaned_data["password"])
+                user.save()
+                if not membership.role.is_owner:
+                    membership.role = form.cleaned_data["role"]
+                    membership.is_active = form.cleaned_data["is_active"]
+                membership.save()
+                membership.branches.set(form.cleaned_data["branches"])
+                audit.log("user.updated", request=request, module="accounts", obj=user,
+                          old_values={"email": old_email, "role": old_role,
+                                      "is_active": old_active},
+                          new_values={"email": user.email, "role": membership.role.name,
+                                      "is_active": membership.is_active},
+                          description=f"Employee {user.email} updated.")
+        except (
+            subscriptions.LimitExceeded,
+            subscriptions.SubscriptionInactive,
+        ) as exc:
+            from apps.subscriptions.helpers import limit_blocked_response
+
+            return limit_blocked_response(request, exc, resource="users")
         messages.success(request, "Employee updated.")
         return redirect("accounts:user_list")
     return render(request, "accounts/user_form.html",

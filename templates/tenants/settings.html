@@ -32,15 +32,6 @@
       {% include "components/form_field.html" with field=form.price_rounding %}
       {% include "components/form_field.html" with field=form.max_discount_percent %}
     </div></div>
-    <div class="card mt-3"><div class="card-header">More Options Fields</div><div class="card-body">
-      <div class="row g-2">
-        {% for field in form %}
-          {% if field.name|slice:":17" == "more_option_label" %}
-          <div class="col-md-6">{% include "components/form_field.html" with field=field %}</div>
-          {% endif %}
-        {% endfor %}
-      </div>
-    </div></div>
   </div>
   <div class="col-lg-6">
     <div class="card"><div class="card-header">Stock &amp; sales policies</div><div class="card-body">
@@ -62,6 +53,15 @@
         <label class="form-check-label" for="{{ form.notify_credit_overdue.id_for_label }}">Overdue credit notifications</label></div>
       <div class="form-check mb-2">{{ form.notify_support_access }}
         <label class="form-check-label" for="{{ form.notify_support_access.id_for_label }}">Notify me when platform support accesses my data</label></div>
+    </div></div>
+    <div class="card mt-3"><div class="card-header">Custom Customer Fields</div><div class="card-body">
+      <div class="row g-2">
+        {% for field in form %}
+          {% if field.name|slice:":17" == "more_option_label" %}
+          <div class="col-md-6">{% include "components/form_field.html" with field=field %}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
     </div></div>
   </div>
 </div>

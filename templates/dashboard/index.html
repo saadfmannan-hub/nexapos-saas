@@ -41,9 +41,17 @@
 {% block content %}
 <div class="owner-dashboard">
 {% if onboarding_pending %}
-<div class="alert alert-info d-flex justify-content-between align-items-center">
+<div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap gap-2">
   <div><i class="bi bi-stars me-2"></i>Finish setting up your business to get the most out of {{ PRODUCT_NAME }}.</div>
-  <a href="{% url 'tenants:onboarding' %}" class="btn btn-sm btn-primary">Continue setup</a>
+  <div class="d-flex gap-2">
+    <a href="{% url 'tenants:onboarding' %}" class="btn btn-sm btn-primary">Continue setup</a>
+    {% if can_dismiss_onboarding_banner %}
+    <form method="post" action="{% url 'tenants:dismiss_onboarding_banner' %}">
+      {% csrf_token %}
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Dismiss</button>
+    </form>
+    {% endif %}
+  </div>
 </div>
 {% endif %}
 

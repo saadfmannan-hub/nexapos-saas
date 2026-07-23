@@ -9,6 +9,11 @@ urlpatterns = [
     path("no-business/", views.no_business_view, name="no_business"),
     path("switch/", views.switch_business, name="switch_business"),
     path("onboarding/", views.onboarding_view, name="onboarding"),
+    path(
+        "onboarding/dismiss-banner/",
+        views.dismiss_onboarding_banner,
+        name="dismiss_onboarding_banner",
+    ),
     path("settings/profile/", views.profile_view, name="profile"),
     path("settings/", views.settings_view, name="settings"),
 ]

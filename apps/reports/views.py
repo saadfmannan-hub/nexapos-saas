@@ -1000,7 +1000,13 @@ def dashboard(request):
         "widgets": widgets,
         "inventory_access": inventory_access,
         "show_profit": show_profit,
-        "onboarding_pending": not request.business.onboarding_completed,
+        "onboarding_pending": (
+            not request.business.onboarding_completed
+            and not request.business.onboarding_banner_dismissed
+        ),
+        "can_dismiss_onboarding_banner": request.membership.has_perm(
+            "settings.manage"
+        ),
     })
 
 

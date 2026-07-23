@@ -4,13 +4,12 @@ from django import forms
 from django.contrib.auth.password_validation import validate_password
 
 from apps.accounts.models import User
+from apps.core.currencies import currency_choices, precision_for
 
 from .models import Business, BusinessSettings
 
 INPUT = {"class": "form-control"}
 SELECT = {"class": "form-select"}
-
-from apps.core.currencies import currency_choices, precision_for
 
 COMMON_CURRENCIES = currency_choices() + [("OTHER", "Other (enter code below)")]
 
@@ -95,7 +94,7 @@ class BusinessProfileForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        for name, f in self.fields.items():
+        for _name, f in self.fields.items():
             css = "form-select" if isinstance(f.widget, forms.Select) else "form-control"
             f.widget.attrs.setdefault("class", css)
         self.fields["currency_precision"].widget = forms.Select(
@@ -133,7 +132,7 @@ class BusinessSettingsForm(forms.ModelForm):
             "vat_enabled", "vat_percentage", "vat_registration_number",
             "show_vat_on_invoice_receipt", "prices_include_tax",
         ],
-        "more_options": [f"more_option_label_{index}" for index in range(1, 16)],
+        "more_options": [f"more_option_label_{index}" for index in range(1, 21)],
         "policies": [
             "price_rounding", "max_discount_percent", "negative_stock_policy",
             "shared_fabric_warehouse",
@@ -148,7 +147,51 @@ class BusinessSettingsForm(forms.ModelForm):
 
     class Meta:
         model = BusinessSettings
-        exclude = ["business", "show_tax_on_receipt", "created_at", "updated_at"]
+        fields = [
+            "vat_enabled",
+            "vat_percentage",
+            "vat_registration_number",
+            "show_vat_on_invoice_receipt",
+            "prices_include_tax",
+            "more_option_label_1",
+            "more_option_label_2",
+            "more_option_label_3",
+            "more_option_label_4",
+            "more_option_label_5",
+            "more_option_label_6",
+            "more_option_label_7",
+            "more_option_label_8",
+            "more_option_label_9",
+            "more_option_label_10",
+            "more_option_label_11",
+            "more_option_label_12",
+            "more_option_label_13",
+            "more_option_label_14",
+            "more_option_label_15",
+            "more_option_label_16",
+            "more_option_label_17",
+            "more_option_label_18",
+            "more_option_label_19",
+            "more_option_label_20",
+            "invoice_prefix",
+            "invoice_include_branch_code",
+            "invoice_footer",
+            "receipt_footer",
+            "terms_and_conditions",
+            "show_logo_on_invoice",
+            "negative_stock_policy",
+            "shared_fabric_warehouse",
+            "allow_sale_without_shift",
+            "max_discount_percent",
+            "require_customer_for_credit",
+            "return_window_days",
+            "expense_approval_threshold",
+            "adjustment_requires_approval",
+            "price_rounding",
+            "notify_low_stock",
+            "notify_credit_overdue",
+            "notify_support_access",
+        ]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -185,7 +228,7 @@ class BusinessSettingsForm(forms.ModelForm):
         self.fields["vat_percentage"].widget.attrs.update({"min": "0", "step": "0.001"})
         self.fields["vat_registration_number"].label = "VAT Registration Number"
         self.fields["show_vat_on_invoice_receipt"].label = "Show VAT on Invoice/Receipt"
-        for index in range(1, 16):
+        for index in range(1, 21):
             field = self.fields[f"more_option_label_{index}"]
             field.label = f"Label {index}"
             field.required = False

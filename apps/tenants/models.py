@@ -59,6 +59,7 @@ class Business(TimeStampedModel):
         related_name="businesses_reactivated",
     )
     onboarding_completed = models.BooleanField(default=False)
+    onboarding_banner_dismissed = models.BooleanField(default=False)
 
     class Meta:
         verbose_name_plural = "businesses"
@@ -113,6 +114,11 @@ class BusinessSettings(TimeStampedModel):
     more_option_label_13 = models.CharField(max_length=80, blank=True)
     more_option_label_14 = models.CharField(max_length=80, blank=True)
     more_option_label_15 = models.CharField(max_length=80, blank=True)
+    more_option_label_16 = models.CharField(max_length=80, blank=True)
+    more_option_label_17 = models.CharField(max_length=80, blank=True)
+    more_option_label_18 = models.CharField(max_length=80, blank=True)
+    more_option_label_19 = models.CharField(max_length=80, blank=True)
+    more_option_label_20 = models.CharField(max_length=80, blank=True)
 
     # Invoice / receipt
     invoice_prefix = models.CharField(
@@ -204,7 +210,7 @@ class BusinessSettings(TimeStampedModel):
     @property
     def more_option_labels(self):
         labels = []
-        for index in range(1, 16):
+        for index in range(1, 21):
             label = getattr(self, f"more_option_label_{index}", "").strip()
             if label:
                 labels.append({"key": str(index), "label": label})

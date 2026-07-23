@@ -132,8 +132,9 @@ def stock_list(request):
             StockLevel.objects.for_business(request.business),
         )
         .select_related("product", "variant", "warehouse")
-        .filter(product__is_archived=False)
-        .order_by("product__name")
+        .filter(product__is_active=True, product__is_archived=False)
+        .filter(Q(variant__isnull=True) | Q(variant__is_active=True))
+        .order_by("product__name", "variant__name")
     )
     if selected_warehouse is None:
         qs = qs.none()
@@ -143,8 +144,14 @@ def stock_list(request):
         qs = qs.filter(product__is_tailoring_item=False)
     q = request.GET.get("q", "").strip()
     if q:
-        qs = qs.filter(Q(product__name__icontains=q) | Q(product__sku__icontains=q) |
-                       Q(product__barcode__icontains=q))
+        qs = qs.filter(
+            Q(product__name__icontains=q)
+            | Q(product__sku__icontains=q)
+            | Q(product__barcode__icontains=q)
+            | Q(variant__name__icontains=q)
+            | Q(variant__sku__icontains=q)
+            | Q(variant__barcode__icontains=q)
+        )
     level = request.GET.get("level", "")
     if level == "low":
         qs = qs.filter(quantity__lte=F("product__reorder_level"),
@@ -172,6 +179,7 @@ def stock_list(request):
                 [selected_warehouse.pk] if selected_warehouse is not None else []
             ),
             include_tailoring=tailoring_enabled,
+            active_only=True,
         )
         if show_cost
         else None
