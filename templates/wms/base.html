@@ -10,6 +10,12 @@
     {% if "wms.dashboard.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Foundation</a>
     {% endif %}
+    {% if "wms.employees.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" href="{% url 'wms:employee_list' %}">Employees</a>
+    {% endif %}
+    {% if "wms.categories.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'categories' %}active{% endif %}" href="{% url 'wms:category_list' %}">Production Categories</a>
+    {% endif %}
     {% if "wms.users.manage" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'users' %}active{% endif %}" href="{% url 'wms:user_list' %}">Users &amp; Access</a>
     {% endif %}

@@ -1,0 +1,121 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Employees</h2>
+    <div class="small text-secondary">Workshop employee records are separate from login users.</div>
+  </div>
+  {% if can_manage_employees %}
+  <a class="btn btn-primary" href="{% url 'wms:employee_create' %}">
+    <i class="bi bi-person-plus"></i> Add employee
+  </a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-center">
+      <div class="col-lg-4">
+        <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}"
+               placeholder="Search name, code, or mobile">
+      </div>
+      <div class="col-lg-3">
+        <select class="form-select form-select-sm" name="location">
+          <option value="">All WMS locations</option>
+          {% for location in locations %}
+          <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ location.branch.name }}{% if not location.is_active or not location.branch.is_active %} — Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-3">
+        <select class="form-select form-select-sm" name="compensation_type">
+          <option value="">All compensation types</option>
+          {% for value, label in compensation_choices %}
+          <option value="{{ value }}" {% if compensation_type == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:employee_list' %}">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Active Employees</span>
+    <span class="badge text-bg-light border">{{ active_count }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Employee</th><th>Location</th><th>Compensation</th><th>Mobile</th><th></th></tr></thead>
+      <tbody>
+        {% for employee in active_page %}
+        <tr>
+          <td>
+            <a class="fw-semibold text-decoration-none" href="{% url 'wms:employee_detail' employee.public_id %}">{{ employee.full_name }}</a>
+            <div class="small text-secondary">{{ employee.employee_code }}</div>
+          </td>
+          <td>{{ employee.location.branch.name }}</td>
+          <td>{{ employee.get_compensation_type_display }}</td>
+          <td>{{ employee.mobile|default:"—" }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:employee_detail' employee.public_id %}">View</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="empty-state py-4">No active employees match these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if active_page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if active_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ active_page.number }} of {{ active_page.paginator.num_pages }}</span>
+    {% if active_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Inactive Employees</span>
+    <span class="badge text-bg-light border">{{ inactive_count }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Employee</th><th>Location</th><th>Compensation</th><th>Mobile</th><th></th></tr></thead>
+      <tbody>
+        {% for employee in inactive_page %}
+        <tr>
+          <td>
+            <a class="fw-semibold text-decoration-none" href="{% url 'wms:employee_detail' employee.public_id %}">{{ employee.full_name }}</a>
+            <div class="small text-secondary">{{ employee.employee_code }}</div>
+          </td>
+          <td>{{ employee.location.branch.name }}</td>
+          <td>{{ employee.get_compensation_type_display }}</td>
+          <td>{{ employee.mobile|default:"—" }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:employee_detail' employee.public_id %}">View</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="empty-state py-4">No inactive employees match these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if inactive_page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if inactive_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ inactive_page.number }} of {{ inactive_page.paginator.num_pages }}</span>
+    {% if inactive_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

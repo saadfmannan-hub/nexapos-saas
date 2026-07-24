@@ -1,0 +1,100 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Production Categories</h2>
+    <div class="small text-secondary">Categories used to configure employee production work.</div>
+  </div>
+  {% if can_manage_categories %}
+  <a class="btn btn-primary" href="{% url 'wms:category_create' %}">Add category</a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-center">
+      <div class="col-md-6">
+        <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}" placeholder="Search name or code">
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Search</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:category_list' %}">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between"><span>Active Categories</span><span class="badge text-bg-light border">{{ active_count }}</span></div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Category</th><th>Order</th><th>Active assignments</th>{% if can_manage_categories %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for category in active_page %}
+        <tr>
+          <td><span class="fw-semibold">{{ category.name }}</span>{% if category.code %}<div class="small text-secondary">{{ category.code }}</div>{% endif %}</td>
+          <td>{{ category.display_order }}</td>
+          <td>{{ category.active_assignment_count }}</td>
+          {% if can_manage_categories %}
+          <td class="text-end">
+            <div class="d-flex justify-content-end gap-2">
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:category_edit' category.public_id %}">Edit</a>
+              <form method="post" action="{% url 'wms:category_status' category.public_id 'deactivate' %}">{% csrf_token %}
+                <button class="btn btn-sm btn-outline-danger" type="submit">Deactivate</button>
+              </form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if can_manage_categories %}4{% else %}3{% endif %}"><div class="empty-state py-4">No active categories match this search.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if active_page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if active_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ active_page.number }} of {{ active_page.paginator.num_pages }}</span>
+    {% if active_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between"><span>Inactive Categories</span><span class="badge text-bg-light border">{{ inactive_count }}</span></div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Category</th><th>Order</th><th>Active assignments</th>{% if can_manage_categories %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for category in inactive_page %}
+        <tr>
+          <td><span class="fw-semibold">{{ category.name }}</span>{% if category.code %}<div class="small text-secondary">{{ category.code }}</div>{% endif %}</td>
+          <td>{{ category.display_order }}</td>
+          <td>{{ category.active_assignment_count }}</td>
+          {% if can_manage_categories %}
+          <td class="text-end">
+            <div class="d-flex justify-content-end gap-2">
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:category_edit' category.public_id %}">Edit</a>
+              <form method="post" action="{% url 'wms:category_status' category.public_id 'activate' %}">{% csrf_token %}
+                <button class="btn btn-sm btn-outline-success" type="submit">Reactivate</button>
+              </form>
+            </div>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if can_manage_categories %}4{% else %}3{% endif %}"><div class="empty-state py-4">No inactive categories match this search.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if inactive_page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if inactive_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ inactive_page.number }} of {{ inactive_page.paginator.num_pages }}</span>
+    {% if inactive_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

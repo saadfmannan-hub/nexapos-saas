@@ -1,0 +1,152 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">{{ employee.full_name }}</h2>
+    <div class="text-secondary">{{ employee.employee_code }}</div>
+  </div>
+  {% if can_manage_employees %}
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{% url 'wms:employee_edit' employee.public_id %}">Edit employee</a>
+    {% if employee.is_active %}
+    <form method="post" action="{% url 'wms:employee_status' employee.public_id 'deactivate' %}">{% csrf_token %}
+      <button class="btn btn-outline-danger" type="submit">Deactivate</button>
+    </form>
+    {% else %}
+    <form method="post" action="{% url 'wms:employee_status' employee.public_id 'activate' %}">{% csrf_token %}
+      <button class="btn btn-success" type="submit">Reactivate</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Employee information</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Status</dt>
+          <dd class="col-sm-7">{% if employee.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</dd>
+          <dt class="col-sm-5">WMS location</dt>
+          <dd class="col-sm-7">{{ employee.location.branch.name }}{% if not employee.location.is_active or not employee.location.branch.is_active %} <span class="badge text-bg-warning">Inactive location</span>{% endif %}</dd>
+          <dt class="col-sm-5">Mobile</dt>
+          <dd class="col-sm-7">{{ employee.mobile|default:"—" }}</dd>
+          <dt class="col-sm-5">Joining date</dt>
+          <dd class="col-sm-7">{{ employee.joining_date|date:"M d, Y" }}</dd>
+          <dt class="col-sm-5">Notes</dt>
+          <dd class="col-sm-7">{{ employee.notes|default:"—"|linebreaksbr }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Compensation configuration</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-6">Type</dt>
+          <dd class="col-sm-6">{{ employee.get_compensation_type_display }}</dd>
+          <dt class="col-sm-6">Fixed monthly salary</dt>
+          <dd class="col-sm-6">{{ employee.fixed_monthly_salary|default_if_none:"—" }}</dd>
+          <dt class="col-sm-6">Default per-piece rate</dt>
+          <dd class="col-sm-6">{{ employee.default_per_piece_rate|default_if_none:"—" }}</dd>
+        </dl>
+        <p class="small text-secondary mb-0">Configuration only. No salary has been calculated or posted.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Assigned production categories</div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead><tr><th>Category</th><th>Rate</th><th>Status</th>{% if can_manage_employees %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+        {% for assignment in active_assignments %}
+        <tr>
+          <td>{{ assignment.category.name }}{% if assignment.category.code %}<div class="small text-secondary">{{ assignment.category.code }}</div>{% endif %}</td>
+          <td>
+            {% if employee.compensation_type == "per_piece" %}
+              {% if can_manage_employees %}
+              <form class="d-flex gap-2" method="post" action="{% url 'wms:assignment_rate' employee.public_id assignment.public_id %}">{% csrf_token %}
+                <input class="form-control form-control-sm" style="max-width:140px" type="number" step="0.001" min="0"
+                       name="per_piece_rate" value="{{ assignment.per_piece_rate|default_if_none:'' }}"
+                       placeholder="Default {{ employee.default_per_piece_rate }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit">Save</button>
+              </form>
+              {% else %}
+                {{ assignment.effective_per_piece_rate|default_if_none:"—" }}
+                {% if assignment.per_piece_rate is None %}<span class="small text-secondary">(default)</span>{% endif %}
+              {% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td><span class="badge badge-status bs-active">Active</span></td>
+          {% if can_manage_employees %}
+          <td class="text-end">
+            <form method="post" action="{% url 'wms:assignment_status' employee.public_id assignment.public_id 'deactivate' %}">{% csrf_token %}
+              <button class="btn btn-sm btn-outline-danger" type="submit">Remove</button>
+            </form>
+          </td>
+          {% endif %}
+        </tr>
+        {% empty %}
+        <tr><td colspan="{% if can_manage_employees %}4{% else %}3{% endif %}"><div class="empty-state py-4">No active production categories assigned.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if can_manage_employees and employee.is_active and assignment_form %}
+<div class="card mb-3">
+  <div class="card-header">Assign a production category</div>
+  <div class="card-body">
+    <form method="post" action="{% url 'wms:assignment_add' employee.public_id %}">{% csrf_token %}
+      {% for field in assignment_form %}
+        {% include "components/form_field.html" with field=field %}
+      {% endfor %}
+      <button class="btn btn-primary" type="submit">Assign category</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% if inactive_assignments %}
+<div class="card mb-3">
+  <div class="card-header">Inactive category assignments</div>
+  <div class="table-responsive">
+    <table class="table mb-0">
+      <thead><tr><th>Category</th><th>Saved rate</th><th></th></tr></thead>
+      <tbody>
+        {% for assignment in inactive_assignments %}
+        <tr>
+          <td>{{ assignment.category.name }}{% if not assignment.category.is_active %} <span class="badge text-bg-warning">Category inactive</span>{% endif %}</td>
+          <td>{{ assignment.per_piece_rate|default_if_none:"Uses employee default" }}</td>
+          <td class="text-end">
+            {% if can_manage_employees and employee.is_active and assignment.category.is_active %}
+            <form method="post" action="{% url 'wms:assignment_status' employee.public_id assignment.public_id 'activate' %}">{% csrf_token %}
+              <button class="btn btn-sm btn-outline-success" type="submit">Reactivate</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-header">Record history</div>
+  <div class="card-body small text-secondary">
+    Created {{ employee.created_at|date:"M d, Y H:i" }}
+    {% if employee.created_by %}by {{ employee.created_by.full_name|default:employee.created_by.email }}{% endif %}.
+    Last updated {{ employee.updated_at|date:"M d, Y H:i" }}
+    {% if employee.updated_by %}by {{ employee.updated_by.full_name|default:employee.updated_by.email }}{% endif %}.
+  </div>
+</div>
+{% endblock %}

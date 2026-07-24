@@ -46,6 +46,17 @@ def provision_wms_foundation(
             raise ValidationError(
                 f"WMS role code '{code}' already belongs to '{role.name}'."
             )
+        if not created:
+            missing_permissions = [
+                permission
+                for permission in template["permissions"]
+                if permission not in set(role.permissions or [])
+            ]
+            if missing_permissions:
+                role.permissions = validate_wms_permissions(
+                    [*(role.permissions or []), *missing_permissions]
+                )
+                role.save(update_fields=["permissions", "updated_at"])
         roles[code] = role
 
     for branch, location_type in location_specs:

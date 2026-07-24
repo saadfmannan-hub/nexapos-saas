@@ -36,6 +36,8 @@ SAFE_NEXT_ROUTES = {
 }
 WMS_SAFE_NEXT_ROUTES = {
     "wms:dashboard": ("wms.dashboard.view", AccessAction.READ),
+    "wms:employee_list": ("wms.employees.view", AccessAction.READ),
+    "wms:category_list": ("wms.categories.view", AccessAction.READ),
     "wms:user_list": ("wms.users.manage", AccessAction.READ),
     "wms:settings": ("wms.settings.manage", AccessAction.READ),
 }

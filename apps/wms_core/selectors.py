@@ -24,6 +24,25 @@ def locations_for_access(user_access):
     return locations
 
 
+def historical_locations_for_access(user_access):
+    """Return locations whose historical WMS records the user may read.
+
+    An empty location assignment means all tenant locations. Explicit scopes
+    retain inactive locations so historical records do not disappear when a
+    location is deactivated.
+    """
+
+    locations = (
+        WmsLocation.objects.for_business(user_access.business)
+        .select_related("branch")
+        .order_by("branch__name")
+    )
+    allowed_ids = user_access.allowed_location_ids
+    if allowed_ids is not None:
+        locations = locations.filter(pk__in=allowed_ids)
+    return locations
+
+
 def get_location_for_access(user_access, public_id):
     return get_object_or_404(
         locations_for_access(user_access),
