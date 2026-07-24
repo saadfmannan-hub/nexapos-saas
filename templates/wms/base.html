@@ -10,6 +10,9 @@
     {% if "wms.dashboard.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Foundation</a>
     {% endif %}
+    {% if "wms.attendance.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'attendance' %}active{% endif %}" href="{% url 'wms:attendance_list' %}">Attendance</a>
+    {% endif %}
     {% if "wms.employees.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" href="{% url 'wms:employee_list' %}">Employees</a>
     {% endif %}

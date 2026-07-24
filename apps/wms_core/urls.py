@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.wms_attendance import views as attendance_views
 from apps.wms_workforce import views as workforce_views
 
 from . import views
@@ -8,6 +9,26 @@ app_name = "wms"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path(
+        "attendance/",
+        attendance_views.attendance_list,
+        name="attendance_list",
+    ),
+    path(
+        "attendance/new/",
+        attendance_views.attendance_create,
+        name="attendance_create",
+    ),
+    path(
+        "attendance/<uuid:public_id>/",
+        attendance_views.attendance_detail,
+        name="attendance_detail",
+    ),
+    path(
+        "attendance/<uuid:public_id>/correct/",
+        attendance_views.attendance_correct,
+        name="attendance_correct",
+    ),
     path("employees/", workforce_views.employee_list, name="employee_list"),
     path(
         "employees/new/",

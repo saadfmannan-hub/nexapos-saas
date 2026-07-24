@@ -1,0 +1,111 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">{{ attendance.employee.full_name }}</h2>
+    <div class="text-secondary">
+      {{ attendance.employee.employee_code }} · {{ attendance.attendance_date|date:"M d, Y" }}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'wms:attendance_list' %}?date={{ attendance.attendance_date|date:'Y-m-d' }}">Back to day</a>
+    {% if can_correct_attendance %}
+    <a class="btn btn-primary" href="{% url 'wms:attendance_correct' attendance.public_id %}">Correct attendance</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if attendance.correction_flag %}
+<div class="alert alert-warning">
+  <strong>Corrected record.</strong>
+  {{ attendance.correction_reason }}
+</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Morning Shift</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Applied schedule</dt>
+          <dd class="col-sm-7">{{ attendance.morning_shift_start|time:"H:i" }}–{{ attendance.morning_shift_end|time:"H:i" }}</dd>
+          <dt class="col-sm-5">Time In</dt>
+          <dd class="col-sm-7">{{ attendance.morning_time_in|time:"H:i"|default:"—" }}</dd>
+          <dt class="col-sm-5">Time Out</dt>
+          <dd class="col-sm-7">{{ attendance.morning_time_out|time:"H:i"|default:"—" }}</dd>
+          <dt class="col-sm-5">Status</dt>
+          <dd class="col-sm-7">{{ attendance.get_morning_status_display }}</dd>
+          <dt class="col-sm-5">Worked</dt>
+          <dd class="col-sm-7">{{ attendance.morning_worked_minutes }} minutes</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Evening Shift</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">Applied schedule</dt>
+          <dd class="col-sm-7">{{ attendance.evening_shift_start|time:"H:i" }}–{{ attendance.evening_shift_end|time:"H:i" }}</dd>
+          <dt class="col-sm-5">Time In</dt>
+          <dd class="col-sm-7">{{ attendance.evening_time_in|time:"H:i"|default:"—" }}</dd>
+          <dt class="col-sm-5">Time Out</dt>
+          <dd class="col-sm-7">{{ attendance.evening_time_out|time:"H:i"|default:"—" }}</dd>
+          <dt class="col-sm-5">Status</dt>
+          <dd class="col-sm-7">{{ attendance.get_evening_status_display }}</dd>
+          <dt class="col-sm-5">Worked</dt>
+          <dd class="col-sm-7">{{ attendance.evening_worked_minutes }} minutes</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Total worked</div>
+      <div class="h4 mb-0">{{ attendance.worked_minutes }} minutes</div>
+    </div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Missing</div>
+      <div class="h4 mb-0">{{ attendance.missing_minutes }} minutes</div>
+    </div></div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Grace period applied</div>
+      <div class="h4 mb-0">{{ attendance.grace_period_minutes }} minutes</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Record history</div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">WMS location</dt>
+      <dd class="col-sm-9">
+        {{ attendance.location.branch.name }}
+        {% if not attendance.location.is_active or not attendance.location.branch.is_active %}
+        <span class="badge text-bg-warning">Inactive location</span>
+        {% endif %}
+      </dd>
+      <dt class="col-sm-3">Created</dt>
+      <dd class="col-sm-9">
+        {{ attendance.created_at|date:"M d, Y H:i" }}
+        {% if attendance.created_by %}by {{ attendance.created_by.full_name|default:attendance.created_by.email }}{% endif %}
+      </dd>
+      <dt class="col-sm-3">Last updated</dt>
+      <dd class="col-sm-9">
+        {{ attendance.updated_at|date:"M d, Y H:i" }}
+        {% if attendance.updated_by %}by {{ attendance.updated_by.full_name|default:attendance.updated_by.email }}{% endif %}
+      </dd>
+    </dl>
+  </div>
+</div>
+{% endblock %}

@@ -108,23 +108,61 @@ class WmsSettings(ValidatedTenantModel):
 
     def clean(self):
         super().clean()
+        errors = {}
         location = self.default_workshop_location
-        if location is None:
-            return
-        if (
+        if location is not None and (
             location.business_id != self.business_id
             or not location.is_active
             or not location.branch.is_active
             or not location.can_be_workshop
         ):
-            raise ValidationError(
-                {
-                    "default_workshop_location": (
-                        "Select an active Workshop or Source and Workshop "
-                        "location from this business."
-                    )
-                }
+            errors["default_workshop_location"] = (
+                "Select an active Workshop or Source and Workshop "
+                "location from this business."
             )
+        shift_values = (
+            self.first_shift_start,
+            self.first_shift_end,
+            self.second_shift_start,
+            self.second_shift_end,
+            self.grace_period_minutes,
+        )
+        if all(value is not None for value in shift_values):
+            if self.first_shift_start >= self.first_shift_end:
+                errors["first_shift_end"] = (
+                    "Morning shift end must be after its start."
+                )
+            if self.second_shift_start >= self.second_shift_end:
+                errors["second_shift_end"] = (
+                    "Evening shift end must be after its start."
+                )
+            if self.first_shift_end > self.second_shift_start:
+                errors["second_shift_start"] = (
+                    "Evening shift must start after the morning shift ends."
+                )
+            first_minutes = (
+                self.first_shift_end.hour * 60
+                + self.first_shift_end.minute
+                - self.first_shift_start.hour * 60
+                - self.first_shift_start.minute
+            )
+            second_minutes = (
+                self.second_shift_end.hour * 60
+                + self.second_shift_end.minute
+                - self.second_shift_start.hour * 60
+                - self.second_shift_start.minute
+            )
+            if (
+                first_minutes > 0
+                and second_minutes > 0
+                and self.grace_period_minutes
+                >= min(first_minutes, second_minutes)
+            ):
+                errors["grace_period_minutes"] = (
+                    "Grace period must be shorter than each shift."
+                )
+        if errors:
+            raise ValidationError(errors)
 
     def __str__(self):
         return f"WMS settings for {self.business}"
