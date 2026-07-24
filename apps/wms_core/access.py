@@ -183,6 +183,7 @@ def first_permitted_wms_route(user_access):
         return None
     priorities = (
         ("wms.dashboard.view", "wms:dashboard"),
+        ("wms.orders.view", "wms:order_list"),
         ("wms.attendance.view", "wms:attendance_list"),
         ("wms.production.view", "wms:production_entry_list"),
         ("wms.employees.view", "wms:employee_list"),

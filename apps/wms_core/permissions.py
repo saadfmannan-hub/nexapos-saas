@@ -5,8 +5,9 @@ from types import MappingProxyType
 WMS_PERMISSIONS = MappingProxyType(
     {
         "wms.dashboard.view": "View WMS dashboard",
-        "wms.orders.view": "View WMS orders",
-        "wms.orders.manage": "Manage WMS orders",
+        "wms.orders.view": "View workshop orders",
+        "wms.orders.manage": "Manage workshop orders",
+        "wms.orders.finish": "Finish workshop orders",
         "wms.alterations.view": "View alterations",
         "wms.alterations.manage": "Manage alterations",
         "wms.employees.view": "View WMS employees",
@@ -45,6 +46,7 @@ WMS_SYSTEM_ROLE_TEMPLATES = MappingProxyType(
                 "wms.dashboard.view",
                 "wms.orders.view",
                 "wms.orders.manage",
+                "wms.orders.finish",
                 "wms.alterations.view",
                 "wms.alterations.manage",
                 "wms.employees.view",

@@ -1,0 +1,82 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <div class="text-secondary small">Workshop order</div>
+    <h2 class="h3 mb-1">{{ order.order_reference }}</h2>
+    {% if order.status == "FINISHED_READY" %}
+    <span class="badge text-bg-success">Finished / Ready</span>
+    {% else %}
+    <span class="badge text-bg-warning">In Process</span>
+    {% endif %}
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'wms:order_list' %}">Back to orders</a>
+    {% if can_finish_orders %}
+    <a class="btn btn-success" href="{% url 'wms:order_finish_batch' %}?reference={{ order.order_reference|urlencode }}">Mark finished</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Order details</div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-5">WMS location</dt>
+          <dd class="col-sm-7">{{ order.location.branch.name }}</dd>
+          <dt class="col-sm-5">Received date</dt>
+          <dd class="col-sm-7">{{ order.received_date|date:"M d, Y" }}</dd>
+          <dt class="col-sm-5">Finished date</dt>
+          <dd class="col-sm-7">{{ order.finished_date|date:"M d, Y"|default:"—" }}</dd>
+          <dt class="col-sm-5">Notes</dt>
+          <dd class="col-sm-7">{{ order.notes|default:"No notes."|linebreaksbr }}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Status history</div>
+      <div class="list-group list-group-flush">
+        {% for history in order.status_history.all %}
+        <div class="list-group-item">
+          <div class="fw-semibold">
+            {% if history.previous_status %}
+            {{ history.get_previous_status_display }} → {{ history.get_new_status_display }}
+            {% else %}
+            Created → {{ history.get_new_status_display }}
+            {% endif %}
+          </div>
+          <div class="small text-secondary">
+            {{ history.changed_at|date:"M d, Y H:i" }}
+            {% if history.changed_by %} · {{ history.changed_by.full_name|default:history.changed_by.email }}{% endif %}
+          </div>
+        </div>
+        {% empty %}
+        <div class="list-group-item text-secondary">No status history.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Record metadata</div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Created</dt>
+      <dd class="col-sm-9">
+        {{ order.created_at|date:"M d, Y H:i" }}
+        {% if order.created_by %}by {{ order.created_by.full_name|default:order.created_by.email }}{% endif %}
+      </dd>
+      <dt class="col-sm-3">Last updated</dt>
+      <dd class="col-sm-9">
+        {{ order.updated_at|date:"M d, Y H:i" }}
+        {% if order.updated_by %}by {{ order.updated_by.full_name|default:order.updated_by.email }}{% endif %}
+      </dd>
+    </dl>
+  </div>
+</div>
+{% endblock %}

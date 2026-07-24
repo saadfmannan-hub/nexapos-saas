@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.wms_attendance import views as attendance_views
+from apps.wms_orders import views as order_views
 from apps.wms_production import views as production_views
 from apps.wms_workforce import views as workforce_views
 
@@ -10,6 +11,26 @@ app_name = "wms"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path(
+        "orders/",
+        order_views.order_list,
+        name="order_list",
+    ),
+    path(
+        "orders/new/",
+        order_views.order_create_batch,
+        name="order_create_batch",
+    ),
+    path(
+        "orders/finish/",
+        order_views.order_finish_batch,
+        name="order_finish_batch",
+    ),
+    path(
+        "orders/<uuid:public_id>/",
+        order_views.order_detail,
+        name="order_detail",
+    ),
     path(
         "attendance/",
         attendance_views.attendance_list,
