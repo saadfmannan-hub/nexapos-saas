@@ -83,6 +83,7 @@ LOCAL_APPS = [
     "apps.wms_core",
     "apps.wms_workforce",
     "apps.wms_attendance",
+    "apps.wms_production",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

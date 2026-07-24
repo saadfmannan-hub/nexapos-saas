@@ -13,6 +13,9 @@
     {% if "wms.attendance.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'attendance' %}active{% endif %}" href="{% url 'wms:attendance_list' %}">Attendance</a>
     {% endif %}
+    {% if "wms.production.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'production' %}active{% endif %}" href="{% url 'wms:production_entry_list' %}">Production Entry</a>
+    {% endif %}
     {% if "wms.employees.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" href="{% url 'wms:employee_list' %}">Employees</a>
     {% endif %}

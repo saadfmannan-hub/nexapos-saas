@@ -1,0 +1,92 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">{{ entry.employee.full_name }}</h2>
+    <div class="text-secondary">
+      {{ entry.employee.employee_code }} · {{ entry.production_date|date:"M d, Y" }}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'wms:production_entry_list' %}?date={{ entry.production_date|date:'Y-m-d' }}">Back to day</a>
+    {% if can_correct_production %}
+    <a class="btn btn-primary" href="{% url 'wms:production_entry_correct' entry.public_id %}">Correct production</a>
+    {% endif %}
+  </div>
+</div>
+
+{% if entry.is_corrected %}
+<div class="alert alert-warning">
+  <strong>Corrected record.</strong>
+  {{ entry.correction_reason }}
+</div>
+{% endif %}
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Daily Total Pieces</div>
+      <div class="display-6 mb-0">{{ entry.daily_total_pieces }}</div>
+      <div class="small text-secondary mt-1">Stored independently from category quantities.</div>
+    </div></div>
+  </div>
+  <div class="col-md-8">
+    <div class="card h-100">
+      <div class="card-header">Category quantities</div>
+      <div class="table-responsive">
+        <table class="table mb-0">
+          <thead><tr><th>Category</th><th class="text-end">Quantity</th></tr></thead>
+          <tbody>
+            {% for line in entry.lines.all %}
+            <tr>
+              <td>
+                {{ line.category_name_snapshot }}
+                {% if line.category_code_snapshot %}
+                <span class="text-secondary">({{ line.category_code_snapshot }})</span>
+                {% endif %}
+                {% if not line.assignment.is_active or not line.category.is_active %}
+                <span class="badge text-bg-warning">Historical</span>
+                {% endif %}
+              </td>
+              <td class="text-end fw-semibold">{{ line.quantity }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Notes</div>
+  <div class="card-body">
+    {{ entry.notes|default:"No notes."|linebreaksbr }}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Record history</div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">WMS location</dt>
+      <dd class="col-sm-9">
+        {{ entry.location.branch.name }}
+        {% if not entry.location.is_active or not entry.location.branch.is_active %}
+        <span class="badge text-bg-warning">Inactive location</span>
+        {% endif %}
+      </dd>
+      <dt class="col-sm-3">Created</dt>
+      <dd class="col-sm-9">
+        {{ entry.created_at|date:"M d, Y H:i" }}
+        {% if entry.created_by %}by {{ entry.created_by.full_name|default:entry.created_by.email }}{% endif %}
+      </dd>
+      <dt class="col-sm-3">Last updated</dt>
+      <dd class="col-sm-9">
+        {{ entry.updated_at|date:"M d, Y H:i" }}
+        {% if entry.updated_by %}by {{ entry.updated_by.full_name|default:entry.updated_by.email }}{% endif %}
+      </dd>
+    </dl>
+  </div>
+</div>
+{% endblock %}

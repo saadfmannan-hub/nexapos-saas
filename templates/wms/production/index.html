@@ -1,0 +1,129 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Daily Production</h2>
+    <div class="small text-secondary">Employee category quantities and completed daily pieces.</div>
+  </div>
+  {% if can_manage_production %}
+  <a class="btn btn-primary" href="{% url 'wms:production_entry_create' %}">
+    <i class="bi bi-plus-circle"></i> Add production
+  </a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-center">
+      <div class="col-lg-2">
+        <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}"
+               placeholder="Employee name or code">
+      </div>
+      <div class="col-lg-2">
+        <input class="form-control form-control-sm" type="date" name="date"
+               value="{{ selected_date|date:'Y-m-d' }}">
+      </div>
+      <div class="col-lg-2">
+        <select class="form-select form-select-sm" name="employee">
+          <option value="">All employees</option>
+          {% for employee in employees %}
+          <option value="{{ employee.public_id }}" {% if employee_id == employee.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ employee.employee_code }} — {{ employee.full_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <select class="form-select form-select-sm" name="location">
+          <option value="">All WMS locations</option>
+          {% for location in locations %}
+          <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ location.branch.name }}{% if not location.is_active or not location.branch.is_active %} — Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <select class="form-select form-select-sm" name="category">
+          <option value="">All categories</option>
+          {% for category in categories %}
+          <option value="{{ category.public_id }}" {% if category_id == category.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ category.name }}{% if not category.is_active %} — Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:production_entry_list' %}">Today</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>{{ selected_date|date:"M d, Y" }}</span>
+    <span class="badge text-bg-light border">{{ record_count }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Employee</th>
+          <th>Location</th>
+          <th>Category quantities</th>
+          <th class="text-end">Daily Total Pieces</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in page %}
+        <tr>
+          <td>{{ entry.production_date|date:"M d, Y" }}</td>
+          <td>
+            <a class="fw-semibold text-decoration-none" href="{% url 'wms:production_entry_detail' entry.public_id %}">
+              {{ entry.employee.full_name }}
+            </a>
+            <div class="small text-secondary">
+              {{ entry.employee.employee_code }}
+              {% if entry.is_corrected %} · Corrected{% endif %}
+            </div>
+          </td>
+          <td>
+            {{ entry.location.branch.name }}
+            {% if not entry.location.is_active or not entry.location.branch.is_active %}
+            <div class="small text-warning">Inactive location</div>
+            {% endif %}
+          </td>
+          <td>
+            {% for line in entry.lines.all %}
+            <span class="badge text-bg-light border me-1 mb-1">
+              {{ line.category_name_snapshot }}: {{ line.quantity }}
+            </span>
+            {% endfor %}
+          </td>
+          <td class="text-end fw-semibold">{{ entry.daily_total_pieces }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:production_entry_detail' entry.public_id %}">View</a>
+            {% if can_correct_production %}
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'wms:production_entry_correct' entry.public_id %}">Correct</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="empty-state py-4">No production matches these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

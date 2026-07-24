@@ -1,0 +1,86 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card mx-auto" style="max-width:860px">
+  <div class="card-header">
+    {% if is_correction %}Correct production entry{% else %}Add production entry{% endif %}
+  </div>
+  <div class="card-body">
+    {% if not is_correction and not selected_employee %}
+    <p class="text-secondary">
+      Select an active employee to load their assigned production categories.
+    </p>
+    {% if form.non_field_errors %}
+    <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+    {% endif %}
+    <form method="get">
+      <label class="form-label" for="employee-selector">Employee</label>
+      <select class="form-select mb-3" id="employee-selector" name="employee" required>
+        <option value="">Select employee</option>
+        {% for employee in employee_options %}
+        <option value="{{ employee.public_id }}">
+          {{ employee.employee_code }} — {{ employee.full_name }} — {{ employee.location.branch.name }}
+        </option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-primary" type="submit">Continue</button>
+      <a class="btn btn-outline-secondary" href="{% url 'wms:production_entry_list' %}">Cancel</a>
+    </form>
+    {% else %}
+    <div class="alert alert-light border">
+      <div class="fw-semibold">{{ selected_employee.full_name }}</div>
+      <div class="small text-secondary">
+        {{ selected_employee.employee_code }} · {{ selected_employee.location.branch.name }}
+      </div>
+    </div>
+    {% if is_correction %}
+    <p class="text-secondary small">
+      Employee, location, date, and category assignments remain fixed.
+      Every correction requires a reason and is written to the audit trail.
+    </p>
+    {% else %}
+    <p class="text-secondary small">
+      Enter each operation quantity separately. Daily Total Pieces is the
+      completed-piece count and is not automatically summed from the categories.
+    </p>
+    {% endif %}
+    <form method="post">{% csrf_token %}
+      {% if not is_correction %}
+      {{ form.employee }}{{ form.location }}
+      {% if form.employee.errors or form.location.errors %}
+      <div class="alert alert-danger">
+        {{ form.employee.errors }}{{ form.location.errors }}
+      </div>
+      {% endif %}
+      {% include "components/form_field.html" with field=form.production_date %}
+      {% endif %}
+      {% include "components/form_field.html" with field=form.daily_total_pieces %}
+      <h3 class="h6 mt-4">Category quantities</h3>
+      <div class="row g-2 mb-3">
+        {% for field in form.quantity_fields %}
+        <div class="col-md-6">
+          {% include "components/form_field.html" with field=field %}
+        </div>
+        {% endfor %}
+      </div>
+      {% include "components/form_field.html" with field=form.notes %}
+      {% if is_correction %}
+      {% include "components/form_field.html" with field=form.correction_reason %}
+      {% endif %}
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">
+          {% if is_correction %}Save correction{% else %}Save production{% endif %}
+        </button>
+        {% if is_correction %}
+        <a class="btn btn-outline-secondary" href="{% url 'wms:production_entry_detail' entry.public_id %}">Cancel</a>
+        {% else %}
+        <a class="btn btn-outline-secondary" href="{% url 'wms:production_entry_create' %}">Change employee</a>
+        {% endif %}
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
