@@ -45,7 +45,16 @@ def provision_business(
     plan=None,
     request=None,
 ):
-    """Create a business with all default records and a trial subscription."""
+    """Create a tenant with the product foundations selected by its plan.
+
+    Legacy plans without WMS retain the established POS provisioning path.
+    A WMS-enabled plan without POS Core provisions only shared tenant/login
+    records plus the WMS foundation.
+    """
+    plan = plan or get_default_plan()
+    wms_enabled = bool(plan.feature_wms)
+    provision_pos = not wms_enabled or bool(plan.feature_sales)
+
     business = Business.objects.create(
         name=name,
         owner=owner,
@@ -59,9 +68,15 @@ def provision_business(
     )
     BusinessSettings.objects.create(business=business)
 
-    # Default roles
+    # A shared Membership still requires one platform role. WMS-only tenants
+    # receive only the owner identity role; WMS authorization remains separate.
     owner_role = None
-    for role_name, spec in DEFAULT_ROLES.items():
+    role_templates = (
+        DEFAULT_ROLES
+        if provision_pos
+        else {"Business Owner": DEFAULT_ROLES["Business Owner"]}
+    )
+    for role_name, spec in role_templates.items():
         role = Role.objects.create(
             business=business,
             name=role_name,
@@ -72,39 +87,42 @@ def provision_business(
         if role.is_owner:
             owner_role = role
 
-    Membership.objects.create(business=business, user=owner, role=owner_role)
-
-    # Default branch + warehouse
-    branch = Branch.objects.create(
+    Membership.objects.create(
         business=business,
-        name="Head Office",
-        code="HO",
-        is_head_office=True,
-        invoice_prefix="HO",
-    )
-    Warehouse.objects.create(
-        business=business,
-        name="Main Warehouse",
-        code="MAIN",
-        branch=branch,
-        is_default=True,
+        user=owner,
+        role=owner_role,
     )
 
-    # Catalog defaults (units, walk-in customer, payment methods, etc.)
-    from apps.catalog.services import create_default_catalog
-    from apps.customers.services import ensure_walk_in_customer
-    from apps.expenses.services import create_default_expense_categories
-    from apps.registers.services import create_default_register
-    from apps.sales.services import create_default_payment_methods
+    if provision_pos:
+        # Existing POS-only and combined-product setup remains unchanged.
+        branch = Branch.objects.create(
+            business=business,
+            name="Head Office",
+            code="HO",
+            is_head_office=True,
+            invoice_prefix="HO",
+        )
+        Warehouse.objects.create(
+            business=business,
+            name="Main Warehouse",
+            code="MAIN",
+            branch=branch,
+            is_default=True,
+        )
 
-    create_default_catalog(business)
-    ensure_walk_in_customer(business, branch)
-    create_default_payment_methods(business)
-    create_default_register(business, branch)
-    create_default_expense_categories(business)
+        from apps.catalog.services import create_default_catalog
+        from apps.customers.services import ensure_walk_in_customer
+        from apps.expenses.services import create_default_expense_categories
+        from apps.registers.services import create_default_register
+        from apps.sales.services import create_default_payment_methods
+
+        create_default_catalog(business)
+        ensure_walk_in_customer(business, branch)
+        create_default_payment_methods(business)
+        create_default_register(business, branch)
+        create_default_expense_categories(business)
 
     # Subscription: plans can opt out of trial provisioning.
-    plan = plan or get_default_plan()
     now = timezone.now()
     status = Subscription.Status.TRIAL if plan.allow_trial else Subscription.Status.ACTIVE
     Subscription.objects.create(
@@ -117,6 +135,16 @@ def provision_business(
         ),
         current_period_start=now,
     )
+
+    if wms_enabled:
+        from apps.wms_core.services import sync_wms_entitlement
+
+        sync_wms_entitlement(
+            business,
+            was_enabled=False,
+            is_enabled=True,
+            request=request,
+        )
 
     audit.log(
         "business.registered",

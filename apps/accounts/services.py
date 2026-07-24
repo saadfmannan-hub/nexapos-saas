@@ -34,6 +34,11 @@ SAFE_NEXT_ROUTES = {
     "accounts:profile": (None, None, AccessAction.READ),
     "accounts:change_password": (None, None, AccessAction.READ),
 }
+WMS_SAFE_NEXT_ROUTES = {
+    "wms:dashboard": ("wms.dashboard.view", AccessAction.READ),
+    "wms:user_list": ("wms.users.manage", AccessAction.READ),
+    "wms:settings": ("wms.settings.manage", AccessAction.READ),
+}
 
 MODULE_ROUTE_PRIORITY = (
     ("sales:list", "sales.view", "pos_core", AccessAction.READ),
@@ -256,10 +261,23 @@ def resolve_user_home_route(
         return "subscriptions:status"
 
     if (
-        "dashboard" not in excluded_routes
+        pos_decision.allowed
+        and "dashboard" not in excluded_routes
         and membership.has_perm("dashboard.view")
     ):
         return "dashboard"
+
+    if not pos_decision.allowed:
+        from apps.wms_core.access import resolve_wms_home_route
+
+        wms_route = resolve_wms_home_route(
+            user,
+            membership.business,
+            membership,
+            request=access_request,
+        )
+        if wms_route and wms_route not in excluded_routes:
+            return wms_route
 
     sales_destination = _sales_destination(
         user,
@@ -297,6 +315,16 @@ def resolve_user_home_route(
         branches = _active_branches(membership)
         if _shift_route_available(membership, branches):
             return "registers:shift_list"
+    from apps.wms_core.access import resolve_wms_home_route
+
+    wms_route = resolve_wms_home_route(
+        user,
+        membership.business,
+        membership,
+        request=access_request,
+    )
+    if wms_route and wms_route not in excluded_routes:
+        return wms_route
     if not pos_decision.allowed or access_context.mode == AccessMode.READ_ONLY:
         return "subscriptions:status"
     return "accounts:no_access"
@@ -319,6 +347,21 @@ def resolve_authorized_next_route(request, membership, next_url, excluded_routes
     except Resolver404:
         return None
     route_name = match.view_name
+    if route_name in WMS_SAFE_NEXT_ROUTES:
+        if match.args or match.kwargs or reverse(route_name) != path:
+            return None
+        from apps.wms_core.access import evaluate_wms_actor_access
+
+        permission, action = WMS_SAFE_NEXT_ROUTES[route_name]
+        decision = evaluate_wms_actor_access(
+            request.user,
+            membership.business,
+            membership,
+            permission_code=permission,
+            action=action,
+            request=request,
+        )
+        return route_name if decision.allowed else None
     if route_name not in SAFE_NEXT_ROUTES or route_name in set(excluded_routes or ()):
         return None
     if match.args or match.kwargs or reverse(route_name) != path:

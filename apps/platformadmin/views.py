@@ -481,6 +481,7 @@ def business_action(request, public_id, action):
         if form.is_valid():
             cd = form.cleaned_data
             plan = cd["plan"]
+            old_plan = sub.plan
             renewal_type = cd["renewal_type"]
             start_date = cd.get("start_date") or default_renewal_start(sub)
             explicit_end_date = cd.get("end_date")
@@ -515,6 +516,14 @@ def business_action(request, public_id, action):
             sub.current_period_end = period_end
             sub.notes = cd.get("notes", "")
             sub.save()
+            from apps.wms_core.services import sync_wms_entitlement
+
+            sync_wms_entitlement(
+                business,
+                was_enabled=old_plan.feature_wms,
+                is_enabled=plan.feature_wms,
+                request=request,
+            )
             subscription_state_after = capture_subscription_state(sub)
             if not business.is_active:
                 business.is_active = True
@@ -565,6 +574,14 @@ def business_action(request, public_id, action):
             sub.plan = new_plan
             sub.notes = cd.get("notes", "")
             sub.save(update_fields=["plan", "notes", "updated_at"])
+            from apps.wms_core.services import sync_wms_entitlement
+
+            sync_wms_entitlement(
+                business,
+                was_enabled=old_plan.feature_wms,
+                is_enabled=new_plan.feature_wms,
+                request=request,
+            )
             payment_amount = cd.get("payment_amount")
             payment = None
             if payment_amount is not None:
@@ -626,6 +643,7 @@ def business_action(request, public_id, action):
     elif action == "extend" and sub:
         days = int(request.POST.get("days", 30))
         plan_id = request.POST.get("plan_id")
+        old_plan = sub.plan
         subscription_state_before = capture_subscription_state(sub)
         if plan_id:
             sub.plan = Plan.objects.get(pk=plan_id)
@@ -636,6 +654,14 @@ def business_action(request, public_id, action):
         sub.current_period_end = base + timedelta(days=days)
         sub.status = Subscription.Status.ACTIVE
         sub.save()
+        from apps.wms_core.services import sync_wms_entitlement
+
+        sync_wms_entitlement(
+            business,
+            was_enabled=old_plan.feature_wms,
+            is_enabled=sub.plan.feature_wms,
+            request=request,
+        )
         subscription_state_after = capture_subscription_state(sub)
         amount = request.POST.get("amount", "")
         if amount:
@@ -733,16 +759,25 @@ class BusinessCreateForm(forms.Form):
         widget=forms.TextInput(attrs=INPUT))
 
     def clean_owner_email(self):
-        email = self.cleaned_data["owner_email"].lower()
-        if User.objects.filter(email__iexact=email).exists():
-            raise forms.ValidationError(
-                "An account with this email already exists.")
-        return email
+        return self.cleaned_data["owner_email"].lower()
 
     def clean(self):
         data = super().clean()
         if data.get("password"):
             validate_password(data["password"])
+        existing_owner = User.objects.filter(
+            email__iexact=data.get("owner_email", "")
+        ).first()
+        if existing_owner and not existing_owner.is_active:
+            self.add_error(
+                "owner_email",
+                "The existing shared account is inactive.",
+            )
+        if existing_owner and data.get("password"):
+            self.add_error(
+                "password",
+                "Leave the password blank when reusing an existing shared account.",
+            )
         plan = data.get("plan")
         if (
             plan
@@ -898,19 +933,24 @@ def business_create(request):
 
         cd = form.cleaned_data
         currency_code = cd["currency"]
+        existing_owner = User.objects.filter(
+            email__iexact=cd["owner_email"]
+        ).first()
         generated_password = ""
         password = cd.get("password")
-        if not password:
+        if existing_owner is None and not password:
             password = get_random_string(12)
             generated_password = password
 
         with transaction.atomic():
-            owner = User.objects.create_user(
-                email=cd["owner_email"],
-                password=password,
-                full_name=cd["owner_name"],
-                phone=cd.get("phone", ""),
-            )
+            owner = existing_owner
+            if owner is None:
+                owner = User.objects.create_user(
+                    email=cd["owner_email"],
+                    password=password,
+                    full_name=cd["owner_name"],
+                    phone=cd.get("phone", ""),
+                )
             business = provision_business(
                 owner=owner,
                 name=cd["business_name"],
@@ -962,7 +1002,13 @@ def business_create(request):
                 description=f"Business '{business.name}' created with owner "
                             f"{owner.email} on plan {sub.plan.name}.")
 
-        if generated_password:
+        if existing_owner is not None:
+            messages.success(
+                request,
+                f"Business '{business.name}' created using the existing shared "
+                f"owner account {owner.email}.",
+            )
+        elif generated_password:
             messages.success(
                 request,
                 f"Business '{business.name}' created. Owner login — "
@@ -1158,7 +1204,7 @@ PLAN_LIMIT_FIELDS = [
     "max_logged_in_devices", "max_pos_terminals",
 ]
 PLAN_MODULE_FIELDS = [
-    "feature_sales", "feature_inventory", "feature_suppliers",
+    "feature_sales", "feature_wms", "feature_inventory", "feature_suppliers",
     "feature_purchases", "feature_expenses", "feature_transfers",
     "feature_tailoring_module", "feature_customer_credit",
     "feature_advanced_reports", "feature_audit_logs",
@@ -1167,6 +1213,7 @@ PLAN_MODULE_FIELDS = [
 ]
 PLAN_MODULE_LABELS = {
     "feature_sales": "POS Core",
+    "feature_wms": "Workshop Management System",
     "feature_inventory": "Inventory Management",
     "feature_suppliers": "Suppliers",
     "feature_purchases": "Purchasing",
@@ -1181,6 +1228,9 @@ PLAN_MODULE_LABELS = {
     "feature_api_access": "API Access",
 }
 PLAN_MODULE_HELP_TEXT = {
+    "feature_wms": (
+        "Independent WMS product entitlement; POS Core is not required."
+    ),
     "feature_purchases": (
         "Purchasing requires POS Core, Inventory Management, and Suppliers."
     ),
@@ -1283,12 +1333,27 @@ def plan_list(request):
 @platform_admin_required
 def plan_form(request, pk=None):
     instance = Plan.objects.filter(pk=pk).first() if pk else None
+    was_wms_enabled = bool(instance.feature_wms) if instance else False
     form = PlanForm(request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
-        plan = form.save()
-        audit.log("platform.plan_saved", user=request.user, request=request,
-                  module="platformadmin", obj=plan,
-                  description=f"Plan '{plan.name}' saved.")
+        with transaction.atomic():
+            plan = form.save()
+            if was_wms_enabled != plan.feature_wms:
+                from apps.wms_core.services import sync_wms_entitlement
+
+                subscriptions = Subscription.objects.filter(
+                    plan=plan
+                ).select_related("business__owner")
+                for subscription in subscriptions:
+                    sync_wms_entitlement(
+                        subscription.business,
+                        was_enabled=was_wms_enabled,
+                        is_enabled=plan.feature_wms,
+                        request=request,
+                    )
+            audit.log("platform.plan_saved", user=request.user, request=request,
+                      module="platformadmin", obj=plan,
+                      description=f"Plan '{plan.name}' saved.")
         messages.success(request, "Plan saved.")
         return redirect("platformadmin:plan_list")
     return render(request, "platformadmin/plan_form.html",

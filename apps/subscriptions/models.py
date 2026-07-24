@@ -65,6 +65,7 @@ class Plan(TimeStampedModel):
     feature_tailoring_module = models.BooleanField(default=False)
     feature_inventory = models.BooleanField(default=False)
     feature_sales = models.BooleanField(default=False)
+    feature_wms = models.BooleanField(default=False)
     feature_customers = models.BooleanField(default=False)
     feature_suppliers = models.BooleanField(default=False)
     feature_employees = models.BooleanField(default=False)

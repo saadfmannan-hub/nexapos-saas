@@ -1,0 +1,25 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card mx-auto" style="max-width:760px">
+  <div class="card-header">{% if access_record %}Edit WMS access{% else %}Grant WMS access{% endif %}</div>
+  <div class="card-body">
+    <p class="text-secondary small">
+      This grants WMS access to an existing active business membership. It does
+      not create an employee record or change POS permissions.
+    </p>
+    <form method="post">{% csrf_token %}
+      {% for field in form %}
+        {% if field.field.widget.input_type == "checkbox" and field.name == "is_active" %}
+        <div class="form-check mb-3">{{ field }} <label class="form-check-label" for="{{ field.id_for_label }}">{{ field.label }}</label></div>
+        {% else %}
+          {% include "components/form_field.html" with field=field %}
+        {% endif %}
+      {% endfor %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Save access</button>
+        <a class="btn btn-outline-secondary" href="{% url 'wms:user_list' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -302,13 +302,18 @@ class CreateBusinessTests(PlatformBaseTest):
         self.assertTrue(AuditLog.objects.filter(
             action="platform.business_created", business=business).exists())
 
-    def test_duplicate_email_rejected(self):
+    def test_existing_shared_owner_email_is_reused(self):
         before = Business.objects.count()
         r = self.client.post(reverse("platformadmin:business_create"),
                              self._payload(owner_email="owner-a@example.com"))
-        self.assertEqual(r.status_code, 200)  # re-renders form with errors
-        self.assertContains(r, "already exists")
-        self.assertEqual(Business.objects.count(), before)
+        self.assertEqual(r.status_code, 302)
+        business = Business.objects.get(name="Gamma Stores")
+        self.assertEqual(Business.objects.count(), before + 1)
+        self.assertEqual(business.owner, self.owner_a)
+        self.assertEqual(
+            User.objects.filter(email="owner-a@example.com").count(),
+            1,
+        )
 
     def test_non_platform_user_cannot_create(self):
         self.client.logout()
@@ -358,6 +363,7 @@ class PlanAdminTests(PlatformBaseTest):
     ]
     expected_module_labels = [
         "POS Core",
+        "Workshop Management System",
         "Inventory Management",
         "Suppliers",
         "Purchasing",
@@ -419,7 +425,7 @@ class PlanAdminTests(PlatformBaseTest):
         form = PlanForm()
 
         self.assertEqual(list(form.fields), PLAN_FORM_FIELDS)
-        self.assertEqual(len(PLAN_MODULE_FIELDS), 13)
+        self.assertEqual(len(PLAN_MODULE_FIELDS), 14)
         self.assertEqual(
             [form.fields[field].label for field in PLAN_MODULE_FIELDS],
             self.expected_module_labels,
@@ -440,7 +446,7 @@ class PlanAdminTests(PlatformBaseTest):
             "Basic Plan Information",
             "Pricing and Billing",
             "Limits",
-            "NexaPOS Modules",
+            "Nexa Products &amp; Modules",
             "Included with POS Core",
         ]:
             self.assertContains(r, heading)

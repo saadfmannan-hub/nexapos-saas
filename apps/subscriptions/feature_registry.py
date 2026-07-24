@@ -39,6 +39,14 @@ _DEFINITIONS = (
         plan_field="feature_sales",
     ),
     ModuleDefinition(
+        key="wms",
+        label="Workshop Management System",
+        category="Nexa Products",
+        plan_field="feature_wms",
+        url_namespaces=("wms",),
+        navigation_entries=("wms",),
+    ),
+    ModuleDefinition(
         key="customers",
         label="Customers",
         category="Included with POS Core",

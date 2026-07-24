@@ -2,7 +2,7 @@
 {% block content %}
 <div class="mb-3">
   <h1 class="page-title mb-1">{% if plan %}Edit plan: {{ plan.name }}{% else %}New plan{% endif %}</h1>
-  <p class="text-secondary small mb-0">Configure pricing, limits, and the NexaPOS modules offered with this plan.</p>
+  <p class="text-secondary small mb-0">Configure pricing, limits, and the Nexa products and modules offered with this plan.</p>
 </div>
 
 <form method="post" class="pa-plan-form">{% csrf_token %}
@@ -62,7 +62,7 @@
   </section>
 
   <section class="pa-plan-section" aria-labelledby="plan-modules-heading">
-    <div class="pa-plan-section-heading" id="plan-modules-heading">NexaPOS Modules</div>
+    <div class="pa-plan-section-heading" id="plan-modules-heading">Nexa Products &amp; Modules</div>
     <p class="pa-plan-section-copy">Choose the implemented commercial modules available to businesses on this plan.</p>
     <div class="row g-3">
       {% for field in form.module_fields %}

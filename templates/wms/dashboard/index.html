@@ -1,0 +1,27 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card">
+  <div class="card-body p-4">
+    <h2 class="h5">Shared WMS foundation</h2>
+    <p class="text-secondary mb-3">
+      Nexa WMS is connected to this business through the shared Nexa account,
+      tenant, subscription, branch, and audit platform.
+    </p>
+    {% if settings_ready and locations_ready %}
+    <div class="alert alert-success mb-0">
+      The Phase 1 foundation is ready. Operational WMS modules will be added in
+      later approved phases.
+    </div>
+    {% elif settings_ready %}
+    <div class="alert alert-info mb-0">
+      Core settings and access are ready. Add an existing business branch as a
+      WMS location to complete location setup.
+    </div>
+    {% else %}
+    <div class="alert alert-warning mb-0">
+      WMS foundation setup is incomplete. Contact an administrator.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

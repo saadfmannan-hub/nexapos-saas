@@ -24,7 +24,11 @@
   </div>
   <div class="sidebar-scroll">
     <nav class="nav flex-column mt-2">
-      {% if "dashboard.view" in business_perms %}
+      {% if wms_navigation_available %}
+      <div class="nav-section">Products</div>
+      <a class="nav-link {% if active_nav == 'wms' %}active{% endif %}" href="{% url wms_home_route %}"><i class="bi bi-tools"></i> Nexa WMS</a>
+      {% endif %}
+      {% if module_capabilities.pos_core.enabled and "dashboard.view" in business_perms %}
       <a class="nav-link {% if active_nav == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}"><i class="bi bi-speedometer2"></i> Dashboard</a>
       {% endif %}
       {% if module_capabilities.pos_core.can_write and "sales.create" in business_perms %}

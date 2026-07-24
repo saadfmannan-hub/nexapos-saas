@@ -86,6 +86,7 @@
         <div class="col-md-6">
           <table class="table table-sm small mb-0">
             <tr><th>Current plan</th><td>{{ sub.plan.name }}</td></tr>
+            <tr><th>Nexa WMS</th><td>{% if sub.plan.feature_wms %}<span class="badge badge-status bs-active">Enabled</span>{% else %}<span class="badge text-bg-light border">Not included</span>{% endif %}</td></tr>
             <tr><th>Status</th><td>{% sub_status_badge sub %}</td></tr>
             <tr><th>Billing cycle</th><td>{{ sub.get_billing_cycle_display }}</td></tr>
             <tr><th>Trial</th><td>{% if sub.is_trial %}Yes{% else %}No{% endif %}</td></tr>

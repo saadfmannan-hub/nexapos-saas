@@ -30,6 +30,7 @@ urlpatterns = [
     path("audit/", include("apps.audit.urls")),
     path("platform/", include("apps.platformadmin.urls")),
     path("api/", include("apps.api.urls")),
+    path("wms/", include("apps.wms_core.urls")),
 
     path("django-admin/", admin.site.urls),
 ]

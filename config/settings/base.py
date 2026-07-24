@@ -80,6 +80,7 @@ LOCAL_APPS = [
     "apps.audit",
     "apps.platformadmin",
     "apps.api",
+    "apps.wms_core",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -116,6 +117,7 @@ TEMPLATES = [
                 "apps.core.context_processors.logical_back_navigation",
                 "apps.core.context_processors.business_context",
                 "apps.subscriptions.context_processors.subscription_capabilities",
+                "apps.wms_core.context_processors.wms_access",
             ],
         },
     },

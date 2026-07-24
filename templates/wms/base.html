@@ -1,0 +1,22 @@
+{% extends "layouts/base.html" %}
+{% block title %}Nexa WMS — {{ current_business.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+  <div>
+    <div class="text-uppercase small fw-semibold text-primary">Workshop Management System</div>
+    <h1 class="page-title mb-0">Nexa WMS</h1>
+  </div>
+  <nav class="nav nav-pills gap-1" aria-label="WMS navigation">
+    {% if "wms.dashboard.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Foundation</a>
+    {% endif %}
+    {% if "wms.users.manage" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'users' %}active{% endif %}" href="{% url 'wms:user_list' %}">Users &amp; Access</a>
+    {% endif %}
+    {% if "wms.settings.manage" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'settings' %}active{% endif %}" href="{% url 'wms:settings' %}">Settings</a>
+    {% endif %}
+  </nav>
+</div>
+{% block wms_content %}{% endblock %}
+{% endblock %}
