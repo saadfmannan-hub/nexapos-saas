@@ -1,0 +1,161 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Alteration Register</h2>
+    <div class="small text-secondary">
+      Rework tracking only. Alterations never add production or incentive pieces.
+    </div>
+  </div>
+  {% if can_manage_alterations %}
+  <a class="btn btn-primary" href="{% url 'wms:alteration_create' %}">Add Alteration</a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-lg-3">
+        <label class="form-label small mb-1" for="alteration-search">Search</label>
+        <input class="form-control form-control-sm" id="alteration-search"
+               type="search" name="q" value="{{ q }}"
+               placeholder="Reference, employee, or notes">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label small mb-1" for="alteration-order">Order reference</label>
+        <input class="form-control form-control-sm" id="alteration-order"
+               type="search" name="order_reference"
+               value="{{ order_reference }}" placeholder="MB-008">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label small mb-1" for="alteration-date">Date</label>
+        <input class="form-control form-control-sm" id="alteration-date"
+               type="date" name="date"
+               value="{{ selected_date|date:'Y-m-d' }}">
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label small mb-1" for="alteration-location">Location</label>
+        <select class="form-select form-select-sm" id="alteration-location" name="location">
+          <option value="">All WMS locations</option>
+          {% for location in locations %}
+          <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ location.branch.name }}{% if not location.is_active or not location.branch.is_active %} &mdash; Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-3">
+        <label class="form-label small mb-1" for="alteration-employee">Assigned employee</label>
+        <select class="form-select form-select-sm" id="alteration-employee" name="employee">
+          <option value="">All employees</option>
+          {% for employee in employees %}
+          <option value="{{ employee.public_id }}" {% if employee_id == employee.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ employee.employee_code }} &mdash; {{ employee.full_name }}{% if not employee.is_active %} &mdash; Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label small mb-1" for="alteration-status">Status</label>
+        <select class="form-select form-select-sm" id="alteration-status" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label small mb-1" for="alteration-reason">Reason</label>
+        <select class="form-select form-select-sm" id="alteration-reason" name="reason">
+          <option value="">All reasons</option>
+          {% for value, label in reason_choices %}
+          <option value="{{ value }}" {% if reason == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:alteration_list' %}">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Alterations</span>
+    <span class="badge text-bg-light border">{{ record_count }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Original order</th>
+          <th>Reason</th>
+          <th>Assigned To</th>
+          <th>Location</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for alteration in page %}
+        <tr>
+          <td>{{ alteration.alteration_date|date:"M d, Y" }}</td>
+          <td>
+            <div class="fw-semibold">{{ alteration.original_order_reference }}</div>
+            {% if alteration.alteration_reference %}
+            <div class="small text-secondary">{{ alteration.alteration_reference }}</div>
+            {% endif %}
+          </td>
+          <td>{{ alteration.get_reason_display }}</td>
+          <td>
+            {{ alteration.assigned_employee.full_name }}
+            {% if not alteration.assigned_employee.is_active %}
+            <span class="badge text-bg-warning">Historical</span>
+            {% endif %}
+          </td>
+          <td>
+            {{ alteration.location.branch.name }}
+            {% if not alteration.location.is_active or not alteration.location.branch.is_active %}
+            <span class="badge text-bg-warning">Inactive</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if alteration.status == "COMPLETED" %}
+            <span class="badge text-bg-success">Completed</span>
+            {% elif alteration.status == "IN_PROGRESS" %}
+            <span class="badge text-bg-primary">In Progress</span>
+            {% else %}
+            <span class="badge text-bg-warning">Open</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary"
+               href="{% url 'wms:alteration_detail' alteration.public_id %}">View</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7">
+            <div class="empty-state py-4">No alterations match these filters.</div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if page.has_previous %}
+    <a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>
+    {% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}
+    <a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

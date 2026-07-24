@@ -13,6 +13,9 @@
     {% if "wms.orders.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'orders' %}active{% endif %}" href="{% url 'wms:order_list' %}">Orders</a>
     {% endif %}
+    {% if "wms.alterations.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'alterations' %}active{% endif %}" href="{% url 'wms:alteration_list' %}">Alterations</a>
+    {% endif %}
     {% if "wms.attendance.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'attendance' %}active{% endif %}" href="{% url 'wms:attendance_list' %}">Attendance</a>
     {% endif %}

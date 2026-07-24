@@ -1,0 +1,63 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card mx-auto" style="max-width:860px">
+  <div class="card-header">
+    {% if is_correction %}Edit Alteration{% else %}Add Alteration{% endif %}
+  </div>
+  <div class="card-body">
+    <div class="alert alert-light border">
+      Alterations are tracked as rework only. Saving this form does not create
+      production, attendance, salary, incentive, payroll, POS, or inventory data.
+    </div>
+    {% if is_correction %}
+    <div class="mb-3">
+      <div class="small text-secondary">Immutable operational references</div>
+      <div class="fw-semibold">{{ alteration.original_order_reference }}</div>
+      <div>
+        Alteration reference:
+        {{ alteration.alteration_reference|default:"Not provided" }}
+      </div>
+    </div>
+    <p class="small text-secondary">
+      Every edit requires a correction reason and writes old and new values
+      to the audit trail.
+    </p>
+    {% endif %}
+
+    <form method="post">{% csrf_token %}
+      {% if not is_correction %}
+      {% include "components/form_field.html" with field=form.original_order_reference %}
+      {% include "components/form_field.html" with field=form.alteration_reference %}
+      {% endif %}
+      {% include "components/form_field.html" with field=form.location %}
+      {% include "components/form_field.html" with field=form.alteration_date %}
+      {% include "components/form_field.html" with field=form.reason %}
+      {% include "components/form_field.html" with field=form.mistake_by %}
+      {% include "components/form_field.html" with field=form.mistake_by_employee %}
+      {% include "components/form_field.html" with field=form.assigned_employee %}
+      {% if is_correction %}
+      {% include "components/form_field.html" with field=form.status %}
+      {% endif %}
+      {% include "components/form_field.html" with field=form.notes %}
+      {% if is_correction %}
+      {% include "components/form_field.html" with field=form.correction_reason %}
+      {% endif %}
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">
+          {% if is_correction %}Save Correction{% else %}Create Alteration{% endif %}
+        </button>
+        {% if alteration %}
+        <a class="btn btn-outline-secondary"
+           href="{% url 'wms:alteration_detail' alteration.public_id %}">Cancel</a>
+        {% else %}
+        <a class="btn btn-outline-secondary"
+           href="{% url 'wms:alteration_list' %}">Cancel</a>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

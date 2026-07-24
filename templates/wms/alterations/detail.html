@@ -1,0 +1,131 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">{{ alteration.original_order_reference }}</h2>
+    <div class="text-secondary">
+      {{ alteration.get_reason_display }} &middot;
+      {{ alteration.alteration_date|date:"M d, Y" }}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{% url 'wms:alteration_list' %}">Back to Alterations</a>
+    {% if can_manage_alterations %}
+    <a class="btn btn-primary"
+       href="{% url 'wms:alteration_edit' alteration.public_id %}">Edit Alteration</a>
+    {% endif %}
+    {% if can_complete_alterations %}
+    <form method="post" action="{% url 'wms:alteration_complete' alteration.public_id %}">
+      {% csrf_token %}
+      <button class="btn btn-success" type="submit">Complete Alteration</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% if alteration.is_corrected %}
+<div class="alert alert-warning">
+  <strong>Corrected record.</strong> {{ alteration.correction_reason }}
+</div>
+{% endif %}
+
+<div class="alert alert-light border">
+  This record is operational rework only and is excluded from production,
+  attendance, salary, incentive, payroll, POS, and inventory data.
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="small text-secondary">Status</div>
+        <div class="h4 mb-0">{{ alteration.get_status_display }}</div>
+        {% if alteration.completed_at %}
+        <div class="small text-secondary mt-1">
+          Completed {{ alteration.completed_at|date:"M d, Y H:i" }}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="small text-secondary">Assigned To</div>
+        <div class="fw-semibold">{{ alteration.assigned_employee.full_name }}</div>
+        <div class="small text-secondary">
+          {{ alteration.assigned_employee.employee_code }}
+          {% if not alteration.assigned_employee.is_active %}
+          <span class="badge text-bg-warning">Inactive</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="small text-secondary">Mistake By</div>
+        <div class="fw-semibold">{{ alteration.get_mistake_by_display }}</div>
+        {% if alteration.mistake_by_employee %}
+        <div class="small text-secondary">
+          {{ alteration.mistake_by_employee.employee_code }}
+          &mdash; {{ alteration.mistake_by_employee.full_name }}
+          {% if not alteration.mistake_by_employee.is_active %}
+          <span class="badge text-bg-warning">Inactive</span>
+          {% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Alteration details</div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Original Order Reference</dt>
+      <dd class="col-sm-9">{{ alteration.original_order_reference }}</dd>
+      <dt class="col-sm-3">Alteration Reference</dt>
+      <dd class="col-sm-9">{{ alteration.alteration_reference|default:"Not provided" }}</dd>
+      <dt class="col-sm-3">Reason</dt>
+      <dd class="col-sm-9">{{ alteration.get_reason_display }}</dd>
+      <dt class="col-sm-3">WMS Location</dt>
+      <dd class="col-sm-9">
+        {{ alteration.location.branch.name }}
+        {% if not alteration.location.is_active or not alteration.location.branch.is_active %}
+        <span class="badge text-bg-warning">Inactive location</span>
+        {% endif %}
+      </dd>
+      <dt class="col-sm-3">Notes</dt>
+      <dd class="col-sm-9">{{ alteration.notes|default:"No notes."|linebreaksbr }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">Record history</div>
+  <div class="card-body">
+    <dl class="row mb-0">
+      <dt class="col-sm-3">Created</dt>
+      <dd class="col-sm-9">
+        {{ alteration.created_at|date:"M d, Y H:i" }}
+        {% if alteration.created_by %}by {{ alteration.created_by.full_name|default:alteration.created_by.email }}{% endif %}
+      </dd>
+      <dt class="col-sm-3">Last updated</dt>
+      <dd class="col-sm-9">
+        {{ alteration.updated_at|date:"M d, Y H:i" }}
+        {% if alteration.updated_by %}by {{ alteration.updated_by.full_name|default:alteration.updated_by.email }}{% endif %}
+      </dd>
+      {% if alteration.completed_at %}
+      <dt class="col-sm-3">Completed</dt>
+      <dd class="col-sm-9">
+        {{ alteration.completed_at|date:"M d, Y H:i" }}
+        {% if alteration.completed_by %}by {{ alteration.completed_by.full_name|default:alteration.completed_by.email }}{% endif %}
+      </dd>
+      {% endif %}
+    </dl>
+  </div>
+</div>
+{% endblock %}

@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.wms_alterations import views as alteration_views
 from apps.wms_attendance import views as attendance_views
 from apps.wms_orders import views as order_views
 from apps.wms_production import views as production_views
@@ -30,6 +31,31 @@ urlpatterns = [
         "orders/<uuid:public_id>/",
         order_views.order_detail,
         name="order_detail",
+    ),
+    path(
+        "alterations/",
+        alteration_views.alteration_list,
+        name="alteration_list",
+    ),
+    path(
+        "alterations/new/",
+        alteration_views.alteration_create,
+        name="alteration_create",
+    ),
+    path(
+        "alterations/<uuid:public_id>/",
+        alteration_views.alteration_detail,
+        name="alteration_detail",
+    ),
+    path(
+        "alterations/<uuid:public_id>/edit/",
+        alteration_views.alteration_edit,
+        name="alteration_edit",
+    ),
+    path(
+        "alterations/<uuid:public_id>/complete/",
+        alteration_views.alteration_complete,
+        name="alteration_complete",
     ),
     path(
         "attendance/",
