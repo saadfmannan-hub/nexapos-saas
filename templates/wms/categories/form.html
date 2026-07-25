@@ -1,7 +1,7 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
-<div class="card mx-auto" style="max-width:760px">
-  <div class="card-header">{% if category %}Edit production category{% else %}Add production category{% endif %}</div>
+<div class="card wms-form-card wms-form-card-md">
+  <div class="card-header"><i class="bi bi-tags text-primary"></i> {% if category %}Edit production category{% else %}Add production category{% endif %}</div>
   <div class="card-body">
     <p class="text-secondary small">
       Categories are tenant-specific configuration. No production totals or salary amounts are calculated here.
@@ -11,7 +11,7 @@
         {% include "components/form_field.html" with field=field %}
       {% endfor %}
       <div class="d-flex gap-2">
-        <button class="btn btn-primary" type="submit">Save category</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save category</button>
         <a class="btn btn-outline-secondary" href="{% url 'wms:category_list' %}">Cancel</a>
       </div>
     </form>

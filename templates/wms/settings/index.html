@@ -1,22 +1,26 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
+<div class="mb-3">
+  <h2 class="h4 mb-1">Settings</h2>
+  <div class="small wms-page-subtitle">WMS shift schedule configuration and workshop locations.</div>
+</div>
 <div class="row g-3">
   <div class="col-xl-6">
     <form method="post" class="card">{% csrf_token %}
-      <div class="card-header">Basic WMS settings</div>
+      <div class="card-header"><i class="bi bi-gear text-primary"></i> Basic WMS settings</div>
       <div class="card-body">
         {% for field in form %}
           {% include "components/form_field.html" with field=field %}
         {% endfor %}
-        <button class="btn btn-primary" type="submit">Save settings</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save settings</button>
       </div>
     </form>
   </div>
   <div class="col-xl-6">
     <div class="card">
       <div class="card-header d-flex justify-content-between align-items-center">
-        <span>WMS locations</span>
-        <a class="btn btn-sm btn-primary" href="{% url 'wms:location_create' %}">Add location</a>
+        <span><i class="bi bi-geo-alt text-primary"></i> WMS locations</span>
+        <a class="btn btn-sm btn-primary" href="{% url 'wms:location_create' %}"><i class="bi bi-plus-circle"></i> Add location</a>
       </div>
       <div class="table-responsive">
         <table class="table table-hover mb-0">

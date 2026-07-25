@@ -2,7 +2,7 @@
 {% block wms_content %}
 <div class="d-flex justify-content-between align-items-start gap-2 mb-3 flex-wrap">
   <div>
-    <div class="text-secondary small">Workshop order</div>
+    <div class="wms-page-subtitle small">Workshop order</div>
     <h2 class="h3 mb-1">{{ order.order_reference }}</h2>
     {% if order.status == "FINISHED_READY" %}
     <span class="badge text-bg-success">Finished / Ready</span>

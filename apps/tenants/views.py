@@ -9,6 +9,7 @@ from apps.accounts.services import post_login_redirect
 from apps.audit import services as audit
 from apps.core.decorators import business_required, require_permission
 from apps.core.middleware import SESSION_BUSINESS_KEY
+from apps.subscriptions.decorators import module_permission_required
 
 from .forms import BusinessProfileForm, BusinessSettingsForm, RegistrationForm
 from .services import provision_business
@@ -180,7 +181,7 @@ def profile_view(request):
                   {"form": form, "active_nav": "settings"})
 
 
-@require_permission("settings.manage")
+@module_permission_required("pos_core", "settings.manage")
 def settings_view(request):
     settings_obj = request.business.settings
     form = BusinessSettingsForm(request.POST or None, instance=settings_obj)

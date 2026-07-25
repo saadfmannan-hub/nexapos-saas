@@ -1,7 +1,7 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
-<div class="card mx-auto" style="max-width:760px">
-  <div class="card-header">{% if access_record %}Edit WMS access{% else %}Grant WMS access{% endif %}</div>
+<div class="card wms-form-card wms-form-card-md">
+  <div class="card-header"><i class="bi bi-person-gear text-primary"></i> {% if access_record %}Edit WMS access{% else %}Grant WMS access{% endif %}</div>
   <div class="card-body">
     <p class="text-secondary small">
       This grants WMS access to an existing active business membership. It does
@@ -16,7 +16,7 @@
         {% endif %}
       {% endfor %}
       <div class="d-flex gap-2">
-        <button class="btn btn-primary" type="submit">Save access</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save access</button>
         <a class="btn btn-outline-secondary" href="{% url 'wms:user_list' %}">Cancel</a>
       </div>
     </form>

@@ -8,12 +8,12 @@
     </div>
   </div>
   {% if can_manage_alterations %}
-  <a class="btn btn-primary" href="{% url 'wms:alteration_create' %}">Add Alteration</a>
+  <a class="btn btn-primary" href="{% url 'wms:alteration_create' %}"><i class="bi bi-arrow-repeat"></i> Add Alteration</a>
   {% endif %}
 </div>
 
-<div class="card mb-3">
-  <div class="card-body py-2">
+<div class="card mb-3 wms-filter-bar">
+  <div class="card-body">
     <form method="get" class="row g-2 align-items-end">
       <div class="col-lg-3">
         <label class="form-label small mb-1" for="alteration-search">Search</label>
@@ -73,8 +73,8 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-auto">
-        <button class="btn btn-sm btn-primary" type="submit">Filter</button>
+      <div class="col-auto wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:alteration_list' %}">Clear</a>
       </div>
     </form>
@@ -83,8 +83,8 @@
 
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>Alterations</span>
-    <span class="badge text-bg-light border">{{ record_count }}</span>
+    <span><i class="bi bi-arrow-repeat text-primary"></i> Alterations</span>
+    <span class="wms-count-chip">{{ record_count }}</span>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0 align-middle">
@@ -147,14 +147,14 @@
     </table>
   </div>
   {% if page.has_other_pages %}
-  <div class="card-footer d-flex justify-content-between">
+  <div class="card-footer wms-pagination">
     {% if page.has_previous %}
-    <a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>
-    {% else %}<span></span>{% endif %}
+    <a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}" aria-label="Previous page"><i class="bi bi-chevron-left"></i> Previous</a>
+    {% else %}<span class="wms-page-spacer"></span>{% endif %}
     <span class="small text-secondary">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
     {% if page.has_next %}
-    <a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>
-    {% endif %}
+    <a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}" aria-label="Next page">Next <i class="bi bi-chevron-right"></i></a>
+    {% else %}<span class="wms-page-spacer"></span>{% endif %}
   </div>
   {% endif %}
 </div>

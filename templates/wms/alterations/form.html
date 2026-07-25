@@ -1,7 +1,8 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
-<div class="card mx-auto" style="max-width:860px">
+<div class="card wms-form-card wms-form-card-lg">
   <div class="card-header">
+    <i class="bi bi-arrow-repeat text-primary"></i>
     {% if is_correction %}Edit Alteration{% else %}Add Alteration{% endif %}
   </div>
   <div class="card-body">
@@ -47,6 +48,7 @@
       {% endif %}
       <div class="d-flex gap-2">
         <button class="btn btn-primary" type="submit">
+          <i class="bi bi-check-lg"></i>
           {% if is_correction %}Save Correction{% else %}Create Alteration{% endif %}
         </button>
         {% if alteration %}

@@ -1,6 +1,7 @@
 {% extends "wms/base.html" %}
 {% load static %}
 {% block extra_css %}
+{{ block.super }}
 <style>
   .wms-dashboard .dashboard-hero {
     border: 0;
@@ -12,21 +13,36 @@
     box-shadow: 0 18px 45px -28px rgba(15, 23, 42, .7);
   }
   .wms-dashboard .dashboard-hero .hero-kicker {
-    color: #99f6e4;
-    font-size: .72rem;
+    color: #a7f7e9;
+    font-size: .7rem;
     font-weight: 800;
-    letter-spacing: .12em;
+    letter-spacing: .13em;
     text-transform: uppercase;
+  }
+  .wms-dashboard .dashboard-hero h2 {
+    color: #fff;
+    font-weight: 800;
+    letter-spacing: -.02em;
+  }
+  .wms-dashboard .dashboard-hero .hero-sub {
+    color: rgba(255, 255, 255, .82);
+    font-size: .9rem;
+    max-width: 56ch;
   }
   .wms-dashboard .metric-card {
     --metric-accent: #0d6efd;
-    min-height: 132px;
+    min-height: 120px;
     border: 1px solid rgba(226, 232, 240, .85);
     border-radius: 1rem;
     background: linear-gradient(160deg, #fff, #f8fafc);
     box-shadow: 0 12px 30px -24px rgba(15, 23, 42, .65);
     overflow: hidden;
     position: relative;
+    transition: box-shadow .15s ease, transform .15s ease;
+  }
+  .wms-dashboard a.metric-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 14px -8px rgba(15, 23, 42, .18), 0 18px 34px -22px rgba(15, 23, 42, .5);
   }
   .wms-dashboard .metric-card::before {
     background: var(--metric-accent);
@@ -47,16 +63,18 @@
     width: 40px;
   }
   .wms-dashboard .metric-label {
-    color: #64748b;
-    font-size: .76rem;
-    font-weight: 700;
-    letter-spacing: .04em;
+    color: #5b6b80;
+    font-size: .74rem;
+    font-weight: 750;
+    letter-spacing: .05em;
+    line-height: 1.35;
     text-transform: uppercase;
   }
   .wms-dashboard .metric-value {
     color: #0f172a;
-    font-size: 1.85rem;
+    font-size: 1.95rem;
     font-weight: 800;
+    font-variant-numeric: tabular-nums;
     letter-spacing: -.04em;
     line-height: 1;
   }
@@ -73,12 +91,16 @@
     padding: .85rem 1rem;
   }
   .wms-dashboard .section-title {
-    color: #334155;
-    font-size: .76rem;
+    color: #2d4058;
+    font-size: .75rem;
     font-weight: 800;
     letter-spacing: .07em;
     margin: 0;
     text-transform: uppercase;
+  }
+  .wms-dashboard .executive-card .card-header .small {
+    color: #5b6b80 !important;
+    font-weight: 600;
   }
   .wms-dashboard .chart-frame {
     height: 270px;
@@ -116,8 +138,8 @@
   .wms-dashboard .dashboard-table .identity-cell { min-width: 150px; }
   @media (max-width: 767.98px) {
     .wms-dashboard .dashboard-hero { border-radius: 1rem; }
-    .wms-dashboard .metric-card { min-height: 118px; }
-    .wms-dashboard .metric-value { font-size: 1.6rem; }
+    .wms-dashboard .metric-card { min-height: 110px; }
+    .wms-dashboard .metric-value { font-size: 1.65rem; }
     .wms-dashboard .chart-frame,
     .wms-dashboard .chart-frame-category { height: 240px; }
   }
@@ -126,12 +148,12 @@
 {% block wms_content %}
 <div class="wms-dashboard">
   <section class="card dashboard-hero mb-4">
-    <div class="card-body p-4 p-lg-5">
+    <div class="card-body p-3 p-lg-4">
       <div class="d-flex align-items-start justify-content-between gap-3 flex-wrap">
         <div>
-          <div class="hero-kicker mb-2">Executive operations overview</div>
-          <h2 class="h3 fw-bold mb-2">Workshop performance at a glance</h2>
-          <p class="mb-0 text-white-50">
+          <div class="hero-kicker mb-1">Executive operations overview</div>
+          <h2 class="h3 mb-1">Workshop performance at a glance</h2>
+          <p class="mb-0 hero-sub">
             Live operational totals for {{ dashboard.today|date:"l, F d, Y" }}.
           </p>
         </div>
@@ -156,7 +178,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#2563eb"
          href="{% url 'wms:order_list' %}?date={{ dashboard.today|date:'Y-m-d' }}">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Orders received today</div>
             <span class="metric-icon"><i class="bi bi-inbox"></i></span>
           </div>
@@ -168,7 +190,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#f59e0b"
          href="{% url 'wms:order_list' %}?status=IN_PROCESS">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Orders in progress</div>
             <span class="metric-icon"><i class="bi bi-hourglass-split"></i></span>
           </div>
@@ -180,7 +202,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#16a34a"
          href="{% url 'wms:order_list' %}?status=FINISHED_READY">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Orders finished today</div>
             <span class="metric-icon"><i class="bi bi-check2-circle"></i></span>
           </div>
@@ -194,7 +216,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#dc2626"
          href="{% url 'wms:alteration_list' %}">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Alterations pending</div>
             <span class="metric-icon"><i class="bi bi-arrow-repeat"></i></span>
           </div>
@@ -208,7 +230,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#0f766e"
          href="{% url 'wms:attendance_list' %}?date={{ dashboard.today|date:'Y-m-d' }}">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Employees present</div>
             <span class="metric-icon"><i class="bi bi-person-check"></i></span>
           </div>
@@ -220,7 +242,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#d97706"
          href="{% url 'wms:attendance_list' %}?date={{ dashboard.today|date:'Y-m-d' }}&amp;status=late">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Employees late</div>
             <span class="metric-icon"><i class="bi bi-clock-history"></i></span>
           </div>
@@ -232,7 +254,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#64748b"
          href="{% url 'wms:attendance_list' %}?date={{ dashboard.today|date:'Y-m-d' }}&amp;status=absent">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Employees absent</div>
             <span class="metric-icon"><i class="bi bi-person-dash"></i></span>
           </div>
@@ -246,7 +268,7 @@
       <a class="card metric-card text-reset" style="--metric-accent:#7c3aed"
          href="{% url 'wms:production_entry_list' %}?date={{ dashboard.today|date:'Y-m-d' }}">
         <div class="card-body p-3 p-lg-4">
-          <div class="d-flex align-items-start justify-content-between gap-2 mb-3">
+          <div class="d-flex align-items-start justify-content-between gap-2 mb-2">
             <div class="metric-label">Today's total production PCS</div>
             <span class="metric-icon"><i class="bi bi-boxes"></i></span>
           </div>
@@ -265,7 +287,7 @@
         <div class="card-body p-4">
           <div class="d-flex align-items-end justify-content-between gap-3 mb-4">
             <div>
-              <div class="small text-secondary mb-1">Today PCS</div>
+              <div class="small text-secondary mb-1">Today Finished / Ready PCS</div>
               <div class="comparison-number">{{ dashboard.production.comparison.today }}</div>
             </div>
             <span class="trend-badge trend-{{ dashboard.production.comparison.direction }}">
@@ -277,7 +299,7 @@
           </div>
           <div class="row g-3">
             <div class="col-6">
-              <div class="small text-secondary">Yesterday PCS</div>
+              <div class="small text-secondary">Yesterday Finished / Ready PCS</div>
               <div class="h4 mb-0">{{ dashboard.production.comparison.yesterday }}</div>
             </div>
             <div class="col-6">
@@ -567,7 +589,8 @@
 (function() {
   document.querySelector('.np-content')?.classList.add('dash-bg');
   Chart.defaults.font.family = '"Segoe UI", system-ui, -apple-system, sans-serif';
-  Chart.defaults.color = '#64748b';
+  Chart.defaults.color = '#526174';
+  Chart.defaults.font.size = 12;
   Chart.defaults.responsive = true;
   Chart.defaults.maintainAspectRatio = false;
 

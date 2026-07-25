@@ -119,10 +119,26 @@ def _comparison(today_total, yesterday_total):
     }
 
 
+def _finished_ready_comparison(user_access, location_ids, today):
+    """Executive KPI: garments moved to Finished / Ready today versus yesterday."""
+
+    yesterday = today - timedelta(days=1)
+    orders = _scope(
+        WmsWorkshopOrder.objects.for_business(user_access.business),
+        location_ids,
+    )
+    counts = orders.filter(status=WmsWorkshopOrder.Status.FINISHED_READY).aggregate(
+        today_total=Count("pk", filter=Q(finished_date=today)),
+        yesterday_total=Count("pk", filter=Q(finished_date=yesterday)),
+    )
+    return _comparison(
+        int(counts["today_total"] or 0),
+        int(counts["yesterday_total"] or 0),
+    )
+
+
 def _production_dashboard(user_access, location_ids, today):
     month_start = today.replace(day=1)
-    yesterday = today - timedelta(days=1)
-    period_start = min(month_start, yesterday)
     entries = _scope(
         WmsProductionEntry.objects.for_business(user_access.business),
         location_ids,
@@ -130,7 +146,7 @@ def _production_dashboard(user_access, location_ids, today):
 
     daily_rows = list(
         entries.filter(
-            production_date__gte=period_start,
+            production_date__gte=month_start,
             production_date__lte=today,
         )
         .values("production_date")
@@ -139,7 +155,6 @@ def _production_dashboard(user_access, location_ids, today):
     )
     daily_totals = {row["production_date"]: int(row["total"] or 0) for row in daily_rows}
     today_total = daily_totals.get(today, 0)
-    yesterday_total = daily_totals.get(yesterday, 0)
 
     trend_labels = []
     trend_values = []
@@ -214,7 +229,7 @@ def _production_dashboard(user_access, location_ids, today):
 
     return {
         "total_today": today_total,
-        "comparison": _comparison(today_total, yesterday_total),
+        "comparison": _finished_ready_comparison(user_access, location_ids, today),
         "trend": {
             "labels": trend_labels,
             "data": trend_values,

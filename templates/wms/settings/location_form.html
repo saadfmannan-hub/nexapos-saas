@@ -1,7 +1,7 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
-<div class="card mx-auto" style="max-width:720px">
-  <div class="card-header">{% if location %}Edit WMS location{% else %}Add WMS location{% endif %}</div>
+<div class="card wms-form-card wms-form-card-sm">
+  <div class="card-header"><i class="bi bi-geo-alt text-primary"></i> {% if location %}Edit WMS location{% else %}Add WMS location{% endif %}</div>
   <div class="card-body">
     <p class="text-secondary small">
       WMS locations wrap shared business branches. They do not create or use POS warehouses.
@@ -11,7 +11,7 @@
         {% include "components/form_field.html" with field=field %}
       {% endfor %}
       <div class="d-flex gap-2">
-        <button class="btn btn-primary" type="submit">Save location</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save location</button>
         <a class="btn btn-outline-secondary" href="{% url 'wms:settings' %}">Cancel</a>
       </div>
     </form>

@@ -12,19 +12,22 @@
   {% endif %}
 </div>
 
-<div class="card mb-3">
-  <div class="card-body py-2">
-    <form method="get" class="row g-2 align-items-center">
-      <div class="col-lg-3">
-        <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}"
+<div class="card mb-3 wms-filter-bar">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-6 col-lg-3">
+        <label class="form-label" for="attendance-filter-q">Search</label>
+        <input class="form-control form-control-sm" id="attendance-filter-q" type="search" name="q" value="{{ q }}"
                placeholder="Search employee">
       </div>
-      <div class="col-lg-2">
-        <input class="form-control form-control-sm" type="date" name="date"
+      <div class="col-md-6 col-lg-2">
+        <label class="form-label" for="attendance-filter-date">Date</label>
+        <input class="form-control form-control-sm" id="attendance-filter-date" type="date" name="date"
                value="{{ selected_date|date:'Y-m-d' }}">
       </div>
-      <div class="col-lg-3">
-        <select class="form-select form-select-sm" name="location">
+      <div class="col-md-6 col-lg-3">
+        <label class="form-label" for="attendance-filter-location">Location</label>
+        <select class="form-select form-select-sm" id="attendance-filter-location" name="location">
           <option value="">All WMS locations</option>
           {% for location in locations %}
           <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
@@ -33,16 +36,17 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-lg-2">
-        <select class="form-select form-select-sm" name="status">
+      <div class="col-md-6 col-lg-2">
+        <label class="form-label" for="attendance-filter-status">Shift status</label>
+        <select class="form-select form-select-sm" id="attendance-filter-status" name="status">
           <option value="">Any shift status</option>
           {% for value, label in status_choices %}
           <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-auto">
-        <button class="btn btn-sm btn-primary">Filter</button>
+      <div class="col-md-6 col-lg-2 wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:attendance_list' %}">Today</a>
       </div>
     </form>
@@ -51,8 +55,8 @@
 
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>{{ selected_date|date:"M d, Y" }}</span>
-    <span class="badge text-bg-light border">{{ record_count }}</span>
+    <span><i class="bi bi-calendar3 text-primary"></i> {{ selected_date|date:"M d, Y" }}</span>
+    <span class="wms-count-chip">{{ record_count }}</span>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
@@ -123,10 +127,10 @@
     </table>
   </div>
   {% if page.has_other_pages %}
-  <div class="card-footer d-flex justify-content-between">
-    {% if page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+  <div class="card-footer wms-pagination">
+    {% if page.has_previous %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}" aria-label="Previous page"><i class="bi bi-chevron-left"></i> Previous</a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
     <span class="small text-secondary">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
-    {% if page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+    {% if page.has_next %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}" aria-label="Next page">Next <i class="bi bi-chevron-right"></i></a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
   </div>
   {% endif %}
 </div>

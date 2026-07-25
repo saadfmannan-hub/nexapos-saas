@@ -1,5 +1,6 @@
 {% extends "wms/base.html" %}
 {% block extra_css %}
+{{ block.super }}
 <style>
   .wms-report-table thead th {
     position: sticky;
@@ -14,22 +15,120 @@
     background: var(--bs-tertiary-bg);
   }
   .report-meta { color: var(--bs-secondary-color); }
+  .wms-print-header { display: none; }
+
+  @page wmsPortrait { size: A4 portrait; margin: 10mm; }
+  @page wmsLandscape { size: A4 landscape; margin: 9mm; }
+
   @media print {
-    @page { size: landscape; margin: 10mm; }
-    .wms-report-table { font-size: 10px; }
-    .wms-report-table thead { display: table-header-group; }
-    .wms-report-table thead th { position: static; }
-    .report-card { border: 0 !important; box-shadow: none !important; }
-    .report-card .card-header { padding-left: 0; padding-right: 0; }
+    .wms-report-page-portrait { page: wmsPortrait; }
+    .wms-report-page-landscape { page: wmsLandscape; }
+
+    /* One professional report header; no duplicated screen titles. */
+    .wms-screen-only,
+    .wms-shell-header,
+    .wms-business-chip,
+    .report-card .card-header { display: none !important; }
+    .wms-print-header {
+      display: block;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 2.5mm;
+      margin-bottom: 3.5mm;
+    }
+    .wms-print-brand {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 5mm;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #334155;
+    }
+    .wms-print-brand .wms-print-product {
+      color: #0f172a;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .wms-print-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 1.5mm 0 .5mm;
+    }
+    .wms-print-meta { font-size: 9.5px; color: #475569; }
+
+    /* Compact printable summary metrics instead of large screen cards. */
+    .wms-report-kpis {
+      display: flex !important;
+      flex-wrap: wrap;
+      gap: 2.5mm;
+      margin: 0 0 3mm !important;
+    }
+    .wms-report-kpis > [class*="col"] {
+      width: auto !important;
+      flex: 0 0 auto !important;
+      max-width: none !important;
+    }
+    .wms-report-kpis .card {
+      border: 1px solid #cbd5e1 !important;
+      border-radius: 1.5mm !important;
+      box-shadow: none !important;
+    }
+    .wms-report-kpis .card-body { padding: 1.2mm 3mm !important; }
+    .wms-report-kpis .small { font-size: 8px !important; }
+    .wms-report-kpis .fs-4,
+    .wms-report-kpis .fs-5 { font-size: 11px !important; font-weight: 700; }
+
+    /* Clean, compact tables with sensible page breaks. */
+    .report-card {
+      border: 0 !important;
+      box-shadow: none !important;
+    }
     .report-card .table-responsive { overflow: visible !important; }
-    .report-print-title { display: block !important; }
+    .wms-report-table {
+      font-size: 9.5px;
+      width: 100% !important;
+      border-collapse: collapse;
+    }
+    .wms-report-table thead { display: table-header-group; }
+    .wms-report-table tfoot { display: table-row-group; }
+    .wms-report-table thead th {
+      position: static;
+      background: #eef2f7 !important;
+      color: #0f172a !important;
+      border-bottom: 1.5px solid #94a3b8 !important;
+      padding: 1.4mm 1.8mm;
+    }
+    .wms-report-table td,
+    .wms-report-table tbody th {
+      padding: 1.2mm 1.8mm;
+      border-bottom: .5px solid #d8e0ea;
+    }
+    .wms-report-table tr { page-break-inside: avoid; }
+    .wms-report-table tfoot th,
+    .wms-report-table tfoot td {
+      border-top: 1.5px solid #94a3b8;
+      background: #f1f5f9 !important;
+      font-weight: 700;
+      page-break-inside: avoid;
+    }
+    h2, h3 { page-break-after: avoid; }
+    .card { page-break-inside: auto; }
   }
 </style>
 {% endblock %}
 {% block wms_content %}
-<div class="report-print-title d-none d-print-block mb-3">
-  <h1 class="h4 mb-1">{{ report.title }}</h1>
-  <div>{{ current_business.name }}{% if report %} · {{ report.period_label }}{% endif %}</div>
+<div class="wms-report-page {% block print_page_class %}wms-report-page-portrait{% endblock %}">
+  <div class="wms-print-header">
+    <div class="wms-print-brand">
+      <span class="wms-print-product">Nexa WMS</span>
+      <span class="wms-print-business">{{ current_business.name }}</span>
+    </div>
+    <h1 class="wms-print-title">{% if report %}{{ report.title }}{% else %}WMS Report{% endif %}</h1>
+    <div class="wms-print-meta">
+      {% if report %}{{ report.period_label }} · {% endif %}Generated {{ report_generated_at|date:"D, d M Y" }} at {{ report_generated_at|date:"h:i A" }}
+    </div>
+  </div>
+  {% block report_content %}{% endblock %}
 </div>
-{% block report_content %}{% endblock %}
 {% endblock %}

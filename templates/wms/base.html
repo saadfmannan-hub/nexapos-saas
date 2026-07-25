@@ -1,46 +1,118 @@
 {% extends "layouts/base.html" %}
+{% load static %}
 {% block title %}Nexa WMS — {{ current_business.name }}{% endblock %}
-{% block content %}
-<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
-  <div>
-    <div class="text-uppercase small fw-semibold text-primary">Workshop Management System</div>
-    <h1 class="page-title mb-0">Nexa WMS</h1>
-  </div>
-  <nav class="nav nav-pills gap-1" aria-label="WMS navigation">
-    {% if "wms.dashboard.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Dashboard</a>
-    {% endif %}
-    {% if "wms.orders.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'orders' %}active{% endif %}" href="{% url 'wms:order_list' %}">Orders</a>
-    {% endif %}
-    {% if "wms.alterations.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'alterations' %}active{% endif %}" href="{% url 'wms:alteration_list' %}">Alterations</a>
-    {% endif %}
-    {% if "wms.attendance.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'attendance' %}active{% endif %}" href="{% url 'wms:attendance_list' %}">Attendance</a>
-    {% endif %}
-    {% if "wms.production.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'production' %}active{% endif %}" href="{% url 'wms:production_entry_list' %}">Production Entry</a>
-    {% endif %}
-    {% if "wms.salary.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'salary' %}active{% endif %}" href="{% url 'wms:salary_list' %}">Salary</a>
-    {% endif %}
-    {% if "wms.reports.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'reports' %}active{% endif %}" href="{% url 'wms:report_index' %}">Reports</a>
-    {% endif %}
-    {% if "wms.employees.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" href="{% url 'wms:employee_list' %}">Employees</a>
-    {% endif %}
-    {% if "wms.categories.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'categories' %}active{% endif %}" href="{% url 'wms:category_list' %}">Production Categories</a>
-    {% endif %}
-    {% if "wms.users.manage" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'users' %}active{% endif %}" href="{% url 'wms:user_list' %}">Users &amp; Access</a>
-    {% endif %}
-    {% if "wms.settings.manage" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'settings' %}active{% endif %}" href="{% url 'wms:settings' %}">Settings</a>
-    {% endif %}
-  </nav>
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/wms.css' %}">
+{% endblock %}
+{% block topbar_actions %}
+<div class="wms-clock d-none d-sm-flex" data-wms-clock
+     data-timezone="{{ current_business.timezone|default:'UTC' }}"
+     aria-label="Current business date and time" role="group">
+  <i class="bi bi-clock" aria-hidden="true"></i>
+  <span class="wms-clock-date d-none d-lg-inline" data-wms-clock-date></span>
+  <span class="wms-clock-sep d-none d-lg-inline" aria-hidden="true">|</span>
+  <span class="wms-clock-time" data-wms-clock-time></span>
 </div>
-{% block wms_content %}{% endblock %}
+{% endblock %}
+{% block content %}
+<div class="wms-shell">
+  <div class="wms-shell-header">
+    <div>
+      <div class="wms-shell-kicker">Workshop Management System</div>
+      <h1 class="wms-shell-title">Nexa WMS</h1>
+    </div>
+    <div class="wms-business-chip" title="Active business">
+      <i class="bi bi-building" aria-hidden="true"></i>
+      <span class="text-truncate">{{ current_business.name }}</span>
+    </div>
+  </div>
+  <div class="wms-nav-wrap">
+    <nav class="wms-nav nav" aria-label="WMS navigation">
+      {% if "wms.dashboard.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" {% if wms_active_nav == 'dashboard' %}aria-current="page"{% endif %} href="{% url 'wms:dashboard' %}"><i class="bi bi-speedometer2"></i>Dashboard</a>
+      {% endif %}
+      {% if "wms.orders.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'orders' %}active{% endif %}" {% if wms_active_nav == 'orders' %}aria-current="page"{% endif %} href="{% url 'wms:order_list' %}"><i class="bi bi-inbox"></i>Orders</a>
+      {% endif %}
+      {% if "wms.alterations.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'alterations' %}active{% endif %}" {% if wms_active_nav == 'alterations' %}aria-current="page"{% endif %} href="{% url 'wms:alteration_list' %}"><i class="bi bi-arrow-repeat"></i>Alterations</a>
+      {% endif %}
+      {% if "wms.attendance.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'attendance' %}active{% endif %}" {% if wms_active_nav == 'attendance' %}aria-current="page"{% endif %} href="{% url 'wms:attendance_list' %}"><i class="bi bi-clock-history"></i>Attendance</a>
+      {% endif %}
+      {% if "wms.production.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'production' %}active{% endif %}" {% if wms_active_nav == 'production' %}aria-current="page"{% endif %} href="{% url 'wms:production_entry_list' %}"><i class="bi bi-boxes"></i>Production Entry</a>
+      {% endif %}
+      {% if "wms.salary.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'salary' %}active{% endif %}" {% if wms_active_nav == 'salary' %}aria-current="page"{% endif %} href="{% url 'wms:salary_list' %}"><i class="bi bi-cash-coin"></i>Salary</a>
+      {% endif %}
+      {% if "wms.reports.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'reports' %}active{% endif %}" {% if wms_active_nav == 'reports' %}aria-current="page"{% endif %} href="{% url 'wms:report_index' %}"><i class="bi bi-graph-up"></i>Reports</a>
+      {% endif %}
+      {% if "wms.employees.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" {% if wms_active_nav == 'employees' %}aria-current="page"{% endif %} href="{% url 'wms:employee_list' %}"><i class="bi bi-people"></i>Employees</a>
+      {% endif %}
+      {% if "wms.categories.view" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'categories' %}active{% endif %}" {% if wms_active_nav == 'categories' %}aria-current="page"{% endif %} href="{% url 'wms:category_list' %}"><i class="bi bi-tags"></i>Production Categories</a>
+      {% endif %}
+      {% if "wms.users.manage" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'users' %}active{% endif %}" {% if wms_active_nav == 'users' %}aria-current="page"{% endif %} href="{% url 'wms:user_list' %}"><i class="bi bi-person-gear"></i>Users &amp; Access</a>
+      {% endif %}
+      {% if "wms.settings.manage" in wms_permissions %}
+      <a class="nav-link {% if wms_active_nav == 'settings' %}active{% endif %}" {% if wms_active_nav == 'settings' %}aria-current="page"{% endif %} href="{% url 'wms:settings' %}"><i class="bi bi-gear"></i>Settings</a>
+      {% endif %}
+    </nav>
+  </div>
+  <div class="wms-page">
+    {% block wms_content %}{% endblock %}
+  </div>
+</div>
+<script>
+  (function () {
+    var active = document.querySelector('.wms-nav .nav-link.active');
+    if (active && active.scrollIntoView) {
+      active.scrollIntoView({block: 'nearest', inline: 'center'});
+      window.scrollTo(0, 0);
+    }
+
+    // Live business-local date/time (uses the configured business timezone).
+    var clock = document.querySelector('[data-wms-clock]');
+    if (!clock) return;
+    var dateTarget = clock.querySelector('[data-wms-clock-date]');
+    var timeTarget = clock.querySelector('[data-wms-clock-time]');
+    var timezone = clock.getAttribute('data-timezone') || 'UTC';
+    var dateFormat, timeFormat;
+    try {
+      dateFormat = new Intl.DateTimeFormat('en-GB', {
+        timeZone: timezone, weekday: 'long', day: '2-digit',
+        month: 'short', year: 'numeric'
+      });
+      timeFormat = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: true
+      });
+    } catch (error) {
+      // Unknown timezone identifier: fall back to the viewer's local time.
+      dateFormat = new Intl.DateTimeFormat('en-GB', {
+        weekday: 'long', day: '2-digit', month: 'short', year: 'numeric'
+      });
+      timeFormat = new Intl.DateTimeFormat('en-US', {
+        hour: '2-digit', minute: '2-digit', hour12: true
+      });
+    }
+    function renderClock() {
+      var now = new Date();
+      var parts = {};
+      dateFormat.formatToParts(now).forEach(function (part) {
+        parts[part.type] = part.value;
+      });
+      if (dateTarget) {
+        dateTarget.textContent = parts.weekday + ' - ' + parts.day + ' ' +
+          parts.month + ' ' + parts.year;
+      }
+      if (timeTarget) timeTarget.textContent = timeFormat.format(now);
+    }
+    renderClock();
+    setInterval(renderClock, 30000);
+  })();
+</script>
 {% endblock %}

@@ -5,8 +5,10 @@ from datetime import timedelta
 from django import forms
 
 from apps.core.date_ranges import business_localdate
+from apps.wms_alterations.models import WmsAlteration
 from apps.wms_core.models import WmsLocation
 from apps.wms_core.selectors import historical_locations_for_access
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_salary.models import WmsSalary
 from apps.wms_workforce.models import (
     WmsEmployee,
@@ -178,6 +180,164 @@ class IndividualAttendanceReportForm(_AccessScopedForm):
 
     def __init__(self, business, user_access, *args, **kwargs):
         super().__init__(business, user_access, *args, **kwargs)
+        self._configure_employee()
+        if not self.is_bound:
+            self.initial.setdefault(
+                "report_month",
+                business_localdate(business).replace(day=1),
+            )
+
+    def clean_report_month(self):
+        return self.cleaned_data["report_month"].replace(day=1)
+
+
+class DailyFinishedReportForm(_AccessScopedForm):
+    report_date = forms.DateField(
+        label="Date",
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
+    )
+    location = forms.ModelChoiceField(
+        label="Location / branch",
+        queryset=WmsLocation.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted locations",
+    )
+
+    def __init__(self, business, user_access, *args, **kwargs):
+        super().__init__(business, user_access, *args, **kwargs)
+        self._configure_location()
+        if not self.is_bound:
+            self.initial.setdefault("report_date", business_localdate(business))
+
+
+class DailyOrdersReportForm(_AccessScopedForm):
+    report_date = forms.DateField(
+        label="Date",
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
+    )
+    location = forms.ModelChoiceField(
+        label="Location / branch",
+        queryset=WmsLocation.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted locations",
+    )
+    status = forms.ChoiceField(
+        required=False,
+        choices=(("", "All statuses"), *WmsWorkshopOrder.Status.choices),
+    )
+
+    def __init__(self, business, user_access, *args, **kwargs):
+        super().__init__(business, user_access, *args, **kwargs)
+        self._configure_location()
+        if not self.is_bound:
+            self.initial.setdefault("report_date", business_localdate(business))
+
+
+class MonthlyOrdersReportForm(_AccessScopedForm):
+    report_month = forms.DateField(
+        label="Month",
+        input_formats=["%Y-%m"],
+        widget=forms.DateInput(format="%Y-%m", attrs={"type": "month"}),
+    )
+    location = forms.ModelChoiceField(
+        label="Location / branch",
+        queryset=WmsLocation.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted locations",
+    )
+
+    def __init__(self, business, user_access, *args, **kwargs):
+        super().__init__(business, user_access, *args, **kwargs)
+        self._configure_location()
+        if not self.is_bound:
+            self.initial.setdefault(
+                "report_month",
+                business_localdate(business).replace(day=1),
+            )
+
+    def clean_report_month(self):
+        return self.cleaned_data["report_month"].replace(day=1)
+
+
+class DailyAlterationsReportForm(_AccessScopedForm):
+    report_date = forms.DateField(
+        label="Date",
+        widget=forms.DateInput(format="%Y-%m-%d", attrs={"type": "date"}),
+    )
+    location = forms.ModelChoiceField(
+        label="Location / branch",
+        queryset=WmsLocation.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted locations",
+    )
+    reason = forms.ChoiceField(
+        required=False,
+        choices=(("", "All reasons"), *WmsAlteration.Reason.choices),
+    )
+    mistake_by_employee = forms.ModelChoiceField(
+        label="Mistake by employee",
+        queryset=WmsEmployee.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="Any employee",
+    )
+    assigned_employee = forms.ModelChoiceField(
+        label="Assigned to",
+        queryset=WmsEmployee.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted employees",
+    )
+    status = forms.ChoiceField(
+        required=False,
+        choices=(("", "All statuses"), *WmsAlteration.Status.choices),
+    )
+
+    def __init__(self, business, user_access, *args, **kwargs):
+        super().__init__(business, user_access, *args, **kwargs)
+        self._configure_location()
+        self._configure_employee("mistake_by_employee")
+        self._configure_employee("assigned_employee")
+        if not self.is_bound:
+            self.initial.setdefault("report_date", business_localdate(business))
+
+
+class MonthlyAlterationsReportForm(_AccessScopedForm):
+    report_month = forms.DateField(
+        label="Month",
+        input_formats=["%Y-%m"],
+        widget=forms.DateInput(format="%Y-%m", attrs={"type": "month"}),
+    )
+    location = forms.ModelChoiceField(
+        label="Location / branch",
+        queryset=WmsLocation.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted locations",
+    )
+    reason = forms.ChoiceField(
+        required=False,
+        choices=(("", "All reasons"), *WmsAlteration.Reason.choices),
+    )
+    employee = forms.ModelChoiceField(
+        label="Assigned to",
+        queryset=WmsEmployee.objects.none(),
+        to_field_name="public_id",
+        required=False,
+        empty_label="All permitted employees",
+    )
+    status = forms.ChoiceField(
+        required=False,
+        choices=(("", "All statuses"), *WmsAlteration.Status.choices),
+    )
+
+    def __init__(self, business, user_access, *args, **kwargs):
+        super().__init__(business, user_access, *args, **kwargs)
+        self._configure_location()
         self._configure_employee()
         if not self.is_bound:
             self.initial.setdefault(

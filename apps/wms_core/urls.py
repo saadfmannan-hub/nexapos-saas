@@ -186,9 +186,26 @@ urlpatterns = [
     ),
     path("users/", views.user_list, name="user_list"),
     path("users/new/", views.user_access_form, name="user_access_create"),
+    path("users/create/", views.user_create, name="user_create"),
+    path("users/roles/new/", views.role_form, name="role_create"),
+    path(
+        "users/roles/<uuid:public_id>/edit/",
+        views.role_form,
+        name="role_edit",
+    ),
     path(
         "users/<uuid:public_id>/",
         views.user_access_form,
         name="user_access_edit",
+    ),
+    path(
+        "users/<uuid:public_id>/edit/",
+        views.user_edit,
+        name="user_edit",
+    ),
+    path(
+        "users/<uuid:public_id>/status/<str:action>/",
+        views.user_access_status,
+        name="user_access_status",
     ),
 ]

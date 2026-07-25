@@ -1,0 +1,95 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap wms-screen-only">
+  <div>
+    <h2 class="h4 mb-1">Monthly Alterations Report</h2>
+    <div class="report-meta">Month totals with day-wise, reason, and employee breakdowns.{% if report %} {{ report.period_label }}{% endif %}</div>
+  </div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print wms-filter-bar">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.report_month.label }}</label>{{ form.report_month }}</div>
+      <div class="col-md-4 col-lg-3"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.reason.label }}</label>{{ form.reason }}</div>
+      <div class="col-md-4 col-lg-3"><label class="form-label small mb-1">{{ form.employee.label }}</label>{{ form.employee }}</div>
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.status.label }}</label>{{ form.status }}</div>
+      <div class="col-auto wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Apply Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a>
+      </div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+<div class="row g-2 mb-3 wms-report-kpis">
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Total alterations</div><div class="fs-4 fw-semibold">{{ report.total }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Completed</div><div class="fs-4 fw-semibold">{{ report.completed }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Pending</div><div class="fs-4 fw-semibold">{{ report.pending }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Completion</div><div class="fs-4 fw-semibold">{{ report.completion_percentage }}%</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Most common reason</div><div class="fs-5 fw-semibold">{{ report.most_common_reason }}</div></div></div></div>
+</div>
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card report-card h-100">
+      <div class="card-header">Day-wise totals</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 wms-report-table">
+          <thead><tr><th>Date</th><th class="text-end">Alterations</th></tr></thead>
+          <tbody>
+            {% for row in report.day_rows %}
+            <tr><td>{{ row.date|date:"D, M d" }}</td><td class="text-end">{{ row.total }}</td></tr>
+            {% empty %}
+            <tr><td colspan="2"><div class="empty-state py-4">No alterations this month.</div></td></tr>
+            {% endfor %}
+          </tbody>
+          {% if report.day_rows %}
+          <tfoot><tr><th>Monthly total</th><th class="text-end">{{ report.total }}</th></tr></tfoot>
+          {% endif %}
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card report-card h-100">
+      <div class="card-header">Reason breakdown</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 wms-report-table">
+          <thead><tr><th>Reason</th><th class="text-end">Alterations</th></tr></thead>
+          <tbody>
+            {% for row in report.reason_rows %}
+            <tr><td>{{ row.reason }}</td><td class="text-end">{{ row.total }}</td></tr>
+            {% empty %}
+            <tr><td colspan="2"><div class="empty-state py-4">No alterations this month.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card report-card h-100">
+      <div class="card-header">Assigned employee breakdown</div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0 wms-report-table">
+          <thead><tr><th>Employee</th><th class="text-end">Assigned</th><th class="text-end">Completed</th></tr></thead>
+          <tbody>
+            {% for row in report.employee_rows %}
+            <tr>
+              <td>{{ row.employee_name }}<div class="small text-secondary">{{ row.employee_code }}</div></td>
+              <td class="text-end">{{ row.total }}</td>
+              <td class="text-end">{{ row.completed }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="3"><div class="empty-state py-4">No alterations this month.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

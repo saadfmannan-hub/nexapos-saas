@@ -12,15 +12,17 @@
   {% endif %}
 </div>
 
-<div class="card mb-3">
-  <div class="card-body py-2">
-    <form method="get" class="row g-2 align-items-center">
-      <div class="col-lg-4">
-        <input class="form-control form-control-sm" type="search" name="q" value="{{ q }}"
+<div class="card mb-3 wms-filter-bar">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-6 col-lg-4">
+        <label class="form-label" for="employee-filter-q">Search</label>
+        <input class="form-control form-control-sm" id="employee-filter-q" type="search" name="q" value="{{ q }}"
                placeholder="Search name, code, or mobile">
       </div>
-      <div class="col-lg-3">
-        <select class="form-select form-select-sm" name="location">
+      <div class="col-md-6 col-lg-3">
+        <label class="form-label" for="employee-filter-location">Location</label>
+        <select class="form-select form-select-sm" id="employee-filter-location" name="location">
           <option value="">All WMS locations</option>
           {% for location in locations %}
           <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
@@ -29,16 +31,17 @@
           {% endfor %}
         </select>
       </div>
-      <div class="col-lg-3">
-        <select class="form-select form-select-sm" name="compensation_type">
+      <div class="col-md-6 col-lg-3">
+        <label class="form-label" for="employee-filter-compensation">Compensation</label>
+        <select class="form-select form-select-sm" id="employee-filter-compensation" name="compensation_type">
           <option value="">All compensation types</option>
           {% for value, label in compensation_choices %}
           <option value="{{ value }}" {% if compensation_type == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
       </div>
-      <div class="col-auto">
-        <button class="btn btn-sm btn-primary">Filter</button>
+      <div class="col-md-6 col-lg-2 wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Filter</button>
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:employee_list' %}">Clear</a>
       </div>
     </form>
@@ -47,8 +50,8 @@
 
 <div class="card mb-3">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>Active Employees</span>
-    <span class="badge text-bg-light border">{{ active_count }}</span>
+    <span><i class="bi bi-people text-primary"></i> Active Employees</span>
+    <span class="wms-count-chip">{{ active_count }}</span>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
@@ -74,18 +77,18 @@
     </table>
   </div>
   {% if active_page.has_other_pages %}
-  <div class="card-footer d-flex justify-content-between">
-    {% if active_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+  <div class="card-footer wms-pagination">
+    {% if active_page.has_previous %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.previous_page_number }}" aria-label="Previous page of active employees"><i class="bi bi-chevron-left"></i> Previous</a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
     <span class="small text-secondary">Page {{ active_page.number }} of {{ active_page.paginator.num_pages }}</span>
-    {% if active_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+    {% if active_page.has_next %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}active_page={{ active_page.next_page_number }}" aria-label="Next page of active employees">Next <i class="bi bi-chevron-right"></i></a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
   </div>
   {% endif %}
 </div>
 
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>Inactive Employees</span>
-    <span class="badge text-bg-light border">{{ inactive_count }}</span>
+    <span><i class="bi bi-person-dash text-secondary"></i> Inactive Employees</span>
+    <span class="wms-count-chip">{{ inactive_count }}</span>
   </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
@@ -111,10 +114,10 @@
     </table>
   </div>
   {% if inactive_page.has_other_pages %}
-  <div class="card-footer d-flex justify-content-between">
-    {% if inactive_page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+  <div class="card-footer wms-pagination">
+    {% if inactive_page.has_previous %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.previous_page_number }}" aria-label="Previous page of inactive employees"><i class="bi bi-chevron-left"></i> Previous</a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
     <span class="small text-secondary">Page {{ inactive_page.number }} of {{ inactive_page.paginator.num_pages }}</span>
-    {% if inactive_page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+    {% if inactive_page.has_next %}<a class="wms-page-link" href="?{{ querystring }}{% if querystring %}&amp;{% endif %}inactive_page={{ inactive_page.next_page_number }}" aria-label="Next page of inactive employees">Next <i class="bi bi-chevron-right"></i></a>{% else %}<span class="wms-page-spacer"></span>{% endif %}
   </div>
   {% endif %}
 </div>

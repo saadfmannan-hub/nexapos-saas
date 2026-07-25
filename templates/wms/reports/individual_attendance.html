@@ -1,20 +1,21 @@
 {% extends "wms/reports/base.html" %}
+{% block print_page_class %}wms-report-page-landscape{% endblock %}
 {% block report_content %}
-<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap wms-screen-only">
   <div><h2 class="h4 mb-1">Individual Attendance Report</h2>{% if report %}<div class="report-meta">{{ report.employee.full_name }} · {{ report.period_label }}</div>{% endif %}</div>
   {% include "wms/reports/_actions.html" %}
 </div>
-<div class="card mb-3 no-print"><div class="card-body py-2">
+<div class="card mb-3 no-print wms-filter-bar"><div class="card-body">
   <form method="get" class="row g-2 align-items-end">
     <div class="col-md-3"><label class="form-label small mb-1">{{ form.report_month.label }}</label>{{ form.report_month }}</div>
     <div class="col-md-5"><label class="form-label small mb-1">{{ form.employee.label }}</label>{{ form.employee }}</div>
-    <div class="col-auto"><button class="btn btn-sm btn-primary">Apply Filter</button> <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a></div>
+    <div class="col-auto wms-filter-actions"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Apply Filter</button> <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a></div>
   </form>
   {% include "wms/reports/_form_errors.html" %}
 </div></div>
 {% if report %}
 <div class="alert alert-light border py-2 small">A working-day calendar is not configured in Phase 3, so this report shows recorded attendance days only.</div>
-<div class="row g-2 mb-3">
+<div class="row g-2 mb-3 wms-report-kpis">
   <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Present days</div><div class="fs-5 fw-semibold">{{ report.totals.present }}</div></div></div></div>
   <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Late days</div><div class="fs-5 fw-semibold">{{ report.totals.late }}</div></div></div></div>
   <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Absent days</div><div class="fs-5 fw-semibold">{{ report.totals.absent }}</div></div></div></div>

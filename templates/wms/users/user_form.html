@@ -1,0 +1,58 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card wms-form-card wms-form-card-md">
+  <div class="card-header">
+    <i class="bi bi-person-badge text-primary"></i>
+    {% if access_record %}Edit WMS user{% else %}Add WMS user{% endif %}
+  </div>
+  <div class="card-body">
+    {% if access_record %}
+    <p class="text-secondary small">
+      {{ access_record.membership.user.email }} ·
+      Update the staff member's details, WMS role, allowed locations, or set a
+      new password. POS permissions are not affected.
+    </p>
+    {% if form.target_is_owner %}
+    <div class="alert alert-info">
+      This is the business owner's account. Only the allowed WMS locations can
+      be changed here.
+    </div>
+    {% endif %}
+    {% else %}
+    <p class="text-secondary small">
+      Creates a login account for this business with the selected WMS role and
+      locations. No POS permissions are granted.
+    </p>
+    {% endif %}
+    <form method="post">{% csrf_token %}
+      {% include "components/form_field.html" with field=form.full_name %}
+      {% include "components/form_field.html" with field=form.email %}
+      <div class="row g-3">
+        <div class="col-md-6">
+          {% include "components/form_field.html" with field=form.password %}
+        </div>
+        <div class="col-md-6">
+          {% include "components/form_field.html" with field=form.password_confirm %}
+        </div>
+      </div>
+      {% include "components/form_field.html" with field=form.role %}
+      {% include "components/form_field.html" with field=form.allowed_locations %}
+      <div class="form-check mb-3">
+        {{ form.is_active }}
+        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">{{ form.is_active.label }}</label>
+        {% for error in form.is_active.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+      </div>
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-check-lg"></i>
+          {% if access_record %}Save user{% else %}Add user{% endif %}
+        </button>
+        <a class="btn btn-outline-secondary" href="{% url 'wms:user_list' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -15,6 +15,56 @@ urlpatterns = [
         name="report_daily_production_export",
     ),
     path(
+        "daily-finished/",
+        views.daily_finished_report,
+        name="report_daily_finished",
+    ),
+    path(
+        "daily-finished/export.xlsx",
+        views.daily_finished_export,
+        name="report_daily_finished_export",
+    ),
+    path(
+        "daily-orders/",
+        views.daily_orders_report,
+        name="report_daily_orders",
+    ),
+    path(
+        "daily-orders/export.xlsx",
+        views.daily_orders_export,
+        name="report_daily_orders_export",
+    ),
+    path(
+        "monthly-orders/",
+        views.monthly_orders_report,
+        name="report_monthly_orders",
+    ),
+    path(
+        "monthly-orders/export.xlsx",
+        views.monthly_orders_export,
+        name="report_monthly_orders_export",
+    ),
+    path(
+        "daily-alterations/",
+        views.daily_alterations_report,
+        name="report_daily_alterations",
+    ),
+    path(
+        "daily-alterations/export.xlsx",
+        views.daily_alterations_export,
+        name="report_daily_alterations_export",
+    ),
+    path(
+        "monthly-alterations/",
+        views.monthly_alterations_report,
+        name="report_monthly_alterations",
+    ),
+    path(
+        "monthly-alterations/export.xlsx",
+        views.monthly_alterations_export,
+        name="report_monthly_alterations_export",
+    ),
+    path(
         "monthly-production/",
         views.monthly_production_report,
         name="report_monthly_production",

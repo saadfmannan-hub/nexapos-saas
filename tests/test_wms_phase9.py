@@ -43,6 +43,7 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
         location=None,
         received_date=None,
         finish=False,
+        finished_date=None,
         user=None,
     ):
         business = business or self.business_a
@@ -62,7 +63,7 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
             order = order_services.finish_order_batch(
                 business=business,
                 user_access=access,
-                finished_date=self.today,
+                finished_date=finished_date or self.today,
                 references=[reference],
                 user=user,
             )[0]
@@ -164,9 +165,16 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
     def test_dashboard_aggregates_cards_charts_rankings_and_recent_activity(self):
         self.create_order("P9-TODAY-OPEN")
         self.create_order("P9-TODAY-DONE", finish=True)
+        self.create_order("P9-TODAY-DONE-2", finish=True)
         self.create_order(
             "P9-OLDER-OPEN",
             received_date=self.yesterday,
+        )
+        self.create_order(
+            "P9-YESTERDAY-DONE",
+            received_date=self.yesterday,
+            finish=True,
+            finished_date=self.yesterday,
         )
         self.create_alteration("P9-TODAY-OPEN")
 
@@ -209,19 +217,19 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
                 dashboard["orders"]["in_progress"],
                 dashboard["orders"]["finished_today"],
             ),
-            (2, 2, 1),
+            (3, 2, 2),
         )
         self.assertEqual(dashboard["alterations"]["pending"], 1)
         self.assertEqual(dashboard["production"]["total_today"], 21)
         self.assertEqual(
             dashboard["production"]["comparison"],
             {
-                "today": 21,
-                "yesterday": 5,
-                "difference": 16,
-                "difference_label": "+16",
-                "percentage": 320.0,
-                "percentage_label": "+320.0%",
+                "today": 2,
+                "yesterday": 1,
+                "difference": 1,
+                "difference_label": "+1",
+                "percentage": 100.0,
+                "percentage_label": "+100.0%",
                 "direction": "up",
             },
         )
@@ -459,7 +467,7 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
         self.assertEqual(dashboard["production"]["total_today"], 5)
         self.assertLessEqual(
             len(queries),
-            10,
+            11,
             "\n".join(query["sql"] for query in queries.captured_queries),
         )
 

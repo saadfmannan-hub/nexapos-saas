@@ -210,6 +210,34 @@ def save_location(
 
 
 @transaction.atomic
+def save_business_timezone(*, business, timezone_name, user=None, request=None):
+    """Update the shared Business timezone from the WMS settings screen.
+
+    Reuses the existing Business.timezone field; historical data is never
+    converted or rewritten.
+    """
+
+    timezone_name = (timezone_name or "").strip()
+    if not timezone_name or timezone_name == business.timezone:
+        return business
+    previous = business.timezone
+    business.timezone = timezone_name
+    business.save(update_fields=["timezone", "updated_at"])
+    audit.log(
+        "wms.business_timezone_changed",
+        business=business,
+        user=_actor(user, request),
+        request=request,
+        module="wms",
+        obj=business,
+        description=(
+            f"Business time zone changed from '{previous}' to '{timezone_name}'."
+        ),
+    )
+    return business
+
+
+@transaction.atomic
 def save_settings(settings_obj, cleaned_data, *, user=None, request=None):
     for field, value in cleaned_data.items():
         setattr(settings_obj, field, value)
@@ -258,6 +286,147 @@ def save_role(
         description=f"WMS role '{role.name}' saved.",
     )
     return role
+
+
+# Platform role assigned to memberships created from the WMS staff screen.
+# It intentionally carries no POS permissions; WMS authorization is granted
+# separately through WmsUserAccess.
+WMS_STAFF_PLATFORM_ROLE_NAME = "WMS Staff"
+
+
+def _wms_staff_platform_role(business):
+    from apps.accounts.models import Role
+
+    role, _created = Role.objects.get_or_create(
+        business=business,
+        name=WMS_STAFF_PLATFORM_ROLE_NAME,
+        defaults={"is_system": True, "permissions": []},
+    )
+    return role
+
+
+def _lock_and_check_user_seat(business):
+    """Serialize active-seat allocation exactly like the POS user screens."""
+
+    from apps.subscriptions import services as subscriptions
+
+    Business.objects.select_for_update().only("pk").get(pk=business.pk)
+    subscriptions.check_limit(business, "users")
+
+
+@transaction.atomic
+def create_wms_user(
+    *,
+    business,
+    full_name,
+    email,
+    password,
+    role,
+    allowed_locations=(),
+    is_active=True,
+    user=None,
+    request=None,
+):
+    """Create a login account, membership, and WMS access in one step.
+
+    Reuses the existing account uniqueness rules, seat limits, secure
+    password hashing, and the established WMS access service.
+    """
+
+    from apps.accounts.models import Membership, User
+
+    _lock_and_check_user_seat(business)
+    email = User.objects.normalize_email(email)
+    account = User.objects.filter(email__iexact=email).first()
+    account_created = account is None
+    if account_created:
+        account = User.objects.create_user(
+            email=email,
+            password=password,
+            full_name=full_name,
+        )
+    if Membership.objects.filter(business=business, user=account).exists():
+        raise ValidationError(
+            "This email already belongs to a member of this business."
+        )
+    membership = Membership.objects.create(
+        business=business,
+        user=account,
+        role=_wms_staff_platform_role(business),
+        is_active=True,
+    )
+    access = save_user_access(
+        business=business,
+        membership=membership,
+        role=role,
+        is_active=is_active,
+        allowed_locations=allowed_locations,
+        user=user,
+        request=request,
+    )
+    audit.log(
+        "wms.user_created",
+        business=business,
+        user=_actor(user, request),
+        request=request,
+        module="wms",
+        obj=account,
+        description=(
+            f"WMS staff user {account.email} "
+            f"{'created' if account_created else 'attached'} with WMS role "
+            f"'{role.name}'."
+        ),
+    )
+    return access
+
+
+@transaction.atomic
+def update_wms_user(
+    *,
+    business,
+    access,
+    full_name=None,
+    password=None,
+    role,
+    allowed_locations=(),
+    is_active=True,
+    user=None,
+    request=None,
+):
+    """Update a WMS staff member's identity, password, role, and scope."""
+
+    account = access.membership.user
+    identity_changes = []
+    if full_name is not None and full_name != account.full_name:
+        account.full_name = full_name
+        identity_changes.append("full name")
+    if password:
+        account.set_password(password)
+        identity_changes.append("password")
+    if identity_changes:
+        account.save()
+        audit.log(
+            "wms.user_updated",
+            business=business,
+            user=_actor(user, request),
+            request=request,
+            module="wms",
+            obj=account,
+            description=(
+                f"WMS staff user {account.email} updated "
+                f"({', '.join(identity_changes)})."
+            ),
+        )
+    return save_user_access(
+        business=business,
+        membership=access.membership,
+        role=role,
+        is_active=is_active,
+        allowed_locations=allowed_locations,
+        instance=access,
+        user=user,
+        request=request,
+    )
 
 
 @transaction.atomic

@@ -1,0 +1,55 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap wms-screen-only">
+  <div>
+    <h2 class="h4 mb-1">Daily Finished / Ready PCS Report</h2>
+    <div class="report-meta">Completed garments ready at the end of the day, from the Finished Orders workflow.{% if report %} {{ report.period_label }}{% endif %}</div>
+  </div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print wms-filter-bar">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.report_date.label }}</label>{{ form.report_date }}</div>
+      <div class="col-md-4"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-auto wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Apply Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a>
+      </div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+<div class="row g-2 mb-3 wms-report-kpis">
+  <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Finished / Ready PCS</div><div class="fs-4 fw-semibold">{{ report.total_finished }}</div></div></div></div>
+</div>
+<div class="card report-card">
+  <div class="card-header d-flex justify-content-between">
+    <span>{{ report.title }}</span><span>{{ report.period_label }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 wms-report-table">
+      <thead><tr><th>Order / Invoice</th><th>Source Branch</th><th>WMS Location</th><th>Received</th><th>Finished</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for order in report.rows %}
+        <tr>
+          <td class="fw-semibold">{{ order.order_reference }}</td>
+          <td>{{ order.location.branch.name }}</td>
+          <td>{{ order.location.branch.name }}</td>
+          <td>{{ order.received_date|date:"M d, Y" }}</td>
+          <td>{{ order.finished_date|date:"M d, Y" }}</td>
+          <td><span class="badge text-bg-success">{{ order.get_status_display }}</span></td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="empty-state py-4">No orders were marked Finished / Ready on this date.</div></td></tr>
+        {% endfor %}
+      </tbody>
+      {% if report.rows %}
+      <tfoot><tr><th colspan="5">Daily Finished / Ready total</th><th class="text-end">{{ report.total_finished }}</th></tr></tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

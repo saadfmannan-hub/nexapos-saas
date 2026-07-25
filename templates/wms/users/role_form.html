@@ -1,0 +1,48 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card wms-form-card wms-form-card-md">
+  <div class="card-header">
+    <i class="bi bi-shield-check text-primary"></i>
+    {% if role %}Edit WMS role{% else %}Add custom WMS role{% endif %}
+  </div>
+  <div class="card-body">
+    <p class="text-secondary small">
+      Custom roles use the approved WMS permission list. System roles cannot be
+      edited, and your own role must keep user management to avoid lockout.
+    </p>
+    <form method="post">{% csrf_token %}
+      {% include "components/form_field.html" with field=form.name %}
+      {% include "components/form_field.html" with field=form.code %}
+      <div class="mb-3">
+        <label class="form-label required-star">{{ form.permissions.label }}</label>
+        <div class="row g-1">
+          {% for checkbox in form.permissions %}
+          <div class="col-md-6"><div class="form-check">
+            {{ checkbox.tag }}
+            <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+          </div></div>
+          {% endfor %}
+        </div>
+        {% for error in form.permissions.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="form-check mb-2">
+        {{ form.is_admin }}
+        <label class="form-check-label" for="{{ form.is_admin.id_for_label }}">Administrative role</label>
+        {% for error in form.is_admin.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="form-check mb-3">
+        {{ form.is_active }}
+        <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Active</label>
+        {% for error in form.is_active.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+      </div>
+      {% if form.non_field_errors %}
+      <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save role</button>
+        <a class="btn btn-outline-secondary" href="{% url 'wms:user_list' %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,465 @@
+/* ==================================================================
+   Nexa WMS — Phase 10 premium commercial UI polish
+   Scoped to the WMS presentation layer only (.wms-shell / .wms-page /
+   .wms-dashboard / .wms-report-table). Never loaded on POS screens.
+   ================================================================== */
+:root {
+  --wms-navy: #0f172a;
+  --wms-ink: #102033;
+  --wms-muted: #64748b;
+  --wms-border: #e2e8f0;
+  --wms-border-soft: #edf2f8;
+  --wms-accent: #1f7aff;
+  --wms-accent-ink: #0f57be;
+  --wms-teal: #0f766e;
+  --wms-surface: #ffffff;
+  --wms-surface-soft: #f8fafc;
+  --wms-radius: 14px;
+  --wms-radius-sm: 10px;
+  --wms-shadow: 0 1px 2px rgba(8, 26, 51, .04), 0 12px 32px -24px rgba(8, 26, 51, .38);
+  --wms-ring: 0 0 0 .22rem rgba(31, 122, 255, .16);
+  --wms-success-bg: #dcfce7;
+  --wms-success-ink: #166534;
+  --wms-success-border: #bbf7d0;
+  --wms-warning-bg: #fff4d6;
+  --wms-warning-ink: #8a5200;
+  --wms-warning-border: #ffe2a3;
+  --wms-danger-bg: #fee4e9;
+  --wms-danger-ink: #a8182b;
+  --wms-danger-border: #ffc8d2;
+  --wms-info-bg: #e5f0ff;
+  --wms-info-ink: #1451a3;
+  --wms-info-border: #c7dcff;
+  --wms-neutral-bg: #edf2f7;
+  --wms-neutral-ink: #334155;
+  --wms-neutral-border: #dbe5f1;
+}
+
+/* ---------------- WMS shell header ---------------- */
+.wms-shell-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: .75rem 1.25rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.wms-shell-kicker {
+  color: var(--wms-accent-ink);
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.wms-shell-title {
+  color: var(--wms-navy);
+  font-size: 1.3rem;
+  font-weight: 800;
+  letter-spacing: -.015em;
+  margin: 0;
+  line-height: 1.2;
+}
+.wms-shell-context {
+  color: var(--wms-muted);
+  font-size: .8rem;
+  font-weight: 600;
+}
+
+/* Active business context chip — noticeable without shouting. */
+.wms-business-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  max-width: min(60vw, 22rem);
+  padding: .38rem .8rem;
+  background: #f1f6ff;
+  border: 1px solid #c7dcff;
+  border-radius: 999px;
+  color: var(--wms-accent-ink);
+  font-size: .85rem;
+  font-weight: 750;
+  letter-spacing: .01em;
+}
+.wms-business-chip i {
+  color: var(--wms-accent);
+  font-size: .9rem;
+}
+
+/* Business-local clock in the shared topbar (rendered on WMS pages only). */
+.wms-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: .3rem .7rem;
+  background: #f8fafc;
+  border: 1px solid var(--wms-border);
+  border-radius: 999px;
+  color: #3c5068;
+  font-size: .78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wms-clock i { color: var(--wms-accent); font-size: .82rem; }
+.wms-clock .wms-clock-sep { color: #b3c2d4; }
+.wms-clock .wms-clock-time { color: var(--wms-navy); }
+
+/* ---------------- WMS module navigation ---------------- */
+.wms-nav-wrap {
+  margin: 0 0 1.15rem;
+  border-bottom: 1px solid var(--wms-border);
+}
+.wms-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .15rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+@media (max-width: 991.98px) {
+  .wms-nav { flex-wrap: nowrap; }
+}
+.wms-nav::-webkit-scrollbar { height: 5px; }
+.wms-nav::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+.wms-nav .nav-link {
+  color: #4b5b70;
+  font-size: .84rem;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+  padding: .6rem .75rem .66rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: .4rem;
+  transition: color .14s ease, background .14s ease, border-color .14s ease;
+}
+.wms-nav .nav-link i {
+  font-size: .92rem;
+  line-height: 1;
+  color: #8fa0b5;
+  transition: color .14s ease;
+}
+.wms-nav .nav-link:hover {
+  color: var(--wms-accent-ink);
+  background: #f1f6ff;
+}
+.wms-nav .nav-link:hover i { color: var(--wms-accent); }
+.wms-nav .nav-link.active {
+  color: var(--wms-accent-ink);
+  font-weight: 750;
+  background: transparent;
+  border-bottom-color: var(--wms-accent);
+}
+.wms-nav .nav-link.active i { color: var(--wms-accent); }
+.wms-nav .nav-link:focus-visible {
+  outline: 3px solid rgba(31, 122, 255, .3);
+  outline-offset: -3px;
+}
+
+/* ---------------- Page headers inside WMS screens ---------------- */
+.wms-page h2.h3, .wms-page h2.h4 {
+  color: var(--wms-navy);
+  font-weight: 800;
+  letter-spacing: -.015em;
+}
+.wms-page .wms-page-subtitle { color: var(--wms-muted); }
+
+/* ---------------- Cards ---------------- */
+.wms-page .card { border-radius: var(--wms-radius); }
+.wms-page .card-header {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 52px;
+  font-size: .92rem;
+  font-weight: 750;
+  color: var(--wms-navy);
+}
+.wms-page .card-header i { font-size: .95rem; }
+.wms-page .card-header .badge { margin-left: auto; }
+.wms-page .card-header .badge + .badge,
+.wms-page .card-header .btn { margin-left: auto; }
+.wms-page .card-header > span:first-child { display: inline-flex; align-items: center; gap: .5rem; }
+
+/* Count chip used in list card headers */
+.wms-count-chip {
+  background: #eef4fb;
+  border: 1px solid var(--wms-neutral-border);
+  color: #3c5068;
+  font-weight: 750;
+  font-size: .74rem;
+  border-radius: 999px;
+  padding: .3em .75em;
+}
+
+/* ---------------- Filter bar ---------------- */
+.wms-filter-bar { border-radius: var(--wms-radius); }
+.wms-filter-bar .card-body { padding: .85rem 1.05rem 1rem; }
+.wms-filter-bar .form-label {
+  color: #53657b;
+  font-size: .72rem;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: .28rem;
+}
+.wms-filter-bar .form-control,
+.wms-filter-bar .form-select { min-height: 34px; }
+.wms-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  align-items: flex-end;
+  min-width: 0;
+}
+.wms-filter-actions .btn { min-height: 34px; white-space: nowrap; }
+
+/* ---------------- Tables ---------------- */
+.wms-page .table thead th {
+  font-size: .7rem;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: #46586d;
+}
+.wms-page .table tbody td {
+  font-size: .875rem;
+  padding-top: .62rem;
+  padding-bottom: .62rem;
+}
+.wms-page .table .text-end { font-variant-numeric: tabular-nums; }
+.wms-page .table td .btn-sm { min-height: 31px; }
+.wms-page .table td:last-child.text-end .btn + .btn,
+.wms-page .table td:last-child.text-end .btn + form { margin-left: .25rem; }
+.wms-page .table-responsive { scrollbar-width: thin; }
+.wms-cell-secondary { color: var(--wms-muted); font-size: .78rem; }
+
+/* ---------------- Status badges: one consistent WMS system.
+   Restyles the Bootstrap contextual badges already used across WMS
+   templates into restrained semantic pills. Labels are unchanged. */
+.wms-page .badge {
+  font-weight: 700;
+  letter-spacing: .015em;
+  border-radius: 999px;
+}
+.wms-page .badge.text-bg-success {
+  background: var(--wms-success-bg) !important;
+  color: var(--wms-success-ink) !important;
+  border: 1px solid var(--wms-success-border);
+}
+.wms-page .badge.text-bg-warning {
+  background: var(--wms-warning-bg) !important;
+  color: var(--wms-warning-ink) !important;
+  border: 1px solid var(--wms-warning-border);
+}
+.wms-page .badge.text-bg-danger {
+  background: var(--wms-danger-bg) !important;
+  color: var(--wms-danger-ink) !important;
+  border: 1px solid var(--wms-danger-border);
+}
+.wms-page .badge.text-bg-primary,
+.wms-page .badge.text-bg-info {
+  background: var(--wms-info-bg) !important;
+  color: var(--wms-info-ink) !important;
+  border: 1px solid var(--wms-info-border);
+}
+.wms-page .badge.text-bg-secondary {
+  background: var(--wms-neutral-bg) !important;
+  color: var(--wms-neutral-ink) !important;
+  border: 1px solid var(--wms-neutral-border);
+}
+.wms-page .badge.text-bg-light {
+  background: #f8fafc !important;
+  color: #3c5068 !important;
+  border: 1px solid var(--wms-neutral-border);
+}
+
+/* ---------------- Pagination ---------------- */
+.wms-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+}
+.wms-pagination .wms-page-link {
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  min-height: 34px;
+  min-width: 88px;
+  justify-content: center;
+  padding: .3rem .7rem;
+  border: 1px solid #cad5e4;
+  border-radius: var(--wms-radius-sm);
+  background: #fff;
+  color: #3c5068;
+  font-size: .82rem;
+  font-weight: 700;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+.wms-pagination .wms-page-link:hover {
+  background: #eef4fb;
+  border-color: #b8c7da;
+  color: var(--wms-navy);
+}
+.wms-pagination .wms-page-link:focus-visible {
+  outline: 3px solid rgba(31, 122, 255, .3);
+  outline-offset: 2px;
+}
+.wms-pagination .wms-page-spacer { min-width: 88px; }
+
+/* ---------------- Forms ---------------- */
+.wms-form-card { width: 100%; margin-inline: auto; }
+.wms-form-card-sm { max-width: 720px; }
+.wms-form-card-md { max-width: 780px; }
+.wms-form-card-lg { max-width: 860px; }
+.wms-page textarea.form-control { min-height: 96px; }
+.wms-page .form-control,
+.wms-page .form-select { min-height: 40px; }
+.wms-page .form-control-sm,
+.wms-page .form-select-sm { min-height: 34px; }
+.wms-page .btn { min-height: 40px; }
+.wms-page .btn-sm { min-height: 31px; }
+.wms-page .btn:focus-visible {
+  outline: 3px solid rgba(31, 122, 255, .3);
+  outline-offset: 2px;
+}
+
+/* ---------------- Definition lists (detail views) ---------------- */
+.wms-page dl.row dt {
+  color: #53657b;
+  font-size: .78rem;
+  font-weight: 750;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+  padding-top: .12rem;
+}
+.wms-page dl.row dd { color: var(--wms-ink); margin-bottom: .55rem; }
+.wms-page dl.row dd:last-child { margin-bottom: 0; }
+
+/* ---------------- Empty states ---------------- */
+.wms-page .empty-state {
+  font-size: .875rem;
+  font-weight: 550;
+  color: #5b6b80;
+  padding: 2.4rem 1rem;
+}
+.wms-page .empty-state i {
+  font-size: 2.1rem;
+  opacity: .32;
+  margin-bottom: .35rem;
+}
+
+/* ---------------- Helper / secondary text readability ---------------- */
+.wms-page .text-secondary,
+.wms-page .form-text { color: #5b6b80 !important; }
+
+/* ---------------- Reports landing page ----------------
+   One shared grid for every section, so a report card is exactly the same
+   width and height wherever it appears. Sections with fewer cards simply
+   leave the remaining grid positions empty. */
+.wms-report-index .wms-report-section { margin-bottom: 1.15rem; }
+.wms-report-index .wms-report-section:last-child { margin-bottom: 0; }
+.wms-report-section-title {
+  color: #53657b;
+  font-size: .72rem;
+  font-weight: 800;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  margin: 0 0 .55rem;
+}
+.wms-report-grid {
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+.wms-report-grid > * { min-width: 0; }
+.wms-report-card {
+  height: 100%;
+  min-height: 8.5rem;
+}
+.wms-report-card .card-body { padding: .9rem 1rem; }
+.wms-report-card-icon {
+  color: var(--wms-accent);
+  display: block;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.wms-report-card-title {
+  color: var(--wms-navy);
+  font-size: .9rem;
+  font-weight: 750;
+  margin: .55rem 0 .3rem;
+}
+.wms-report-card-text {
+  color: #5b6b80;
+  font-size: .775rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Tablet: two equal columns. */
+@media (min-width: 600px) {
+  .wms-report-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Desktop: three equal columns for every section. */
+@media (min-width: 992px) {
+  .wms-report-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* ---------------- Report cards ---------------- */
+.wms-report-kpis .card { border-radius: var(--wms-radius); }
+.wms-report-kpis .card-body { padding: .65rem .9rem; }
+.wms-report-kpis .fs-4, .wms-report-kpis .fs-5 {
+  font-variant-numeric: tabular-nums;
+  color: var(--wms-navy);
+  font-weight: 750;
+}
+
+/* ---------------- Clickable cards (report launcher, dashboard metrics) */
+.wms-page a.card {
+  transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+.wms-page a.card:hover {
+  transform: translateY(-2px);
+  border-color: #a8cbff;
+  box-shadow: 0 4px 8px rgba(16, 24, 40, .05), 0 18px 34px -18px rgba(31, 122, 255, .35);
+}
+.wms-page a.card:focus-visible {
+  outline: 3px solid rgba(31, 122, 255, .3);
+  outline-offset: 2px;
+}
+
+/* ---------------- Responsive ---------------- */
+@media (max-width: 991.98px) {
+  .wms-shell-header { align-items: flex-start; }
+}
+@media (max-width: 767.98px) {
+  .wms-shell-title { font-size: 1.15rem; }
+  .wms-business-chip {
+    font-size: .78rem;
+    padding: .3rem .65rem;
+    max-width: 55vw;
+  }
+  .wms-nav .nav-link { padding: .5rem .65rem; font-size: .82rem; }
+  .wms-filter-actions { width: 100%; }
+  .wms-filter-actions .btn { flex: 1 1 auto; }
+  .wms-pagination .wms-page-link { min-width: 74px; }
+  .wms-pagination .wms-page-spacer { min-width: 74px; }
+}
+@media (max-width: 575.98px) {
+  .wms-page .card-header { min-height: 48px; }
+  .wms-page h2.h4 { font-size: 1.1rem; }
+  .wms-page h2.h3 { font-size: 1.2rem; }
+}
+
+/* ---------------- Print: the module nav is never useful on paper */
+@media print {
+  .wms-nav-wrap, .wms-shell-header .wms-shell-actions { display: none !important; }
+}

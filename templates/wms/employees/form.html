@@ -1,7 +1,7 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
-<div class="card mx-auto" style="max-width:820px">
-  <div class="card-header">{% if employee %}Edit employee{% else %}Add employee{% endif %}</div>
+<div class="card wms-form-card wms-form-card-lg">
+  <div class="card-header"><i class="bi bi-person-badge text-primary"></i> {% if employee %}Edit employee{% else %}Add employee{% endif %}</div>
   <div class="card-body">
     <p class="text-secondary small">
       Use either Fixed Salary or Per Piece. Leave the unused compensation field blank.
@@ -12,7 +12,7 @@
         {% include "components/form_field.html" with field=field %}
       {% endfor %}
       <div class="d-flex gap-2">
-        <button class="btn btn-primary" type="submit">Save employee</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save employee</button>
         {% if employee %}
         <a class="btn btn-outline-secondary" href="{% url 'wms:employee_detail' employee.public_id %}">Cancel</a>
         {% else %}

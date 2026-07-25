@@ -57,6 +57,15 @@ def get_business_location(business, public_id):
     )
 
 
+def get_business_role(business, public_id):
+    from .models import WmsRole
+
+    return get_object_or_404(
+        WmsRole.objects.for_business(business),
+        public_id=public_id,
+    )
+
+
 def get_business_user_access(business, public_id):
     return get_object_or_404(
         WmsUserAccess.objects.for_business(business).select_related(

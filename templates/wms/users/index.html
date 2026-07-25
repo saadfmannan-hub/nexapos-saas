@@ -1,17 +1,32 @@
 {% extends "wms/base.html" %}
 {% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Users &amp; Access</h2>
+    <div class="small wms-page-subtitle">WMS staff accounts, roles, and location scopes.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-primary" href="{% url 'wms:user_create' %}"><i class="bi bi-person-plus"></i> Add user</a>
+    <a class="btn btn-outline-primary" href="{% url 'wms:user_access_create' %}"><i class="bi bi-person-check"></i> Grant access to existing user</a>
+  </div>
+</div>
 <div class="card">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span>Explicit WMS user access</span>
-    <a class="btn btn-sm btn-primary" href="{% url 'wms:user_access_create' %}">Grant access</a>
+    <span><i class="bi bi-person-gear text-primary"></i> WMS users</span>
   </div>
   <div class="table-responsive">
-    <table class="table table-hover mb-0">
+    <table class="table table-hover mb-0 align-middle">
       <thead><tr><th>User</th><th>WMS role</th><th>Location scope</th><th>Status</th><th></th></tr></thead>
       <tbody>
         {% for access in accesses %}
         <tr>
-          <td>{{ access.membership.user.full_name }}<div class="small text-secondary">{{ access.membership.user.email }}</div></td>
+          <td>
+            {{ access.membership.user.full_name }}
+            {% if access.membership.user_id == current_business.owner_id %}
+            <span class="badge text-bg-light border">Owner</span>
+            {% endif %}
+            <div class="small text-secondary">{{ access.membership.user.email }}</div>
+          </td>
           <td>{{ access.role.name }}</td>
           <td class="small">
             {% for location in access.allowed_locations.all %}
@@ -21,10 +36,25 @@
             {% endfor %}
           </td>
           <td>{% if access.is_active and access.role.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
-          <td class="text-end"><a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:user_access_edit' access.public_id %}">Edit</a></td>
+          <td class="text-end">
+            <div class="d-flex justify-content-end gap-2 flex-wrap">
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:user_edit' access.public_id %}">Edit</a>
+              {% if access.membership.user_id != current_business.owner_id and access.pk != request.wms_user_access.pk %}
+                {% if access.is_active %}
+                <form method="post" action="{% url 'wms:user_access_status' access.public_id 'deactivate' %}">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Deactivate</button>
+                </form>
+                {% else %}
+                <form method="post" action="{% url 'wms:user_access_status' access.public_id 'activate' %}">{% csrf_token %}
+                  <button class="btn btn-sm btn-outline-success" type="submit">Activate</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            </div>
+          </td>
         </tr>
         {% empty %}
-        <tr><td colspan="5"><div class="empty-state py-4">No explicit WMS access has been granted.</div></td></tr>
+        <tr><td colspan="5"><div class="empty-state py-4">No WMS users yet. Use Add user to create workshop staff.</div></td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -32,16 +62,32 @@
 </div>
 
 <div class="card mt-3">
-  <div class="card-header">System WMS roles</div>
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span><i class="bi bi-shield-check text-primary"></i> WMS roles</span>
+    <a class="btn btn-sm btn-primary" href="{% url 'wms:role_create' %}"><i class="bi bi-plus-circle"></i> Add custom role</a>
+  </div>
   <div class="card-body">
     <div class="row g-2">
       {% for role in roles %}
-      <div class="col-md-6"><div class="border rounded p-3 h-100">
-        <div class="fw-semibold">{{ role.name }}</div>
-        <div class="small text-secondary">{{ role.permissions|length }} approved permissions · {{ role.code }}</div>
+      <div class="col-md-6"><div class="border rounded p-3 h-100 d-flex justify-content-between align-items-start gap-2">
+        <div>
+          <div class="fw-semibold">
+            {{ role.name }}
+            {% if role.is_system %}<span class="badge text-bg-light border">System</span>{% else %}<span class="badge text-bg-info">Custom</span>{% endif %}
+            {% if not role.is_active %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}
+          </div>
+          <div class="small text-secondary">{{ role.permissions|length }} approved permissions · {{ role.code }}</div>
+        </div>
+        {% if not role.is_system %}
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:role_edit' role.public_id %}">Edit</a>
+        {% endif %}
       </div></div>
       {% endfor %}
     </div>
+    <p class="small text-secondary mb-0 mt-3">
+      System roles are maintained by the platform. Custom roles use the same
+      approved WMS permission list.
+    </p>
   </div>
 </div>
 {% endblock %}

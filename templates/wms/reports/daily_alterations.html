@@ -1,0 +1,72 @@
+{% extends "wms/reports/base.html" %}
+{% block print_page_class %}wms-report-page-landscape{% endblock %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap wms-screen-only">
+  <div>
+    <h2 class="h4 mb-1">Daily Alterations Report</h2>
+    <div class="report-meta">Rework register for the selected date. Alterations never add production or salary pieces.{% if report %} {{ report.period_label }}{% endif %}</div>
+  </div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print wms-filter-bar">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.report_date.label }}</label>{{ form.report_date }}</div>
+      <div class="col-md-4 col-lg-3"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.reason.label }}</label>{{ form.reason }}</div>
+      <div class="col-md-4 col-lg-3"><label class="form-label small mb-1">{{ form.mistake_by_employee.label }}</label>{{ form.mistake_by_employee }}</div>
+      <div class="col-md-4 col-lg-3"><label class="form-label small mb-1">{{ form.assigned_employee.label }}</label>{{ form.assigned_employee }}</div>
+      <div class="col-md-4 col-lg-2"><label class="form-label small mb-1">{{ form.status.label }}</label>{{ form.status }}</div>
+      <div class="col-auto wms-filter-actions">
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel"></i> Apply Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a>
+      </div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+<div class="row g-2 mb-3 wms-report-kpis">
+  <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">New alterations</div><div class="fs-4 fw-semibold">{{ report.total }}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Completed</div><div class="fs-4 fw-semibold">{{ report.completed }}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Pending</div><div class="fs-4 fw-semibold">{{ report.pending }}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Completion</div><div class="fs-4 fw-semibold">{{ report.completion_percentage }}%</div></div></div></div>
+</div>
+<div class="card report-card">
+  <div class="card-header d-flex justify-content-between">
+    <span>{{ report.title }}</span><span>{{ report.period_label }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 wms-report-table">
+      <thead><tr><th>Order / Invoice</th><th>Alteration Ref</th><th>Date</th><th>Branch / Location</th><th>Reason</th><th>Mistake By</th><th>Assigned To</th><th>Status</th><th>Completed</th></tr></thead>
+      <tbody>
+        {% for alteration in report.rows %}
+        <tr>
+          <td class="fw-semibold">{{ alteration.original_order_reference }}</td>
+          <td>{{ alteration.alteration_reference|default:"—" }}</td>
+          <td>{{ alteration.alteration_date|date:"M d, Y" }}</td>
+          <td>{{ alteration.location.branch.name }}</td>
+          <td>{{ alteration.get_reason_display }}</td>
+          <td>
+            {{ alteration.get_mistake_by_display }}
+            {% if alteration.mistake_by_employee %}
+            <div class="small text-secondary">{{ alteration.mistake_by_employee.full_name }}</div>
+            {% endif %}
+          </td>
+          <td>{{ alteration.assigned_employee.full_name }}</td>
+          <td>
+            {% if alteration.status == "COMPLETED" %}<span class="badge text-bg-success">{{ alteration.get_status_display }}</span>
+            {% elif alteration.status == "IN_PROGRESS" %}<span class="badge text-bg-primary">{{ alteration.get_status_display }}</span>
+            {% else %}<span class="badge text-bg-warning">{{ alteration.get_status_display }}</span>{% endif %}
+          </td>
+          <td>{{ alteration.completed_at|date:"M d, H:i"|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9"><div class="empty-state py-4">No alterations were recorded on this date for these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

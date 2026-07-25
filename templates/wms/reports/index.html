@@ -1,60 +1,121 @@
 {% extends "wms/reports/base.html" %}
 {% block report_content %}
-<div class="mb-3">
-  <h2 class="h4 mb-1">WMS Reports</h2>
-  <div class="text-secondary">Production, attendance, and calculated salary reports.</div>
-</div>
-<div class="row g-3">
-  {% if "wms.production.view" in wms_permissions %}
-  <div class="col-md-6 col-xl-4">
-    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_daily_production' %}">
-      <div class="card-body">
-        <i class="bi bi-calendar-check fs-4 text-primary"></i>
-        <h3 class="h6 mt-3">Daily Finished Pieces</h3>
-        <p class="small text-secondary mb-0">Branch, employee, category, and daily finished-piece totals.</p>
-      </div>
-    </a>
+<div class="wms-report-index">
+  <div class="mb-3 wms-screen-only">
+    <h2 class="h4 mb-1">WMS Reports</h2>
+    <div class="wms-page-subtitle">Production, attendance, operations, and payroll reports.</div>
   </div>
-  <div class="col-md-6 col-xl-4">
-    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_monthly_production' %}">
-      <div class="card-body">
-        <i class="bi bi-table fs-4 text-primary"></i>
-        <h3 class="h6 mt-3">Monthly Employee Production</h3>
-        <p class="small text-secondary mb-0">Day-wise production across assigned categories.</p>
-      </div>
-    </a>
-  </div>
+
+  {% if "wms.production.view" in wms_permissions or "wms.orders.view" in wms_permissions %}
+  <section class="wms-report-section">
+    <h3 class="wms-report-section-title">Production Reports</h3>
+    <div class="wms-report-grid">
+      {% if "wms.production.view" in wms_permissions %}
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_daily_production' %}">
+        <div class="card-body">
+          <i class="bi bi-calendar-check wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Daily Production</h4>
+          <p class="wms-report-card-text">Employee and category work activity from Production Entry records.</p>
+        </div>
+      </a>
+      {% endif %}
+      {% if "wms.orders.view" in wms_permissions %}
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_daily_finished' %}">
+        <div class="card-body">
+          <i class="bi bi-check2-circle wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Daily Finished / Ready PCS</h4>
+          <p class="wms-report-card-text">Completed garments ready at day end, from the Finished Orders workflow.</p>
+        </div>
+      </a>
+      {% endif %}
+      {% if "wms.production.view" in wms_permissions %}
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_monthly_production' %}">
+        <div class="card-body">
+          <i class="bi bi-table wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Monthly Employee Production</h4>
+          <p class="wms-report-card-text">Day-wise production across assigned categories.</p>
+        </div>
+      </a>
+      {% endif %}
+    </div>
+  </section>
   {% endif %}
+
   {% if "wms.attendance.view" in wms_permissions %}
-  <div class="col-md-6 col-xl-4">
-    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_attendance_summary' %}">
-      <div class="card-body">
-        <i class="bi bi-people fs-4 text-primary"></i>
-        <h3 class="h6 mt-3">Attendance Summary</h3>
-        <p class="small text-secondary mb-0">Attendance status, working hours, and incomplete records.</p>
-      </div>
-    </a>
-  </div>
-  <div class="col-md-6 col-xl-4">
-    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_individual_attendance' %}">
-      <div class="card-body">
-        <i class="bi bi-person-lines-fill fs-4 text-primary"></i>
-        <h3 class="h6 mt-3">Individual Attendance</h3>
-        <p class="small text-secondary mb-0">One employee's monthly attendance and totals.</p>
-      </div>
-    </a>
-  </div>
+  <section class="wms-report-section">
+    <h3 class="wms-report-section-title">Attendance Reports</h3>
+    <div class="wms-report-grid">
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_attendance_summary' %}">
+        <div class="card-body">
+          <i class="bi bi-people wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Attendance Summary</h4>
+          <p class="wms-report-card-text">Attendance status, working hours, and incomplete records.</p>
+        </div>
+      </a>
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_individual_attendance' %}">
+        <div class="card-body">
+          <i class="bi bi-person-lines-fill wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Individual Attendance</h4>
+          <p class="wms-report-card-text">One employee's monthly attendance and totals.</p>
+        </div>
+      </a>
+    </div>
+  </section>
   {% endif %}
+
+  {% if "wms.orders.view" in wms_permissions or "wms.alterations.view" in wms_permissions %}
+  <section class="wms-report-section">
+    <h3 class="wms-report-section-title">Operations Reports</h3>
+    <div class="wms-report-grid">
+      {% if "wms.orders.view" in wms_permissions %}
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_daily_orders' %}">
+        <div class="card-body">
+          <i class="bi bi-inbox wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Daily Orders</h4>
+          <p class="wms-report-card-text">Orders received, finished, and in process for one day.</p>
+        </div>
+      </a>
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_monthly_orders' %}">
+        <div class="card-body">
+          <i class="bi bi-calendar3 wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Monthly Orders</h4>
+          <p class="wms-report-card-text">Month totals with a day-wise received/finished breakdown.</p>
+        </div>
+      </a>
+      {% endif %}
+      {% if "wms.alterations.view" in wms_permissions %}
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_daily_alterations' %}">
+        <div class="card-body">
+          <i class="bi bi-arrow-repeat wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Daily Alterations</h4>
+          <p class="wms-report-card-text">The day's rework register with completion state.</p>
+        </div>
+      </a>
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_monthly_alterations' %}">
+        <div class="card-body">
+          <i class="bi bi-clipboard-data wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Monthly Alterations</h4>
+          <p class="wms-report-card-text">Month summary with reason and employee breakdowns.</p>
+        </div>
+      </a>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if "wms.salary.view" in wms_permissions %}
-  <div class="col-md-6 col-xl-4">
-    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_salary' %}">
-      <div class="card-body">
-        <i class="bi bi-cash-coin fs-4 text-primary"></i>
-        <h3 class="h6 mt-3">Monthly Salary</h3>
-        <p class="small text-secondary mb-0">Read-only Phase 7 salary calculation results.</p>
-      </div>
-    </a>
-  </div>
+  <section class="wms-report-section">
+    <h3 class="wms-report-section-title">Payroll Reports</h3>
+    <div class="wms-report-grid">
+      <a class="card wms-report-card text-decoration-none text-body" href="{% url 'wms:report_salary' %}">
+        <div class="card-body">
+          <i class="bi bi-cash-coin wms-report-card-icon"></i>
+          <h4 class="wms-report-card-title">Monthly Salary</h4>
+          <p class="wms-report-card-text">Read-only Phase 7 salary calculation results.</p>
+        </div>
+      </a>
+    </div>
+  </section>
   {% endif %}
 </div>
 {% endblock %}
