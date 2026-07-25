@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 
 from apps.wms_alterations import views as alteration_views
 from apps.wms_attendance import views as attendance_views
@@ -118,6 +118,7 @@ urlpatterns = [
         salary_views.salary_finalize,
         name="salary_finalize",
     ),
+    path("reports/", include("apps.wms_reports.urls")),
     path("employees/", workforce_views.employee_list, name="employee_list"),
     path(
         "employees/new/",

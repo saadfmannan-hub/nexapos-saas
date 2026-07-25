@@ -188,6 +188,7 @@ def first_permitted_wms_route(user_access):
         ("wms.attendance.view", "wms:attendance_list"),
         ("wms.production.view", "wms:production_entry_list"),
         ("wms.salary.view", "wms:salary_list"),
+        ("wms.reports.view", "wms:report_index"),
         ("wms.employees.view", "wms:employee_list"),
         ("wms.categories.view", "wms:category_list"),
         ("wms.users.manage", "wms:user_list"),

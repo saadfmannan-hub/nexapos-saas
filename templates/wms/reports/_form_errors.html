@@ -1,0 +1,6 @@
+{% if form.errors %}
+<div class="alert alert-danger py-2 mt-2 mb-0">
+  Correct the highlighted report filters.
+  {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+</div>
+{% endif %}

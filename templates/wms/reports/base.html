@@ -1,0 +1,35 @@
+{% extends "wms/base.html" %}
+{% block extra_css %}
+<style>
+  .wms-report-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    white-space: nowrap;
+    background: var(--bs-tertiary-bg);
+  }
+  .wms-report-table tfoot th,
+  .wms-report-table tfoot td {
+    border-top: 2px solid var(--bs-border-color);
+    background: var(--bs-tertiary-bg);
+  }
+  .report-meta { color: var(--bs-secondary-color); }
+  @media print {
+    @page { size: landscape; margin: 10mm; }
+    .wms-report-table { font-size: 10px; }
+    .wms-report-table thead { display: table-header-group; }
+    .wms-report-table thead th { position: static; }
+    .report-card { border: 0 !important; box-shadow: none !important; }
+    .report-card .card-header { padding-left: 0; padding-right: 0; }
+    .report-card .table-responsive { overflow: visible !important; }
+    .report-print-title { display: block !important; }
+  }
+</style>
+{% endblock %}
+{% block wms_content %}
+<div class="report-print-title d-none d-print-block mb-3">
+  <h1 class="h4 mb-1">{{ report.title }}</h1>
+  <div>{{ current_business.name }}{% if report %} · {{ report.period_label }}{% endif %}</div>
+</div>
+{% block report_content %}{% endblock %}
+{% endblock %}

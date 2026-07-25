@@ -1,0 +1,48 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+  <div><h2 class="h4 mb-1">Attendance Summary Report</h2>{% if report %}<div class="report-meta">{{ report.period_label }}</div>{% endif %}</div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-2"><label class="form-label small mb-1">{{ form.date_from.label }}</label>{{ form.date_from }}</div>
+      <div class="col-md-2"><label class="form-label small mb-1">{{ form.date_to.label }}</label>{{ form.date_to }}</div>
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.employee_status.label }}</label>{{ form.employee_status }}</div>
+      <div class="col-auto"><button class="btn btn-sm btn-primary">Apply Filter</button> <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a></div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+<div class="row g-2 mb-3">
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Present</div><div class="fs-5 fw-semibold">{{ report.totals.present }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Late</div><div class="fs-5 fw-semibold">{{ report.totals.late }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Absent</div><div class="fs-5 fw-semibold">{{ report.totals.absent }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Worked</div><div class="fs-5 fw-semibold">{{ report.totals.worked_label }}</div></div></div></div>
+  <div class="col-6 col-lg"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Missing</div><div class="fs-5 fw-semibold">{{ report.totals.missing_label }}</div></div></div></div>
+</div>
+<div class="card report-card">
+  <div class="card-header d-flex justify-content-between"><span>{{ report.title }}</span><span>{{ report.period_label }}</span></div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 wms-report-table">
+      <thead><tr><th>Employee</th><th>Date</th><th>Location</th><th>Time In<br><small>Morning / Evening</small></th><th>Time Out<br><small>Morning / Evening</small></th><th>Status</th><th class="text-center">Present</th><th class="text-center">Late</th><th class="text-center">Absent</th><th>Working</th><th>Missing / Incomplete</th></tr></thead>
+      <tbody>
+        {% for row in report.rows %}
+        <tr>
+          <td><span class="fw-semibold">{{ row.employee_name }}</span><div class="small text-secondary">{{ row.employee_code }}</div></td>
+          <td>{{ row.date|date:"M d, Y" }}</td><td>{{ row.location_name }}</td><td>{{ row.time_in }}</td><td>{{ row.time_out }}</td>
+          <td><span class="badge {% if row.late %}text-bg-warning{% elif row.absent %}text-bg-secondary{% else %}text-bg-success{% endif %}">{{ row.status_label }}</span></td>
+          <td class="text-center">{% if row.present %}✓{% else %}—{% endif %}</td><td class="text-center">{% if row.late %}✓{% else %}—{% endif %}</td><td class="text-center">{% if row.absent %}✓{% else %}—{% endif %}</td>
+          <td>{{ row.worked_label }}</td><td class="{% if row.incomplete %}text-danger fw-semibold{% elif row.missing_minutes %}text-warning{% endif %}">{{ row.indicator }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="11"><div class="empty-state py-4">No attendance records match the selected period and filters.</div></td></tr>{% endfor %}
+      </tbody>
+      {% if report.rows %}<tfoot><tr><th colspan="6">Totals</th><th class="text-center">{{ report.totals.present }}</th><th class="text-center">{{ report.totals.late }}</th><th class="text-center">{{ report.totals.absent }}</th><th>{{ report.totals.worked_label }}</th><th>Missing {{ report.totals.missing_label }} · Incomplete {{ report.totals.incomplete }}</th></tr></tfoot>{% endif %}
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

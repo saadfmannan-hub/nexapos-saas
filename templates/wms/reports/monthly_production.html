@@ -1,0 +1,46 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Monthly Production per Employee Report</h2>
+    {% if report %}<div class="report-meta">{{ report.employee.full_name }} · {{ report.period_label }}</div>{% endif %}
+  </div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.report_month.label }}</label>{{ form.report_month }}</div>
+      <div class="col-md-4"><label class="form-label small mb-1">{{ form.employee.label }}</label>{{ form.employee }}</div>
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Apply Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a>
+      </div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+{% if not report.grand_total %}<div class="alert alert-light border">No finished production was recorded for this employee in the selected month. Zero-value days are shown below.</div>{% endif %}
+<div class="card report-card">
+  <div class="card-header">
+    <span class="fw-semibold">{{ report.employee.employee_code }} — {{ report.employee.full_name }}</span>
+    <span class="float-end">{{ report.period_label }}{% if report.location %} · {{ report.location.branch.name }}{% endif %}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 wms-report-table">
+      <thead><tr><th>Date</th>{% for category in report.categories %}<th class="text-end">{{ category.name }}</th>{% endfor %}<th class="text-end">Daily Total</th></tr></thead>
+      <tbody>
+        {% for row in report.rows %}
+        <tr><td>{{ row.date|date:"D, M d, Y" }}</td>{% for value in row.values %}<td class="text-end">{{ value }}</td>{% endfor %}<td class="text-end fw-semibold">{{ row.total }}</td></tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr><th>Monthly totals</th>{% for total in report.category_totals %}<th class="text-end">{{ total }}</th>{% endfor %}<th class="text-end">{{ report.grand_total }}</th></tr></tfoot>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="empty-state card py-5">Select an employee and month to view daily production.</div>
+{% endif %}
+{% endblock %}

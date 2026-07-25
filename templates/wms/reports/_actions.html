@@ -1,0 +1,12 @@
+<div class="d-flex gap-2 no-print">
+  {% if report and can_export_reports %}
+  <a class="btn btn-sm btn-outline-success" href="{% url export_route %}{% if querystring %}?{{ querystring }}{% endif %}">
+    <i class="bi bi-file-earmark-excel"></i> Export Excel
+  </a>
+  {% endif %}
+  {% if report %}
+  <button class="btn btn-sm btn-outline-secondary" type="button" onclick="window.print()">
+    <i class="bi bi-printer"></i> Print / Save PDF
+  </button>
+  {% endif %}
+</div>

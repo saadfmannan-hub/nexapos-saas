@@ -1,0 +1,57 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Branch-wise Daily Finished Pcs Report</h2>
+    {% if report %}<div class="report-meta">{{ report.period_label }}</div>{% endif %}
+  </div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-2"><label class="form-label small mb-1">{{ form.report_date.label }}</label>{{ form.report_date }}</div>
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.location.label }}</label>{{ form.location }}</div>
+      <div class="col-md-3"><label class="form-label small mb-1">{{ form.employee.label }}</label>{{ form.employee }}</div>
+      <div class="col-md-2"><label class="form-label small mb-1">{{ form.category.label }}</label>{{ form.category }}</div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Apply Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a>
+      </div>
+    </form>
+    {% include "wms/reports/_form_errors.html" %}
+  </div>
+</div>
+{% if report %}
+<div class="row g-2 mb-3">
+  <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Finished pieces</div><div class="fs-4 fw-semibold">{{ report.grand_total }}</div></div></div></div>
+  <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Employees</div><div class="fs-4 fw-semibold">{{ report.rows|length }}</div></div></div></div>
+  <div class="col-sm-6 col-lg-3"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Categories</div><div class="fs-4 fw-semibold">{{ report.categories|length }}</div></div></div></div>
+</div>
+<div class="card report-card">
+  <div class="card-header d-flex justify-content-between">
+    <span>{{ report.title }}</span><span>{{ report.period_label }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover align-middle mb-0 wms-report-table">
+      <thead><tr><th>Employee</th><th>Location / Branch</th>{% for category in report.categories %}<th class="text-end">{{ category.name }}</th>{% endfor %}<th class="text-end">Daily Total</th></tr></thead>
+      <tbody>
+        {% for row in report.rows %}
+        <tr>
+          <td><span class="fw-semibold">{{ row.employee_name }}</span><div class="small text-secondary">{{ row.employee_code }}</div></td>
+          <td>{{ row.location_name }}</td>
+          {% for value in row.values %}<td class="text-end">{{ value }}</td>{% endfor %}
+          <td class="text-end fw-semibold">{{ row.total }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="99"><div class="empty-state py-4">No completed production records match the selected date and filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+      {% if report.rows %}
+      <tfoot><tr><th colspan="2">Category totals</th>{% for total in report.category_totals %}<th class="text-end">{{ total }}</th>{% endfor %}<th class="text-end">{{ report.grand_total }}</th></tr></tfoot>
+      {% endif %}
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

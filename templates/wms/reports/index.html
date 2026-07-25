@@ -1,0 +1,60 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="mb-3">
+  <h2 class="h4 mb-1">WMS Reports</h2>
+  <div class="text-secondary">Production, attendance, and calculated salary reports.</div>
+</div>
+<div class="row g-3">
+  {% if "wms.production.view" in wms_permissions %}
+  <div class="col-md-6 col-xl-4">
+    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_daily_production' %}">
+      <div class="card-body">
+        <i class="bi bi-calendar-check fs-4 text-primary"></i>
+        <h3 class="h6 mt-3">Daily Finished Pieces</h3>
+        <p class="small text-secondary mb-0">Branch, employee, category, and daily finished-piece totals.</p>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-6 col-xl-4">
+    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_monthly_production' %}">
+      <div class="card-body">
+        <i class="bi bi-table fs-4 text-primary"></i>
+        <h3 class="h6 mt-3">Monthly Employee Production</h3>
+        <p class="small text-secondary mb-0">Day-wise production across assigned categories.</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+  {% if "wms.attendance.view" in wms_permissions %}
+  <div class="col-md-6 col-xl-4">
+    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_attendance_summary' %}">
+      <div class="card-body">
+        <i class="bi bi-people fs-4 text-primary"></i>
+        <h3 class="h6 mt-3">Attendance Summary</h3>
+        <p class="small text-secondary mb-0">Attendance status, working hours, and incomplete records.</p>
+      </div>
+    </a>
+  </div>
+  <div class="col-md-6 col-xl-4">
+    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_individual_attendance' %}">
+      <div class="card-body">
+        <i class="bi bi-person-lines-fill fs-4 text-primary"></i>
+        <h3 class="h6 mt-3">Individual Attendance</h3>
+        <p class="small text-secondary mb-0">One employee's monthly attendance and totals.</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+  {% if "wms.salary.view" in wms_permissions %}
+  <div class="col-md-6 col-xl-4">
+    <a class="card h-100 text-decoration-none text-body" href="{% url 'wms:report_salary' %}">
+      <div class="card-body">
+        <i class="bi bi-cash-coin fs-4 text-primary"></i>
+        <h3 class="h6 mt-3">Monthly Salary</h3>
+        <p class="small text-secondary mb-0">Read-only Phase 7 salary calculation results.</p>
+      </div>
+    </a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

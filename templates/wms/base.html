@@ -25,6 +25,9 @@
     {% if "wms.salary.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'salary' %}active{% endif %}" href="{% url 'wms:salary_list' %}">Salary</a>
     {% endif %}
+    {% if "wms.reports.view" in wms_permissions %}
+    <a class="nav-link {% if wms_active_nav == 'reports' %}active{% endif %}" href="{% url 'wms:report_index' %}">Reports</a>
+    {% endif %}
     {% if "wms.employees.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'employees' %}active{% endif %}" href="{% url 'wms:employee_list' %}">Employees</a>
     {% endif %}

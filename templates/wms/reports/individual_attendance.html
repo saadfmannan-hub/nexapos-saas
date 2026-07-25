@@ -1,0 +1,37 @@
+{% extends "wms/reports/base.html" %}
+{% block report_content %}
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3 flex-wrap">
+  <div><h2 class="h4 mb-1">Individual Attendance Report</h2>{% if report %}<div class="report-meta">{{ report.employee.full_name }} · {{ report.period_label }}</div>{% endif %}</div>
+  {% include "wms/reports/_actions.html" %}
+</div>
+<div class="card mb-3 no-print"><div class="card-body py-2">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3"><label class="form-label small mb-1">{{ form.report_month.label }}</label>{{ form.report_month }}</div>
+    <div class="col-md-5"><label class="form-label small mb-1">{{ form.employee.label }}</label>{{ form.employee }}</div>
+    <div class="col-auto"><button class="btn btn-sm btn-primary">Apply Filter</button> <a class="btn btn-sm btn-outline-secondary" href="{{ request.path }}">Reset</a></div>
+  </form>
+  {% include "wms/reports/_form_errors.html" %}
+</div></div>
+{% if report %}
+<div class="alert alert-light border py-2 small">A working-day calendar is not configured in Phase 3, so this report shows recorded attendance days only.</div>
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Present days</div><div class="fs-5 fw-semibold">{{ report.totals.present }}</div></div></div></div>
+  <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Late days</div><div class="fs-5 fw-semibold">{{ report.totals.late }}</div></div></div></div>
+  <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Absent days</div><div class="fs-5 fw-semibold">{{ report.totals.absent }}</div></div></div></div>
+  <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Worked</div><div class="fs-5 fw-semibold">{{ report.totals.worked_label }}</div></div></div></div>
+  <div class="col-6 col-md"><div class="card"><div class="card-body py-2"><div class="small text-secondary">Missing</div><div class="fs-5 fw-semibold">{{ report.totals.missing_label }}</div></div></div></div>
+</div>
+<div class="card report-card">
+  <div class="card-header"><span class="fw-semibold">{{ report.employee.employee_code }} — {{ report.employee.full_name }}</span><span class="float-end">{{ report.period_label }}</span></div>
+  <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 wms-report-table">
+    <thead><tr><th>Date</th><th>Time In<br><small>Morning / Evening</small></th><th>Time Out<br><small>Morning / Evening</small></th><th>Status</th><th class="text-center">Present</th><th class="text-center">Late</th><th class="text-center">Absent</th><th>Worked</th><th>Required</th><th>Missing</th><th>Incomplete</th></tr></thead>
+    <tbody>
+      {% for row in report.rows %}
+      <tr><td>{{ row.date|date:"D, M d, Y" }}</td><td>{{ row.time_in }}</td><td>{{ row.time_out }}</td><td><span class="badge {% if row.late %}text-bg-warning{% elif row.absent %}text-bg-secondary{% else %}text-bg-success{% endif %}">{{ row.status_label }}</span></td><td class="text-center">{% if row.present %}✓{% else %}—{% endif %}</td><td class="text-center">{% if row.late %}✓{% else %}—{% endif %}</td><td class="text-center">{% if row.absent %}✓{% else %}—{% endif %}</td><td>{{ row.worked_label }}</td><td>{{ row.required_label }}</td><td>{{ row.missing_label }}</td><td class="{% if row.incomplete %}text-danger fw-semibold{% endif %}">{{ row.indicator }}</td></tr>
+      {% empty %}<tr><td colspan="11"><div class="empty-state py-4">No attendance records exist for this employee in the selected month.</div></td></tr>{% endfor %}
+    </tbody>
+    {% if report.rows %}<tfoot><tr><th colspan="4">Monthly totals</th><th class="text-center">{{ report.totals.present }}</th><th class="text-center">{{ report.totals.late }}</th><th class="text-center">{{ report.totals.absent }}</th><th>{{ report.totals.worked_label }}</th><th>—</th><th>{{ report.totals.missing_label }}</th><th>{{ report.totals.incomplete }} incomplete</th></tr></tfoot>{% endif %}
+  </table></div>
+</div>
+{% else %}<div class="empty-state card py-5">Select an employee and month to view attendance.</div>{% endif %}
+{% endblock %}

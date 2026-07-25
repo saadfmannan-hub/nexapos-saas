@@ -457,7 +457,7 @@ class AutomaticFixedExpenseReportTests(
 
         self.assertEqual(len(included.context["data"]["rows"]), 2)
         self.assertEqual(len(excluded_by_date.context["data"]["rows"]), 1)
-        self.assertEqual(excluded_by_branch.context["data"]["rows"], [])
+        self.assertEqual(excluded_by_branch.status_code, 404)
         self.assertEqual(generated_before, 1)
         self.assertEqual(template.generated_expenses.count(), generated_before)
 
