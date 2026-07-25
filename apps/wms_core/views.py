@@ -1,7 +1,9 @@
 from django.shortcuts import redirect, render
 
+from apps.core.date_ranges import business_localdate
 from apps.subscriptions.access import AccessAction
 
+from . import dashboard as dashboard_selectors
 from . import selectors, services
 from .access import wms_permission_required
 from .forms import WmsLocationForm, WmsSettingsForm, WmsUserAccessForm
@@ -10,16 +12,17 @@ from .models import WmsLocation, WmsRole, WmsSettings, WmsUserAccess
 
 @wms_permission_required("wms.dashboard.view", action=AccessAction.READ)
 def dashboard(request):
-    settings_ready = WmsSettings.objects.for_business(request.business).exists()
-    active_locations = selectors.active_locations(request.business)
+    dashboard_data = dashboard_selectors.executive_dashboard(
+        request.wms_user_access,
+        today=business_localdate(request.business),
+    )
     return render(
         request,
         "wms/dashboard/index.html",
         {
             "active_nav": "wms",
             "wms_active_nav": "dashboard",
-            "settings_ready": settings_ready,
-            "locations_ready": active_locations.exists(),
+            "dashboard": dashboard_data,
         },
     )
 

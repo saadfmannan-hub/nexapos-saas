@@ -8,7 +8,7 @@
   </div>
   <nav class="nav nav-pills gap-1" aria-label="WMS navigation">
     {% if "wms.dashboard.view" in wms_permissions %}
-    <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Foundation</a>
+    <a class="nav-link {% if wms_active_nav == 'dashboard' %}active{% endif %}" href="{% url 'wms:dashboard' %}">Dashboard</a>
     {% endif %}
     {% if "wms.orders.view" in wms_permissions %}
     <a class="nav-link {% if wms_active_nav == 'orders' %}active{% endif %}" href="{% url 'wms:order_list' %}">Orders</a>

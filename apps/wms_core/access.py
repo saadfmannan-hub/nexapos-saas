@@ -51,7 +51,7 @@ def _load_user_access(request, business, membership):
     if key not in cache:
         cache[key] = (
             WmsUserAccess.objects.for_business(business)
-            .select_related("membership__user", "role")
+            .select_related("business", "membership__user", "role")
             .prefetch_related("allowed_locations")
             .filter(membership=membership)
             .first()
@@ -159,7 +159,7 @@ def evaluate_wms_actor_access(
         )
     user_access = (
         WmsUserAccess.objects.for_business(business)
-        .select_related("membership__user", "role")
+        .select_related("business", "membership__user", "role")
         .prefetch_related("allowed_locations")
         .filter(membership=membership)
         .first()
