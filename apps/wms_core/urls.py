@@ -4,6 +4,7 @@ from apps.wms_alterations import views as alteration_views
 from apps.wms_attendance import views as attendance_views
 from apps.wms_orders import views as order_views
 from apps.wms_production import views as production_views
+from apps.wms_salary import views as salary_views
 from apps.wms_workforce import views as workforce_views
 
 from . import views
@@ -96,6 +97,26 @@ urlpatterns = [
         "production/<uuid:public_id>/correct/",
         production_views.production_entry_correct,
         name="production_entry_correct",
+    ),
+    path(
+        "salary/",
+        salary_views.salary_list,
+        name="salary_list",
+    ),
+    path(
+        "salary/calculate/",
+        salary_views.salary_calculate,
+        name="salary_calculate",
+    ),
+    path(
+        "salary/<uuid:public_id>/",
+        salary_views.salary_detail,
+        name="salary_detail",
+    ),
+    path(
+        "salary/<uuid:public_id>/finalize/",
+        salary_views.salary_finalize,
+        name="salary_finalize",
     ),
     path("employees/", workforce_views.employee_list, name="employee_list"),
     path(

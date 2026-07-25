@@ -1,0 +1,128 @@
+{% extends "wms/base.html" %}
+{% load money_tags %}
+{% block wms_content %}
+<div class="d-flex justify-content-between align-items-center mb-3 gap-2 flex-wrap">
+  <div>
+    <h2 class="h4 mb-1">Salary</h2>
+    <div class="small text-secondary">
+      Monthly WMS salary calculations and finalized historical snapshots.
+    </div>
+  </div>
+  {% if can_calculate_salary %}
+  <a class="btn btn-primary" href="{% url 'wms:salary_calculate' %}">
+    <i class="bi bi-calculator"></i> Calculate salary
+  </a>
+  {% endif %}
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form method="get" class="row g-2 align-items-center">
+      <div class="col-lg-2">
+        <input class="form-control form-control-sm" type="month" name="month"
+               value="{{ selected_month|date:'Y-m' }}" aria-label="Salary month">
+      </div>
+      <div class="col-lg-3">
+        <select class="form-select form-select-sm" name="employee">
+          <option value="">All employees</option>
+          {% for employee in employees %}
+          <option value="{{ employee.public_id }}" {% if employee_id == employee.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ employee.employee_code }} — {{ employee.full_name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-3">
+        <select class="form-select form-select-sm" name="location">
+          <option value="">All contributing locations</option>
+          {% for location in locations %}
+          <option value="{{ location.public_id }}" {% if location_id == location.public_id|stringformat:"s" %}selected{% endif %}>
+            {{ location.branch.name }}{% if not location.is_active or not location.branch.is_active %} — Inactive{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-lg-2">
+        <select class="form-select form-select-sm" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-auto">
+        <button class="btn btn-sm btn-primary">Filter</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:salary_list' %}">Current month</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>{{ selected_month|date:"F Y" }}</span>
+    <span class="badge text-bg-light border">{{ record_count }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Locations</th>
+          <th>Compensation</th>
+          <th>Status</th>
+          <th class="text-end">Eligible quantity</th>
+          <th class="text-end">Gross salary</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for salary in page %}
+        <tr>
+          <td>
+            <a class="fw-semibold text-decoration-none" href="{% url 'wms:salary_detail' salary.public_id %}">
+              {{ salary.employee_name_snapshot }}
+            </a>
+            <div class="small text-secondary">{{ salary.employee_code_snapshot }}</div>
+          </td>
+          <td>
+            {% for snapshot in salary.location_snapshots.all %}
+            <span class="badge text-bg-light border me-1 mb-1">{{ snapshot.location_name_snapshot }}</span>
+            {% endfor %}
+          </td>
+          <td>{{ salary.get_compensation_type_snapshot_display }}</td>
+          <td>
+            <span class="badge {% if salary.status == 'FINALIZED' %}text-bg-success{% else %}text-bg-warning{% endif %}">
+              {{ salary.get_status_display }}
+            </span>
+          </td>
+          <td class="text-end">{{ salary.total_eligible_quantity }}</td>
+          <td class="text-end fw-semibold">
+            {{ salary.gross_salary|money_p:salary.currency_precision_snapshot }}
+            {{ salary.currency_display_snapshot }}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:salary_detail' salary.public_id %}">View</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7">
+            <div class="empty-state py-4">
+              No salary calculations match these filters.
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if page.has_other_pages %}
+  <div class="card-footer d-flex justify-content-between">
+    {% if page.has_previous %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% else %}<span></span>{% endif %}
+    <span class="small text-secondary">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}<a href="?{{ querystring }}{% if querystring %}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% else %}<span></span>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
