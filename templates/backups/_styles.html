@@ -1,0 +1,142 @@
+<style>
+  .backup-shell {
+    --backup-ink: #172033;
+    --backup-muted: #657084;
+    --backup-line: #e8edf4;
+  }
+  .backup-shell .backup-hero {
+    position: relative;
+    overflow: hidden;
+    border: 0;
+    border-radius: 1.1rem;
+    color: #fff;
+    background:
+      radial-gradient(circle at 92% 12%, rgba(255, 255, 255, .18), transparent 28%),
+      linear-gradient(135deg, #172554 0%, #1d4ed8 58%, #0ea5a4 125%);
+    box-shadow: 0 1rem 2.5rem rgba(30, 64, 175, .16);
+  }
+  .backup-shell .backup-hero .hero-mark {
+    display: grid;
+    width: 3rem;
+    height: 3rem;
+    place-items: center;
+    border: 1px solid rgba(255, 255, 255, .3);
+    border-radius: .9rem;
+    background: rgba(255, 255, 255, .14);
+    font-size: 1.4rem;
+  }
+  .backup-shell .backup-card {
+    height: 100%;
+    border: 1px solid var(--backup-line);
+    border-radius: 1rem;
+    box-shadow: 0 .45rem 1.3rem rgba(23, 32, 51, .045);
+  }
+  .backup-shell .backup-card .card-header {
+    border-bottom-color: var(--backup-line);
+    background: transparent;
+    padding: .9rem 1rem;
+  }
+  .backup-shell .metric-icon {
+    display: grid;
+    width: 2.75rem;
+    height: 2.75rem;
+    flex: 0 0 2.75rem;
+    place-items: center;
+    border-radius: .85rem;
+    font-size: 1.2rem;
+  }
+  .backup-shell .metric-label {
+    color: var(--backup-muted);
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+  }
+  .backup-shell .metric-value {
+    color: var(--backup-ink);
+    font-size: 1.25rem;
+    font-weight: 750;
+    line-height: 1.25;
+  }
+  .backup-shell .engine-notice {
+    border: 1px solid #fde68a;
+    border-radius: .9rem;
+    background: #fffbeb;
+    color: #854d0e;
+  }
+  .backup-shell .scope-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    border: 1px solid #dbe5f3;
+    border-radius: 999px;
+    background: #f7faff;
+    color: #334155;
+    font-size: .75rem;
+    font-weight: 650;
+    padding: .28rem .58rem;
+    white-space: nowrap;
+  }
+  .backup-shell .timeline {
+    position: relative;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .backup-shell .timeline::before {
+    position: absolute;
+    top: .7rem;
+    bottom: .7rem;
+    left: .55rem;
+    width: 2px;
+    background: #e2e8f0;
+    content: "";
+  }
+  .backup-shell .timeline-item {
+    position: relative;
+    padding: 0 0 1.25rem 2rem;
+  }
+  .backup-shell .timeline-item:last-child { padding-bottom: 0; }
+  .backup-shell .timeline-dot {
+    position: absolute;
+    top: .32rem;
+    left: .2rem;
+    width: .75rem;
+    height: .75rem;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: #3b82f6;
+    box-shadow: 0 0 0 2px #bfdbfe;
+  }
+  .backup-shell .definition-grid dt {
+    color: var(--backup-muted);
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .backup-shell .definition-grid dd {
+    color: var(--backup-ink);
+    overflow-wrap: anywhere;
+  }
+  .backup-shell .check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: .75rem;
+    padding: .85rem 0;
+    border-bottom: 1px solid var(--backup-line);
+  }
+  .backup-shell .check-row:last-child { border-bottom: 0; }
+  .backup-shell .check-icon {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    flex: 0 0 2rem;
+    place-items: center;
+    border-radius: 50%;
+  }
+  @media (max-width: 575.98px) {
+    .backup-shell .backup-hero .card-body { padding: 1.25rem !important; }
+    .backup-shell .metric-value { font-size: 1.05rem; }
+  }
+</style>

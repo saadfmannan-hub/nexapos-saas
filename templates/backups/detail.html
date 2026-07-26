@@ -1,0 +1,134 @@
+{% extends "layouts/base.html" %}
+{% load humanize %}
+{% block title %}Backup details — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
+{% block content %}
+<div class="backup-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+      <div class="small text-secondary mb-1">Backup metadata</div>
+      <h1 class="page-title mb-1">{{ backup.get_scope_display }}</h1>
+      <code class="small text-secondary">{{ backup.public_id }}</code>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'backups:history' %}"><i class="bi bi-arrow-left me-1"></i> History</a>
+      {% if can_restore %}
+      <a class="btn btn-primary" href="{% url 'backups:restore_review' backup.public_id %}">
+        <i class="bi bi-arrow-counterclockwise me-1"></i> Review restore
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if not engine_enabled %}
+  <div class="engine-notice p-3 mb-3">
+    <i class="bi bi-cone-striped me-2"></i>
+    This is a metadata-only record. Artifact download, verification execution, and restore execution are not enabled.
+  </div>
+  {% endif %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-lg-8">
+      <div class="card backup-card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span class="fw-semibold">Backup summary</span>
+          <div class="d-flex gap-2">
+            {% if backup.pinned %}<span class="badge text-bg-light border"><i class="bi bi-pin-angle-fill me-1"></i>Pinned</span>{% endif %}
+            {% if backup.protected %}<span class="badge text-bg-warning"><i class="bi bi-shield-lock-fill me-1"></i>Protected</span>{% endif %}
+          </div>
+        </div>
+        <div class="card-body">
+          <dl class="row definition-grid mb-0">
+            <dt class="col-sm-4">Lifecycle status</dt>
+            <dd class="col-sm-8">{% include "backups/_status_badge.html" with value=backup.status label=backup.get_status_display %}</dd>
+            <dt class="col-sm-4">Integrity status</dt>
+            <dd class="col-sm-8">{% include "backups/_status_badge.html" with value=backup.integrity_status label=backup.get_integrity_status_display %}</dd>
+            <dt class="col-sm-4">Scope</dt>
+            <dd class="col-sm-8">{{ backup.get_scope_display }}</dd>
+            <dt class="col-sm-4">Included products</dt>
+            <dd class="col-sm-8">
+              {% for product in backup.included_products %}
+                <span class="scope-chip me-1">{{ product }}</span>
+              {% empty %}
+                <span class="text-secondary">Not recorded</span>
+              {% endfor %}
+            </dd>
+            <dt class="col-sm-4">Trigger</dt>
+            <dd class="col-sm-8">{{ backup.get_trigger_display }}</dd>
+            <dt class="col-sm-4">Queued</dt>
+            <dd class="col-sm-8">{{ backup.queued_at|date:"M j, Y H:i:s T" }}</dd>
+            <dt class="col-sm-4">Completed</dt>
+            <dd class="col-sm-8">{{ backup.completed_at|date:"M j, Y H:i:s T"|default:"—" }}</dd>
+            <dt class="col-sm-4">Verified</dt>
+            <dd class="col-sm-8">{{ backup.verified_at|date:"M j, Y H:i:s T"|default:"—" }}</dd>
+            <dt class="col-sm-4">Rows recorded</dt>
+            <dd class="col-sm-8">{{ backup.total_row_count|intcomma }}</dd>
+            <dt class="col-sm-4">Artifact size</dt>
+            <dd class="col-sm-8">{% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}—{% endif %}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-4">
+      <div class="card backup-card">
+        <div class="card-header fw-semibold">Compatibility metadata</div>
+        <div class="card-body">
+          <dl class="definition-grid mb-0">
+            <dt>Format version</dt>
+            <dd>{{ backup.format_version|default:"Not recorded" }}</dd>
+            <dt>Application version</dt>
+            <dd>{{ backup.application_version|default:"Not recorded" }}</dd>
+            <dt>Minimum restore version</dt>
+            <dd>{{ backup.minimum_restore_version|default:"Not recorded" }}</dd>
+            <dt>Schema fingerprint</dt>
+            <dd><code class="small">{{ backup.schema_fingerprint|default:"Not recorded" }}</code></dd>
+            <dt>Compatibility</dt>
+            <dd>{{ backup.get_compatibility_status_display|default:backup.compatibility_status|default:"Not checked" }}</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if backup.sanitized_failure_summary %}
+  <div class="alert alert-danger">
+    <div class="fw-semibold">Operation did not complete</div>
+    <div class="small">{{ backup.sanitized_failure_summary }}</div>
+    {% if backup.failure_code %}<div class="small mt-1"><code>{{ backup.failure_code }}</code></div>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="card backup-card">
+    <div class="card-header">
+      <div class="fw-semibold">Components</div>
+      <div class="small text-secondary">Metadata only; component contents are never rendered here.</div>
+    </div>
+    <div class="table-responsive">
+      <table class="table align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Component</th>
+            <th>Product</th>
+            <th>Version</th>
+            <th class="text-end">Rows</th>
+            <th>Verification</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for component in components %}
+          <tr>
+            <td class="fw-semibold">{{ component.component_key }}</td>
+            <td><span class="scope-chip">{{ component.get_product_category_display }}</span></td>
+            <td>{{ component.component_version }}</td>
+            <td class="text-end">{{ component.row_count|intcomma }}</td>
+            <td>{% include "backups/_status_badge.html" with value=component.verification_status label=component.get_verification_status_display %}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5"><div class="empty-state py-4">No component metadata is recorded.</div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

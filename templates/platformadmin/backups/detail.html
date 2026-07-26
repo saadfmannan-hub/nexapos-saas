@@ -1,0 +1,154 @@
+{% extends "platformadmin/_base.html" %}
+{% load humanize %}
+{% block title %}Backup detail — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <div class="small text-secondary">Read-only backup metadata</div>
+    <h1 class="page-title mb-1">{{ backup.business.name }}</h1>
+    <code class="small">{{ backup.public_id }}</code>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_list' %}"><i class="bi bi-arrow-left me-1"></i> Backups</a>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:backup_operations' %}?business={{ backup.business.public_id }}"><i class="bi bi-arrow-repeat me-1"></i> Operations</a>
+    <a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:backup_activity' %}?business={{ backup.business.public_id }}"><i class="bi bi-activity me-1"></i> Activity</a>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 small">
+  Sensitive storage identifiers, encryption material, token hashes, raw structured metadata, and execution controls are intentionally omitted.
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-7">
+    <div class="card h-100">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <span>Lifecycle summary</span>
+        <div class="d-flex gap-1">
+          {% if backup.pinned %}<span class="badge text-bg-light border"><i class="bi bi-pin-angle-fill me-1"></i>Pinned</span>{% endif %}
+          {% if backup.protected %}<span class="badge text-bg-warning"><i class="bi bi-shield-lock-fill me-1"></i>Protected</span>{% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+        <dl class="row mb-0">
+          <dt class="col-sm-4">Business</dt><dd class="col-sm-8">{{ backup.business.name }}</dd>
+          <dt class="col-sm-4">Tenant UUID snapshot</dt><dd class="col-sm-8"><code>{{ backup.tenant_public_id_snapshot }}</code></dd>
+          <dt class="col-sm-4">Scope</dt><dd class="col-sm-8">{{ backup.get_scope_display }}</dd>
+          <dt class="col-sm-4">Included products</dt>
+          <dd class="col-sm-8">
+            {% for product in backup.included_products %}<span class="badge text-bg-light border me-1">{{ product }}</span>{% empty %}—{% endfor %}
+          </dd>
+          <dt class="col-sm-4">Trigger</dt><dd class="col-sm-8">{{ backup.get_trigger_display }}</dd>
+          <dt class="col-sm-4">Status</dt><dd class="col-sm-8">{{ backup.get_status_display }}</dd>
+          <dt class="col-sm-4">Integrity</dt><dd class="col-sm-8">{{ backup.get_integrity_status_display }}</dd>
+          <dt class="col-sm-4">Compatibility</dt><dd class="col-sm-8">{{ backup.get_compatibility_status_display }}</dd>
+          <dt class="col-sm-4">Queued</dt><dd class="col-sm-8">{{ backup.queued_at|date:"Y-m-d H:i:s T" }}</dd>
+          <dt class="col-sm-4">Started</dt><dd class="col-sm-8">{{ backup.started_at|date:"Y-m-d H:i:s T"|default:"—" }}</dd>
+          <dt class="col-sm-4">Completed</dt><dd class="col-sm-8">{{ backup.completed_at|date:"Y-m-d H:i:s T"|default:"—" }}</dd>
+          <dt class="col-sm-4">Verified</dt><dd class="col-sm-8">{{ backup.verified_at|date:"Y-m-d H:i:s T"|default:"—" }}</dd>
+          <dt class="col-sm-4">Retention</dt>
+          <dd class="col-sm-8">{% if backup.retention_eligible %}Eligible{% else %}Excluded{% endif %}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card h-100">
+      <div class="card-header">Version &amp; count metadata</div>
+      <div class="card-body">
+        <dl class="mb-0">
+          <dt>Backup format</dt><dd>{{ backup.format_version }}</dd>
+          <dt>Application version</dt><dd>{{ backup.application_version }}</dd>
+          <dt>Minimum restore version</dt><dd>{{ backup.minimum_restore_version }}</dd>
+          <dt>Schema fingerprint</dt><dd><code class="small text-break">{{ backup.schema_fingerprint }}</code></dd>
+          <dt>Components / rows / media</dt>
+          <dd>{{ backup.component_count|intcomma }} / {{ backup.total_row_count|intcomma }} / {{ backup.media_count|intcomma }}</dd>
+          <dt>Recorded size</dt><dd>{% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}—{% endif %}</dd>
+          <dt>Created by</dt>
+          <dd>{% if backup.system_actor %}System{% elif backup.created_by %}{{ backup.created_by.email }}{% else %}Recorded actor{% endif %}</dd>
+        </dl>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if backup.sanitized_failure_summary or backup.restore_compatibility_reason %}
+<div class="card border-warning mb-3">
+  <div class="card-header">Sanitized diagnostics</div>
+  <div class="card-body small">
+    {% if backup.sanitized_failure_summary %}
+      <div class="mb-2"><strong>{{ backup.failure_code|default:"Operation failure" }}:</strong> {{ backup.sanitized_failure_summary }}</div>
+    {% endif %}
+    {% if backup.restore_compatibility_reason %}
+      <div><strong>Compatibility:</strong> {{ backup.restore_compatibility_reason }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card mb-3">
+  <div class="card-header">Component metadata</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Component</th><th>Product</th><th>Version</th><th class="text-end">Rows</th><th class="text-end">Media</th><th>Verification</th></tr></thead>
+      <tbody>
+        {% for component in components %}
+        <tr>
+          <td class="fw-semibold">{{ component.component_key }}</td>
+          <td>{{ component.get_product_category_display }}</td>
+          <td>{{ component.component_version }}</td>
+          <td class="text-end">{{ component.row_count|intcomma }}</td>
+          <td class="text-end">{{ component.media_count|intcomma }}</td>
+          <td>{{ component.get_verification_status_display }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6"><div class="empty-state py-3">No component metadata recorded.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">Related restore operations</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead><tr><th>Operation</th><th>Scope</th><th>Status</th><th>Requested</th></tr></thead>
+          <tbody>
+            {% for operation in restore_operations %}
+            <tr>
+              <td><code class="small">{{ operation.public_id }}</code></td>
+              <td>{{ operation.get_requested_scope_display }}</td>
+              <td>{{ operation.get_status_display }}</td>
+              <td class="small">{{ operation.created_at|date:"Y-m-d H:i" }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4"><div class="empty-state py-3">No related restore metadata.</div></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card h-100">
+      <div class="card-header">Recent sanitized activity</div>
+      <div class="list-group list-group-flush">
+        {% for item in activities %}
+        <div class="list-group-item">
+          <div class="d-flex justify-content-between gap-2">
+            <span class="fw-semibold">{{ item.event_type }}</span>
+            <span class="small text-secondary text-nowrap">{{ item.created_at|date:"Y-m-d H:i" }}</span>
+          </div>
+          <div class="small text-secondary">{{ item.sanitized_message|default:"No message recorded." }}</div>
+        </div>
+        {% empty %}
+        <div class="empty-state py-3">No related activity.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

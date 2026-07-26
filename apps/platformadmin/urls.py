@@ -1,5 +1,7 @@
 from django.urls import path
 
+from apps.backups import platform_views as backup_views
+
 from . import views
 
 app_name = "platformadmin"
@@ -8,6 +10,22 @@ urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("businesses/", views.business_list, name="business_list"),
     path("businesses/new/", views.business_create, name="business_create"),
+    path("backups/", backup_views.backup_list, name="backup_list"),
+    path(
+        "backups/operations/",
+        backup_views.operation_list,
+        name="backup_operations",
+    ),
+    path(
+        "backups/activity/",
+        backup_views.activity_list,
+        name="backup_activity",
+    ),
+    path(
+        "backups/<uuid:public_id>/",
+        backup_views.backup_detail,
+        name="backup_detail",
+    ),
     path("businesses/<uuid:public_id>/", views.business_detail, name="business_detail"),
     path(
         "businesses/<uuid:business_public_id>/payments/"

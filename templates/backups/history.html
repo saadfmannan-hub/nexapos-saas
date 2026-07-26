@@ -1,0 +1,94 @@
+{% extends "layouts/base.html" %}
+{% load humanize %}
+{% block title %}Backup history — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
+{% block content %}
+<div class="backup-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+      <h1 class="page-title mb-1">Backup history</h1>
+      <div class="text-secondary">Verified and in-progress metadata for currently enabled product scopes.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'backups:activity' %}"><i class="bi bi-activity me-1"></i> Activity</a>
+      <a class="btn btn-primary" href="{% url 'backups:dashboard' %}"><i class="bi bi-grid me-1"></i> Overview</a>
+    </div>
+  </div>
+
+  <div class="card backup-card mb-3">
+    <div class="card-body py-3">
+      <form class="row g-2 align-items-end" method="get">
+        <div class="col-sm-6 col-lg-3">
+          <label class="form-label small" for="{{ filter_form.scope.id_for_label }}">{{ filter_form.scope.label }}</label>
+          {{ filter_form.scope }}
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <label class="form-label small" for="{{ filter_form.status.id_for_label }}">{{ filter_form.status.label }}</label>
+          {{ filter_form.status }}
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <label class="form-label small" for="{{ filter_form.trigger.id_for_label }}">{{ filter_form.trigger.label }}</label>
+          {{ filter_form.trigger }}
+        </div>
+        <div class="col-sm-6 col-lg-3">
+          <button class="btn btn-primary btn-sm" type="submit">Apply filters</button>
+          <a class="btn btn-outline-secondary btn-sm" href="{% url 'backups:history' %}">Clear</a>
+        </div>
+        {% if filter_form.errors %}
+        <div class="col-12">
+          <div class="alert alert-danger py-2 mb-0 small">The requested filters are not available for this business.</div>
+        </div>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+
+  <div class="card backup-card">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Requested</th>
+            <th>Scope</th>
+            <th>Trigger</th>
+            <th>Status</th>
+            <th>Integrity</th>
+            <th class="text-end">Size</th>
+            <th class="text-end"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for backup in page_obj %}
+          <tr>
+            <td class="text-nowrap">
+              <div class="fw-semibold">{{ backup.queued_at|date:"M j, Y H:i" }}</div>
+              <div class="small text-secondary">{{ backup.queued_at|naturaltime }}</div>
+            </td>
+            <td><span class="scope-chip"><i class="bi bi-layers"></i>{{ backup.get_scope_display }}</span></td>
+            <td>{{ backup.get_trigger_display }}</td>
+            <td>{% include "backups/_status_badge.html" with value=backup.status label=backup.get_status_display %}</td>
+            <td>{% include "backups/_status_badge.html" with value=backup.integrity_status label=backup.get_integrity_status_display %}</td>
+            <td class="text-end text-nowrap">
+              {% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}<span class="text-secondary">—</span>{% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'backups:detail' backup.public_id %}">View</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="7">
+              <div class="empty-state py-5">
+                <i class="bi bi-archive d-block mb-2"></i>
+                No backup metadata matches these filters.
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+  </div>
+</div>
+{% endblock %}

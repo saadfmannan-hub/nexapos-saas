@@ -28,6 +28,7 @@ urlpatterns = [
     path("reports/", include("apps.reports.urls")),
     path("notifications/", include("apps.notifications.urls")),
     path("audit/", include("apps.audit.urls")),
+    path("backups/", include("apps.backups.urls")),
     path("platform/", include("apps.platformadmin.urls")),
     path("api/", include("apps.api.urls")),
     path("wms/", include("apps.wms_core.urls")),

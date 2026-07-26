@@ -78,6 +78,7 @@ LOCAL_APPS = [
     "apps.reports",
     "apps.notifications",
     "apps.audit",
+    "apps.backups",
     "apps.platformadmin",
     "apps.api",
     "apps.wms_core",

@@ -1,0 +1,74 @@
+{% extends "layouts/base.html" %}
+{% block title %}Restore review — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
+{% block content %}
+<div class="backup-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div>
+      <div class="small text-secondary mb-1">Recovery readiness</div>
+      <h1 class="page-title mb-1">Review restore</h1>
+      <div class="text-secondary">{{ backup.get_scope_display }} · requested {{ backup.queued_at|date:"M j, Y H:i T" }}</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{% url 'backups:detail' backup.public_id %}">
+      <i class="bi bi-arrow-left me-1"></i> Backup details
+    </a>
+  </div>
+
+  <div class="engine-notice d-flex align-items-start gap-3 p-3 mb-3" role="status">
+    <i class="bi bi-shield-lock fs-5" aria-hidden="true"></i>
+    <div>
+      <div class="fw-semibold">Restore execution is not enabled</div>
+      <div class="small">
+        This review is informational. No operational data can be changed in Foundation Phase,
+        and no safety backup or restore operation will be started.
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="card backup-card">
+        <div class="card-header">
+          <div class="fw-semibold">Pre-flight foundation checks</div>
+          <div class="small text-secondary">Every check will be repeated by the future execution service.</div>
+        </div>
+        <div class="card-body py-1">
+          {% for check in restore_checks %}
+          <div class="check-row">
+            {% if check.passed %}
+              <span class="check-icon bg-success-subtle text-success"><i class="bi bi-check-lg"></i></span>
+            {% else %}
+              <span class="check-icon bg-warning-subtle text-warning"><i class="bi bi-exclamation-lg"></i></span>
+            {% endif %}
+            <div>
+              <div class="fw-semibold">{{ check.label }}</div>
+              <div class="small text-secondary">{{ check.detail }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="card backup-card">
+        <div class="card-header fw-semibold">Restore scope</div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="scope-chip"><i class="bi bi-layers"></i>{{ backup.get_scope_display }}</span>
+            {% include "backups/_status_badge.html" with value=backup.integrity_status label=backup.get_integrity_status_display %}
+          </div>
+          <p class="small text-secondary">
+            A future restore will require exclusive tenant maintenance state, compatibility
+            validation, dependency checks, and a fresh verified safety backup before any mutation.
+          </p>
+          <hr>
+          <button class="btn btn-primary w-100" type="button" disabled aria-disabled="true">
+            <i class="bi bi-lock me-1"></i> Restore engine not enabled
+          </button>
+          <div class="form-text text-center mt-2">No restore request or queued operation will be created.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

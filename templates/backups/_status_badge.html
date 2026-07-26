@@ -1,0 +1,13 @@
+{% if value == "SUCCEEDED" or value == "VERIFIED" or value == "ROLLED_BACK" %}
+  <span class="badge rounded-pill text-bg-success">{{ label }}</span>
+{% elif value == "FAILED" or value == "CORRUPTED" or value == "INDETERMINATE" or value == "INCOMPATIBLE" %}
+  <span class="badge rounded-pill text-bg-danger">{{ label }}</span>
+{% elif value == "CANCELLED" or value == "DELETED" %}
+  <span class="badge rounded-pill text-bg-secondary">{{ label }}</span>
+{% elif value == "DELETION_PENDING" or value == "ROLLING_BACK" or value == "REQUIRES_UPGRADE" %}
+  <span class="badge rounded-pill text-bg-warning">{{ label }}</span>
+{% elif value == "NOT_CHECKED" %}
+  <span class="badge rounded-pill text-bg-light border text-secondary">{{ label }}</span>
+{% else %}
+  <span class="badge rounded-pill text-bg-primary">{{ label }}</span>
+{% endif %}

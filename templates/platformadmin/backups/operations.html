@@ -1,0 +1,110 @@
+{% extends "platformadmin/_base.html" %}
+{% block title %}Backup operations — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="page-title mb-1">Restore operations</h1>
+    <div class="small text-secondary">Read-only lifecycle and tenant-lock metadata.</div>
+  </div>
+  <div class="btn-group btn-group-sm" role="group" aria-label="Backup administration">
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_list' %}"><i class="bi bi-archive me-1"></i> Backups</a>
+    <a class="btn btn-primary" href="{% url 'platformadmin:backup_operations' %}"><i class="bi bi-arrow-repeat me-1"></i> Operations</a>
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_activity' %}"><i class="bi bi-activity me-1"></i> Activity</a>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form class="row g-2 align-items-end" method="get">
+      <div class="col-md-5">
+        <label class="form-label small" for="operationBusiness">Business UUID</label>
+        <input class="form-control form-control-sm" id="operationBusiness" type="text" name="business" value="{{ request.GET.business }}" placeholder="Exact public UUID">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label small" for="operationStatus">Status</label>
+        <select class="form-select form-select-sm" id="operationStatus" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <button class="btn btn-sm btn-primary" type="submit">Apply</button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_operations' %}">Clear</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <span>Active tenant operation locks</span>
+    <span class="badge text-bg-light border">{{ active_locks|length }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>Business</th><th>Kind</th><th>Operation UUID</th><th>Acquired</th><th>Lease expires</th></tr></thead>
+      <tbody>
+        {% for lock in active_locks %}
+        <tr>
+          <td class="fw-semibold">{{ lock.business.name }}</td>
+          <td>{{ lock.get_operation_kind_display }}</td>
+          <td><code class="small">{{ lock.operation_public_id }}</code></td>
+          <td class="small">{{ lock.acquired_at|date:"Y-m-d H:i:s" }}</td>
+          <td class="small">{{ lock.lease_expires_at|date:"Y-m-d H:i:s" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="5"><div class="empty-state py-3">No active tenant operation locks.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Business</th>
+          <th>Operation</th>
+          <th>Source backup</th>
+          <th>Scope</th>
+          <th>Status</th>
+          <th>Dependency</th>
+          <th>Compatibility</th>
+          <th>Requested by</th>
+          <th>Requested</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for operation in page_obj %}
+        <tr>
+          <td class="fw-semibold">{{ operation.business.name }}</td>
+          <td><code class="small">{{ operation.public_id }}</code></td>
+          <td><a href="{% url 'platformadmin:backup_detail' operation.source_backup.public_id %}"><code class="small">{{ operation.source_backup.public_id }}</code></a></td>
+          <td>{{ operation.get_requested_scope_display }}</td>
+          <td>
+            {% if operation.status == "SUCCEEDED" or operation.status == "ROLLED_BACK" %}
+              <span class="badge text-bg-success">{{ operation.get_status_display }}</span>
+            {% elif operation.status == "FAILED" or operation.status == "INDETERMINATE" %}
+              <span class="badge text-bg-danger">{{ operation.get_status_display }}</span>
+            {% else %}
+              <span class="badge text-bg-primary">{{ operation.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td class="small">{{ operation.get_dependency_check_status_display }}</td>
+          <td class="small">{{ operation.get_compatibility_status_display }}</td>
+          <td class="small">{% if operation.requested_by %}{{ operation.requested_by.email }}{% else %}Recorded actor{% endif %}</td>
+          <td class="small text-nowrap">{{ operation.created_at|date:"Y-m-d H:i:s" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9"><div class="empty-state py-5">No restore operation metadata matches these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+</div>
+{% endblock %}

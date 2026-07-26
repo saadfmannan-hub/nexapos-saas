@@ -7,6 +7,9 @@
     <div class="small text-secondary">Platform customer profile and subscription management</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'platformadmin:backup_list' %}?business={{ business.public_id }}" class="btn btn-outline-primary btn-sm">
+      <i class="bi bi-database-lock"></i> Backup metadata
+    </a>
     {% if business.is_active %}
     <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#loginAsModal">
       <i class="bi bi-box-arrow-in-right"></i> Login as owner

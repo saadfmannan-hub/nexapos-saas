@@ -72,17 +72,41 @@ PERMISSIONS = {
     "settings.manage": _("Manage business settings"),
     "audit.view": _("View audit logs"),
     "notifications.view": _("View notifications"),
+    # Backup & Restore (platform-layer, product-aware)
+    "backups.view": _("View backup history and status"),
+    "backups.create": _("Request manual backups"),
+    "backups.download": _("Download verified backups"),
+    "backups.schedule": _("Manage automatic backup schedules"),
+    "backups.pin": _("Pin and unpin backups"),
+    "backups.restore": _("Request backup restores"),
 }
 
 ALL_PERMISSION_CODES = list(PERMISSIONS.keys())
+
+# Destructive and data-portability capabilities are granted implicitly to the
+# tenant owner, but are never seeded into a non-owner role. Businesses may
+# make an explicit delegation decision later through their custom-role flow.
+OWNER_ONLY_DEFAULT_PERMISSION_CODES = frozenset(
+    {
+        "backups.view",
+        "backups.create",
+        "backups.download",
+        "backups.schedule",
+        "backups.pin",
+        "backups.restore",
+    }
+)
 
 # Default role templates created for every new business.
 # Owner role is flagged is_owner and implicitly holds every permission.
 DEFAULT_ROLES = {
     "Business Owner": {"is_owner": True, "permissions": ALL_PERMISSION_CODES},
     "Business Administrator": {
-        "permissions": [c for c in ALL_PERMISSION_CODES if c != "settings.manage"]
-        + ["settings.manage"],
+        "permissions": [
+            c
+            for c in ALL_PERMISSION_CODES
+            if c not in OWNER_ONLY_DEFAULT_PERMISSION_CODES
+        ],
     },
     "Branch Manager": {
         "permissions": [

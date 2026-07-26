@@ -1,0 +1,131 @@
+{% extends "platformadmin/_base.html" %}
+{% load humanize %}
+{% block title %}Backup metadata — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <h1 class="page-title mb-1">Backup metadata</h1>
+    <div class="small text-secondary">Read-only tenant backup control-plane records. Artifact and key material are never displayed.</div>
+  </div>
+  <div class="btn-group btn-group-sm" role="group" aria-label="Backup administration">
+    <a class="btn btn-primary" href="{% url 'platformadmin:backup_list' %}"><i class="bi bi-archive me-1"></i> Backups</a>
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_operations' %}"><i class="bi bi-arrow-repeat me-1"></i> Operations</a>
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_activity' %}"><i class="bi bi-activity me-1"></i> Activity</a>
+  </div>
+</div>
+
+<div class="alert alert-info py-2 small">
+  <i class="bi bi-info-circle me-1"></i>
+  Foundation Phase is metadata-only. There are no platform backup, download, restore, pin, or cleanup actions on this page.
+</div>
+
+<div class="card mb-3">
+  <div class="card-body py-2">
+    <form class="row g-2 align-items-end" method="get">
+      <div class="col-md-4">
+        <label class="form-label small" for="backupSearch">Search</label>
+        <input class="form-control form-control-sm" id="backupSearch" type="search" name="q" value="{{ request.GET.q }}" placeholder="Business, actor email, or backup UUID">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label small" for="backupBusiness">Business UUID</label>
+        <input class="form-control form-control-sm" id="backupBusiness" type="text" name="business" value="{{ request.GET.business }}" placeholder="Exact public UUID">
+      </div>
+      <div class="col-sm-6 col-md-2">
+        <label class="form-label small" for="backupScope">Scope</label>
+        <select class="form-select form-select-sm" id="backupScope" name="scope">
+          <option value="">All scopes</option>
+          {% for value, label in scope_choices %}
+          <option value="{{ value }}" {% if request.GET.scope == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-sm-6 col-md-2">
+        <label class="form-label small" for="backupStatus">Status</label>
+        <select class="form-select form-select-sm" id="backupStatus" name="status">
+          <option value="">All statuses</option>
+          {% for value, label in status_choices %}
+          <option value="{{ value }}" {% if request.GET.status == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-1 d-flex gap-1">
+        <button class="btn btn-sm btn-primary" type="submit" aria-label="Apply filters"><i class="bi bi-funnel"></i></button>
+        <a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_list' %}" aria-label="Clear filters"><i class="bi bi-x-lg"></i></a>
+      </div>
+    </form>
+    {% if selected_business %}
+    <div class="small text-secondary mt-2">Filtered to <strong>{{ selected_business.name }}</strong>.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Business</th>
+          <th>Requested</th>
+          <th>Scope</th>
+          <th>Trigger</th>
+          <th>Status</th>
+          <th>Integrity</th>
+          <th class="text-end">Size</th>
+          <th>Actor</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for backup in page_obj %}
+        <tr>
+          <td>
+            <div class="fw-semibold">{{ backup.business.name }}</div>
+            <code class="small text-secondary">{{ backup.business.public_id }}</code>
+          </td>
+          <td class="small text-nowrap">
+            {{ backup.queued_at|date:"Y-m-d H:i:s" }}
+            <div class="text-secondary">{{ backup.queued_at|naturaltime }}</div>
+          </td>
+          <td><span class="badge text-bg-light border">{{ backup.get_scope_display }}</span></td>
+          <td class="small">{{ backup.get_trigger_display }}</td>
+          <td>
+            {% if backup.status == "SUCCEEDED" %}
+              <span class="badge badge-status bs-active">{{ backup.get_status_display }}</span>
+            {% elif backup.status == "FAILED" %}
+              <span class="badge badge-status bs-suspended">{{ backup.get_status_display }}</span>
+            {% else %}
+              <span class="badge text-bg-primary">{{ backup.get_status_display }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if backup.integrity_status == "VERIFIED" %}
+              <span class="badge text-bg-success">{{ backup.get_integrity_status_display }}</span>
+            {% elif backup.integrity_status == "FAILED" or backup.integrity_status == "CORRUPTED" %}
+              <span class="badge text-bg-danger">{{ backup.get_integrity_status_display }}</span>
+            {% else %}
+              <span class="badge text-bg-light border">{{ backup.get_integrity_status_display }}</span>
+            {% endif %}
+          </td>
+          <td class="text-end small">{% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}—{% endif %}</td>
+          <td class="small">
+            {% if backup.system_actor %}
+              System
+            {% elif backup.created_by %}
+              {{ backup.created_by.email }}
+            {% else %}
+              Recorded actor
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:backup_detail' backup.public_id %}">Inspect</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9"><div class="empty-state text-center py-5">No backup metadata matches these filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+</div>
+{% endblock %}

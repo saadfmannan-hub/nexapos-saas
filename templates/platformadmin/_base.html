@@ -19,6 +19,7 @@
       <a class="nav-link {% if pa_nav == 'dashboard' %}active{% endif %}" href="{% url 'platformadmin:dashboard' %}"><i class="bi bi-grid-1x2"></i> Dashboard</a>
       <div class="nav-section">Operations</div>
       <a class="nav-link {% if pa_nav == 'businesses' %}active{% endif %}" href="{% url 'platformadmin:business_list' %}"><i class="bi bi-buildings"></i> Businesses</a>
+      <a class="nav-link {% if pa_nav == 'backups' %}active{% endif %}" href="{% url 'platformadmin:backup_list' %}"><i class="bi bi-database-lock"></i> Backups</a>
       <a class="nav-link {% if pa_nav == 'plans' %}active{% endif %}" href="{% url 'platformadmin:plan_list' %}"><i class="bi bi-stars"></i> Plans</a>
       <a class="nav-link {% if pa_nav == 'announcements' %}active{% endif %}" href="{% url 'platformadmin:announcements' %}"><i class="bi bi-megaphone"></i> Announcements</a>
       <div class="nav-section">Platform</div>
