@@ -250,6 +250,30 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
+# Backup engine foundation (Phase 2A remains deliberately disabled)
+# ------------------------------------------------------------------
+BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
+    "BACKUP_EXECUTION_ENGINE_ENABLED",
+    default=False,
+)
+# Compatibility alias retained for Phase 1 checks and deployment templates.
+BACKUP_ENGINE_ENABLED = BACKUP_EXECUTION_ENGINE_ENABLED
+BACKUP_STAGING_ROOT = Path(
+    env(
+        "BACKUP_STAGING_ROOT",
+        default=str(BASE_DIR / ".backup-staging"),
+    )
+)
+BACKUP_WORKSPACE_CLEANUP_TIMEOUT_SECONDS = env.int(
+    "BACKUP_WORKSPACE_CLEANUP_TIMEOUT_SECONDS",
+    default=3600,
+)
+BACKUP_EXECUTION_QUEUE_NAME = env(
+    "BACKUP_EXECUTION_QUEUE_NAME",
+    default="nexa.backups",
+)
+
+# ------------------------------------------------------------------
 # Caching
 # ------------------------------------------------------------------
 REDIS_URL = env("REDIS_URL", default="")

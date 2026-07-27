@@ -7,5 +7,6 @@ class BackupsConfig(AppConfig):
     verbose_name = "Backup & Restore"
 
     def ready(self):
-        # Importing registers fail-closed registry and async-safety checks.
+        # Importing registers fail-closed registry, workspace, and async checks.
         from . import registry, tasks  # noqa: F401
+        from .engine import checks  # noqa: F401

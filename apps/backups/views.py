@@ -9,6 +9,7 @@ from django.views.decorators.http import require_GET
 from apps.core.decorators import require_permission
 
 from . import selectors
+from .engine.availability import real_execution_available
 from .enums import (
     BackupStatus,
     CompatibilityStatus,
@@ -16,11 +17,6 @@ from .enums import (
     ProductOwner,
 )
 from .forms import BackupHistoryFilterForm, CreateBackupForm
-
-# Phase 1 intentionally has no artifact or restore execution engine.  Keeping
-# this local and false prevents a deployment setting from accidentally turning
-# a metadata-only page into an operational control.
-BACKUP_ENGINE_ENABLED = False
 
 
 def _can(request, permission_code: str) -> bool:
@@ -81,7 +77,7 @@ def dashboard(request):
         "backups/dashboard.html",
         {
             "active_nav": "backups",
-            "engine_enabled": BACKUP_ENGINE_ENABLED,
+            "engine_enabled": real_execution_available(),
             "latest_backup": latest_backup,
             "recent_backups": recent_backups,
             "health_state": health_state,
@@ -149,7 +145,7 @@ def detail(request, public_id):
         "backups/detail.html",
         {
             "active_nav": "backups",
-            "engine_enabled": BACKUP_ENGINE_ENABLED,
+            "engine_enabled": real_execution_available(),
             "backup": backup,
             "components": backup.components.filter(
                 product_category__in=visible_component_products
@@ -224,7 +220,7 @@ def restore_review(request, public_id):
         "backups/restore_review.html",
         {
             "active_nav": "backups",
-            "engine_enabled": BACKUP_ENGINE_ENABLED,
+            "engine_enabled": real_execution_available(),
             "backup": backup,
             "restore_checks": restore_checks,
         },

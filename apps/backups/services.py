@@ -265,6 +265,27 @@ def _authorize(
     )
 
 
+def authorize_backup_action(
+    *,
+    actor,
+    business,
+    products,
+    permission_code,
+    request=None,
+    system_actor=False,
+):
+    """Public authorization boundary reused by engine orchestration."""
+
+    return _authorize(
+        actor=actor,
+        business=business,
+        products=products,
+        permission_code=permission_code,
+        request=request,
+        system_actor=system_actor,
+    )
+
+
 def _component_metadata(definitions):
     return [
         {
