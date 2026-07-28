@@ -27,6 +27,13 @@ class SnapshotResult:
     reference: SnapshotReference
     created_at: datetime
     consistent: bool
+    byte_count: int = 0
+    page_count: int = 0
+    page_size: int = 0
+    schema_version: int = 0
+    journal_mode: str = ""
+    duration_ms: int = 0
+    provider_identifier: str = ""
 
 
 class SnapshotProvider(ABC):

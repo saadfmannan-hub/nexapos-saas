@@ -200,7 +200,7 @@ class BackupPhase2APlanningTests(BackupPhase1TestCase):
         self.assertEqual(plan.future_required_stages, PIPELINE_STAGE_ORDER)
         self.assertEqual(
             states[PipelineStage.PREPARE_SNAPSHOT],
-            PipelineStageState.BLOCKED,
+            PipelineStageState.PLANNED,
         )
         self.assertEqual(
             states[PipelineStage.COMPLETE],

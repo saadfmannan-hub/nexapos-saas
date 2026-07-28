@@ -1,9 +1,10 @@
-"""Django system checks for Phase 2A staging-root safety."""
+"""Non-mutating backup staging and SQLite policy system checks."""
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
 
-from .exceptions import UnsafeWorkspacePath
+from .exceptions import SQLiteSnapshotPolicyError, UnsafeWorkspacePath
+from .snapshot_policy import SQLiteSnapshotPolicy
 from .workspace import validate_staging_root
 
 
@@ -21,6 +22,21 @@ def check_backup_staging_root(app_configs, **kwargs):
                     "MEDIA_ROOT and STATIC_ROOT."
                 ),
                 id="backups.E020",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_sqlite_snapshot_policy_settings(app_configs, **kwargs):
+    try:
+        SQLiteSnapshotPolicy.from_settings()
+    except SQLiteSnapshotPolicyError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint="Configure bounded fail-closed SQLite snapshot policy values.",
+                id="backups.E021",
             )
         ]
     return []

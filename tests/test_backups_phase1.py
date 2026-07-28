@@ -180,7 +180,7 @@ class BackupAsyncSafetyTests(SimpleTestCase):
         errors = check_backup_async_execution_configuration(None)
         self.assertEqual(
             {error.id for error in errors},
-            {"backups.E010", "backups.E011"},
+            {"backups.E010", "backups.E011", "backups.E012"},
         )
 
 

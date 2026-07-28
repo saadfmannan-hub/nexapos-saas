@@ -1,4 +1,4 @@
-"""Central capability guard for the deliberately disabled Phase 2A engine."""
+"""Central capability guard for the deliberately incomplete backup engine."""
 
 from dataclasses import dataclass
 
@@ -6,19 +6,23 @@ from django.conf import settings
 
 from .exceptions import BackupEngineDisabled
 
-# This is a code capability, not a deployment toggle.  It remains false until
-# the required snapshot, export, package, verification, and storage providers
-# are implemented and reviewed in later phases.
+# Phase 2B implements the SQLite snapshot provider, but this is a code
+# capability rather than permission to run a commercial backup workflow.
+SQLITE_SNAPSHOT_PROVIDER_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
-PHASE_2A_DISABLED_REASON = (
-    "Phase 2A provides planning contracts only; snapshot, export, packaging, "
-    "verification, and storage providers are not operational."
+INCOMPLETE_PROVIDER_STACK_REASON = (
+    "SQLite snapshot support is available internally, but logical export, "
+    "packaging, verification, encryption, and storage providers remain incomplete."
 )
+# Backward-compatible import retained for Phase 2A callers and tests.
+PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
 
 
 @dataclass(frozen=True, slots=True)
 class BackupEngineCapability:
     setting_enabled: bool
+    snapshot_provider_ready: bool
+    runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
     disabled_reason: str
@@ -41,9 +45,13 @@ def get_engine_capability() -> BackupEngineCapability:
     elif not setting_enabled:
         reason = "Backup execution is disabled by application configuration."
     else:
-        reason = PHASE_2A_DISABLED_REASON
+        reason = INCOMPLETE_PROVIDER_STACK_REASON
     return BackupEngineCapability(
         setting_enabled=setting_enabled,
+        snapshot_provider_ready=SQLITE_SNAPSHOT_PROVIDER_READY,
+        # Runtime readiness depends on the selected database and private
+        # workspace. Planning deliberately does not perform that assessment.
+        runtime_snapshot_policy_ready=None,
         provider_stack_ready=OPERATIONAL_PROVIDER_STACK_READY,
         real_execution_available=available,
         disabled_reason=reason,

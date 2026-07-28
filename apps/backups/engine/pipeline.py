@@ -296,8 +296,11 @@ def planning_stage_reports() -> tuple[PipelineStageReport, ...]:
             reports.append(
                 PipelineStageReport(
                     stage,
-                    PipelineStageState.BLOCKED,
-                    "Operational execution is disabled in Phase 2A.",
+                    PipelineStageState.PLANNED,
+                    (
+                        "The internal SQLite snapshot provider is available, "
+                        "but planning performs no filesystem or database work."
+                    ),
                 )
             )
         else:

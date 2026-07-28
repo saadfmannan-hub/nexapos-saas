@@ -76,3 +76,71 @@ class BackupLockUnavailable(BackupEngineError):
 class ManifestBuildError(BackupEngineError):
     default_message = "The backup manifest metadata could not be built safely."
     default_code = "backup_manifest_build_error"
+
+
+class SnapshotEngineError(BackupEngineError):
+    """Base for sanitized SQLite snapshot errors."""
+
+    retryable = False
+
+
+class UnsupportedSnapshotBackend(SnapshotEngineError):
+    default_message = "The configured database backend cannot create this snapshot."
+    default_code = "unsupported_snapshot_backend"
+
+
+class UnsafeSnapshotSource(SnapshotEngineError):
+    default_message = "The configured SQLite snapshot source is not safe."
+    default_code = "unsafe_snapshot_source"
+
+
+class SQLiteSnapshotPolicyError(SnapshotEngineError):
+    default_message = "The SQLite runtime safety policy is not satisfied."
+    default_code = "sqlite_snapshot_policy_mismatch"
+
+
+class SnapshotWorkspaceUnavailable(SnapshotEngineError):
+    default_message = "The private snapshot workspace is unavailable."
+    default_code = "snapshot_workspace_unavailable"
+
+
+class UnsafeStagingFilesystem(SnapshotEngineError):
+    default_message = "The snapshot staging filesystem is not confirmed local."
+    default_code = "unsafe_staging_filesystem"
+
+
+class InsufficientSnapshotCapacity(SnapshotEngineError):
+    default_message = "The private staging area has insufficient snapshot capacity."
+    default_code = "insufficient_snapshot_capacity"
+
+
+class SnapshotBusy(SnapshotEngineError):
+    default_message = "The SQLite snapshot source is temporarily busy."
+    default_code = "snapshot_busy"
+    retryable = True
+
+
+class SnapshotTimeout(SnapshotEngineError):
+    default_message = "The SQLite snapshot exceeded its bounded deadline."
+    default_code = "snapshot_timeout"
+    retryable = True
+
+
+class SnapshotCreationError(SnapshotEngineError):
+    default_message = "The temporary SQLite snapshot could not be created."
+    default_code = "snapshot_creation_failed"
+
+
+class SnapshotValidationError(SnapshotEngineError):
+    default_message = "The temporary SQLite snapshot failed structural validation."
+    default_code = "snapshot_validation_failed"
+
+
+class SnapshotNotFound(SnapshotEngineError, LookupError):
+    default_message = "The opaque SQLite snapshot reference is unavailable."
+    default_code = "snapshot_not_found"
+
+
+class SnapshotCleanupError(SnapshotEngineError):
+    default_message = "The temporary SQLite snapshot could not be cleaned safely."
+    default_code = "snapshot_cleanup_failed"
