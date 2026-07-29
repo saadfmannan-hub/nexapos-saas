@@ -500,6 +500,32 @@ def validate_media_storage_name(value, *, maximum_length) -> str:
     return value
 
 
+def iter_canonical_document(value, *, trailing_lf=False):
+    """Yield canonical JSON document bytes without generic coercion."""
+
+    if type(trailing_lf) is not bool:
+        raise UnsupportedLogicalExportField()
+    try:
+        yield from _iter_canonical_json_bytes(value)
+        if trailing_lf:
+            yield b"\n"
+    except UnsupportedLogicalExportField:
+        raise
+    except (RecursionError, TypeError, ValueError, UnicodeError):
+        raise UnsupportedLogicalExportField() from None
+
+
+def encode_canonical_document(value, *, trailing_lf=False) -> bytes:
+    """Return exact canonical JSON bytes for hashes and serialized documents."""
+
+    return b"".join(
+        iter_canonical_document(
+            value,
+            trailing_lf=trailing_lf,
+        )
+    )
+
+
 class CanonicalLogicalSerializer:
     """Serialize reviewed Django field values without generic fallbacks."""
 
@@ -598,5 +624,7 @@ __all__ = [
     "canonical_json",
     "canonical_time",
     "canonical_uuid",
+    "encode_canonical_document",
+    "iter_canonical_document",
     "validate_media_storage_name",
 ]

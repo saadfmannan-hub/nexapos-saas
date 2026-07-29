@@ -6,10 +6,12 @@ import shutil
 import sqlite3
 import stat
 import sys
+import threading
 import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 
 from django.db import connections
@@ -103,6 +105,12 @@ _READER_DENIED_ACTIONS = frozenset(
     )
     if action is not None
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _PublishedSnapshotEvidence:
+    context: BackupExecutionContext
+    result: SnapshotResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,6 +343,8 @@ class SQLiteSnapshotProvider(SnapshotProvider):
         )
         self.unlinker = unlinker or os.unlink
         self.directory_remover = directory_remover or os.rmdir
+        self._published_results = {}
+        self._published_results_lock = threading.RLock()
 
     def create_snapshot(self, request: SnapshotRequest) -> SnapshotResult:
         policy = None
@@ -355,6 +365,7 @@ class SQLiteSnapshotProvider(SnapshotProvider):
         abort_error = None
         abort_traceback = None
         cleanup_incomplete = False
+        consistency_cutoff_at = None
 
         try:
             policy = (
@@ -448,6 +459,10 @@ class SQLiteSnapshotProvider(SnapshotProvider):
                 progress=progress,
                 sleep=policy.backup_sleep_seconds,
             )
+            consistency_cutoff_at = timezone.now()
+            if not timezone.is_aware(consistency_cutoff_at):
+                raise SnapshotValidationError()
+            consistency_cutoff_at = consistency_cutoff_at.astimezone(UTC)
             self._assert_before_deadline(deadline)
             self._run_failure_hook("after_backup")
             self._normalize_destination_journal(destination_connection)
@@ -499,9 +514,16 @@ class SQLiteSnapshotProvider(SnapshotProvider):
             source_connection = None
             self._assert_before_deadline(deadline)
             duration_ms = self._duration_ms(started)
-            result = SnapshotResult(
+            created_at = timezone.now()
+            if (
+                consistency_cutoff_at is None
+                or not timezone.is_aware(created_at)
+                or consistency_cutoff_at > created_at
+            ):
+                raise SnapshotValidationError()
+            candidate_result = SnapshotResult(
                 reference=reference,
-                created_at=timezone.now(),
+                created_at=created_at,
                 consistent=True,
                 byte_count=validation["byte_count"],
                 page_count=validation["page_count"],
@@ -510,7 +532,21 @@ class SQLiteSnapshotProvider(SnapshotProvider):
                 journal_mode=source_metadata.journal_mode,
                 duration_ms=duration_ms,
                 provider_identifier=SQLITE_SNAPSHOT_PROVIDER_IDENTIFIER,
+                consistency_cutoff_at=consistency_cutoff_at,
             )
+            evidence_key = (
+                context.workspace_reference.identifier,
+                reference.identifier,
+            )
+            evidence = _PublishedSnapshotEvidence(
+                context=context,
+                result=candidate_result,
+            )
+            with self._published_results_lock:
+                if evidence_key in self._published_results:
+                    raise SnapshotCreationError()
+                self._published_results[evidence_key] = evidence
+            result = candidate_result
         except (KeyboardInterrupt, SystemExit, GeneratorExit) as exc:
             abort_error = exc
             abort_traceback = exc.__traceback__
@@ -561,6 +597,61 @@ class SQLiteSnapshotProvider(SnapshotProvider):
             error.cleanup_incomplete = cleanup_incomplete
             raise error
         return result
+
+    def validate_snapshot_reference_evidence(self, *, context, reference) -> bool:
+        """Bind an opaque snapshot reference to its exact creation context."""
+
+        try:
+            validated_context = self._validated_context(
+                SnapshotRequest(context=context)
+            )
+            validated_reference = self._validated_reference(reference)
+            key = (
+                validated_context.workspace_reference.identifier,
+                validated_reference.identifier,
+            )
+        except SnapshotEngineError:
+            raise SnapshotValidationError() from None
+        except (AttributeError, TypeError, ValueError):
+            raise SnapshotValidationError() from None
+        with self._published_results_lock:
+            evidence = self._published_results.get(key)
+        if (
+            type(evidence) is not _PublishedSnapshotEvidence
+            or type(validated_context) is not BackupExecutionContext
+            or evidence.context != validated_context
+            or evidence.result.reference != validated_reference
+        ):
+            raise SnapshotValidationError()
+        return True
+
+    def validate_snapshot_evidence(
+        self,
+        *,
+        context,
+        snapshot_result,
+    ) -> bool:
+        """Bind exact immutable snapshot metadata without reopening the snapshot."""
+
+        if type(snapshot_result) is not SnapshotResult:
+            raise SnapshotValidationError()
+        self.validate_snapshot_reference_evidence(
+            context=context,
+            reference=snapshot_result.reference,
+        )
+        key = (
+            context.workspace_reference.identifier,
+            snapshot_result.reference.identifier,
+        )
+        with self._published_results_lock:
+            evidence = self._published_results.get(key)
+        if (
+            type(evidence) is not _PublishedSnapshotEvidence
+            or evidence.context != context
+            or evidence.result != snapshot_result
+        ):
+            raise SnapshotValidationError()
+        return True
 
     @contextmanager
     def open_snapshot(self, *, context, reference, _deadline=None):

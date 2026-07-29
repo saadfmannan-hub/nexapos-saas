@@ -34,6 +34,7 @@ class SnapshotResult:
     journal_mode: str = ""
     duration_ms: int = 0
     provider_identifier: str = ""
+    consistency_cutoff_at: datetime | None = None
 
 
 class SnapshotProvider(ABC):
@@ -79,6 +80,58 @@ class ComponentExporter(ABC):
         request: ComponentExportRequest,
     ) -> ComponentExportResult:
         """Export one explicitly registered component."""
+
+
+@dataclass(frozen=True, slots=True)
+class MediaCaptureReference:
+    identifier: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class MediaCaptureResult:
+    reference: MediaCaptureReference
+    logical_storage_name: str
+    byte_count: int
+    sha256: str
+    source_reference_count: int
+    captured_at: datetime
+    duration_ms: int
+    provider_identifier: str
+
+
+@dataclass(frozen=True, slots=True)
+class ManifestReference:
+    identifier: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalManifestResult:
+    reference: ManifestReference
+    byte_count: int
+    sha256: str
+    component_count: int
+    unique_media_object_count: int
+    total_record_count: int
+    total_media_bytes: int
+    payload_set_sha256: str
+    schema_identifier: str
+    created_at: datetime
+    provider_identifier: str
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2D1Request:
+    context: "BackupExecutionContext"
+    snapshot_result: SnapshotResult
+    component_plan: tuple["ComponentPlanItem", ...]
+    component_exports: tuple[ComponentExportResult, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2D1Result:
+    component_exports: tuple[ComponentExportResult, ...]
+    media_captures: tuple[MediaCaptureResult, ...]
+    manifest: CanonicalManifestResult
 
 
 class ManifestBuilder(ABC):

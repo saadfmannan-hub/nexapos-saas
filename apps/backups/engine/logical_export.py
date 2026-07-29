@@ -6,10 +6,11 @@ import math
 import os
 import stat
 import sys
+import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -34,6 +35,7 @@ from .exceptions import (
     ComponentExportNotFound,
     ComponentExportTimeout,
     ComponentExportValidationError,
+    CrossTenantMediaReference,
     LogicalExportEngineError,
     LogicalReferenceResolutionError,
     SnapshotCleanupAfterExportError,
@@ -64,6 +66,7 @@ from .sqlite_snapshot import (
 from .workspace import (
     BackupWorkspaceManager,
     WorkspaceArea,
+    WorkspaceReference,
     contained_path,
     path_is_link_like,
 )
@@ -519,6 +522,19 @@ class _RowQuery:
     oversize_parameters: tuple
 
 
+@dataclass(frozen=True, slots=True)
+class _PublishedComponentEvidence:
+    context: BackupExecutionContext
+    snapshot_identifier: uuid.UUID
+    component_key: str
+    result: ComponentExportResult
+    directory_identity: tuple[int, int]
+    expected_files: tuple[
+        tuple[str, tuple[int, int] | None, int],
+        ...,
+    ]
+
+
 class SQLiteLogicalComponentExporter(ComponentExporter):
     """Stream one registered component from the controlled SQLite reader."""
 
@@ -564,6 +580,9 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
             lambda: ComponentExportReference(uuid.uuid4())
         )
         self.failure_hook = failure_hook
+        self._published_results = {}
+        self._exactly_cleaned_results = {}
+        self._published_results_lock = threading.RLock()
 
     def export_component(self, request: ComponentExportRequest) -> ComponentExportResult:
         if type(self.snapshot_provider) is not SQLiteSnapshotProvider:
@@ -631,6 +650,7 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
             row_count = 0
             media_count = 0
             seen_media = set()
+            validated_media_names = set()
             with self.snapshot_provider.open_snapshot(
                 context=context,
                 reference=snapshot,
@@ -652,6 +672,7 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
                         records_writer=records_writer,
                         media_writer=media_writer,
                         seen_media=seen_media,
+                        validated_media_names=validated_media_names,
                     )
                     row_count += count
                     media_count += discovered
@@ -698,6 +719,31 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
                 expected_identity=directory_identity,
                 expected_files=expected_files,
             )
+            evidence_key = (
+                context.workspace_reference.identifier,
+                reference.identifier,
+            )
+            evidence = _PublishedComponentEvidence(
+                context=context,
+                snapshot_identifier=snapshot.identifier,
+                component_key=component.key,
+                result=candidate_result,
+                directory_identity=directory_identity,
+                expected_files=tuple(
+                    (
+                        name,
+                        file_identity,
+                        byte_count,
+                    )
+                    for name, (file_identity, byte_count) in sorted(
+                        expected_files.items()
+                    )
+                ),
+            )
+            with self._published_results_lock:
+                if evidence_key in self._published_results:
+                    raise ComponentExportCreationError()
+                self._published_results[evidence_key] = evidence
             result = candidate_result
         except BaseException as exc:
             abort_error = exc
@@ -1061,6 +1107,7 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
         records_writer,
         media_writer,
         seen_media,
+        validated_media_names,
     ):
         model, query = self._query_for_spec(
             spec,
@@ -1167,6 +1214,13 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
                     fields[field_name] = ""
                     continue
                 safe_name = serializer.media_name(raw_name)
+                if safe_name not in validated_media_names:
+                    self._validate_media_name_tenant_exclusive(
+                        reader=reader,
+                        context=context,
+                        storage_name=safe_name,
+                    )
+                    validated_media_names.add(safe_name)
                 fields[field_name] = safe_name
                 media_key = (
                     component.key,
@@ -1224,6 +1278,49 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
         if spec.identity_kind == IdentityKind.TENANT_SINGLETON and count != 1:
             raise TenantIsolationViolation()
         return count, media_count
+
+    def _validate_media_name_tenant_exclusive(
+        self,
+        *,
+        reader,
+        context,
+        storage_name,
+    ):
+        try:
+            for registered_spec in self.registry.specs:
+                if not registered_spec.media_fields:
+                    continue
+                model = django_apps.get_model(registered_spec.model_label)
+                table = _quote_identifier(model._meta.db_table)
+                if registered_spec.model_label == "tenants.Business":
+                    ownership_column = _quote_identifier(model._meta.pk.column)
+                else:
+                    ownership = model._meta.get_field(
+                        registered_spec.ownership_field
+                    )
+                    ownership_column = _quote_identifier(ownership.column)
+                for field_name in registered_spec.media_fields:
+                    media_column = _quote_identifier(
+                        model._meta.get_field(field_name).column
+                    )
+                    row = reader.first(
+                        f"SELECT 1 FROM {table} "
+                        f"WHERE CAST({media_column} AS BLOB) = CAST(? AS BLOB) "
+                        f"AND {ownership_column} IS NOT ? LIMIT 1",
+                        (storage_name, context.business_id),
+                    )
+                    if row is not None:
+                        raise CrossTenantMediaReference()
+        except CrossTenantMediaReference:
+            raise
+        except (
+            AttributeError,
+            LookupError,
+            LogicalExportEngineError,
+            TypeError,
+            ValueError,
+        ):
+            raise CrossTenantMediaReference() from None
 
     @staticmethod
     def _identity_for_row(*, spec, values, context):
@@ -1571,7 +1668,310 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
             if final_error is not None and not active_exception:
                 raise final_error from None
 
-    def cleanup_component_export(self, *, context, reference) -> bool:
+    def validate_component_export_evidence(
+        self,
+        *,
+        context,
+        snapshot_result,
+        component,
+        result,
+    ) -> bool:
+        """Bind an opaque result to this provider, workspace, snapshot, and plan."""
+
+        if (
+            type(context) is not BackupExecutionContext
+            or type(context.workspace_reference) is not WorkspaceReference
+            or type(snapshot_result) is not SnapshotResult
+            or type(snapshot_result.reference) is not SnapshotReference
+            or type(result) is not ComponentExportResult
+            or type(result.reference) is not ComponentExportReference
+            or type(result.reference.identifier) is not uuid.UUID
+        ):
+            raise ComponentExportValidationError()
+        self.registry.validate_component_item(component)
+        evidence = self._validated_component_reference_evidence(
+            context=context,
+            reference=result.reference,
+            error_type=ComponentExportValidationError,
+        )
+        if (
+            evidence.snapshot_identifier
+            != snapshot_result.reference.identifier
+            or evidence.component_key != component.key
+            or evidence.result != result
+        ):
+            raise ComponentExportValidationError()
+        return True
+
+    def validate_component_export_reference_evidence(
+        self,
+        *,
+        context,
+        reference,
+    ) -> bool:
+        """Confirm that a reference is an exact output owned by this context."""
+
+        self._validated_component_reference_evidence(
+            context=context,
+            reference=reference,
+            error_type=ComponentExportValidationError,
+        )
+        return True
+
+    def owns_component_export_reference_evidence(
+        self,
+        *,
+        context,
+        reference,
+    ) -> bool:
+        """Recognize provider ownership without claiming live-file validity."""
+
+        self._component_reference_evidence_state(
+            context=context,
+            reference=reference,
+            error_type=ComponentExportValidationError,
+        )
+        return True
+
+    def _validated_component_reference_evidence(
+        self,
+        *,
+        context,
+        reference,
+        error_type,
+    ):
+        evidence = self._component_reference_evidence_state(
+            context=context,
+            reference=reference,
+            error_type=error_type,
+        )
+        directory = self._component_directory(
+            context,
+            reference,
+            require_exists=True,
+            error_type=error_type,
+        )
+        try:
+            self._validate_final_directory(
+                directory,
+                expected_identity=evidence.directory_identity,
+                expected_files={
+                    name: (file_identity, byte_count)
+                    for name, file_identity, byte_count in evidence.expected_files
+                },
+            )
+        except ComponentExportValidationError:
+            raise error_type() from None
+        return evidence
+
+    def _component_reference_evidence_state(
+        self,
+        *,
+        context,
+        reference,
+        error_type,
+    ):
+        if (
+            type(context) is not BackupExecutionContext
+            or type(context.workspace_reference) is not WorkspaceReference
+            or type(reference) is not ComponentExportReference
+            or type(reference.identifier) is not uuid.UUID
+        ):
+            raise error_type()
+        key = (
+            context.workspace_reference.identifier,
+            reference.identifier,
+        )
+        with self._published_results_lock:
+            evidence = self._published_results.get(key)
+        if (
+            type(evidence) is not _PublishedComponentEvidence
+            or evidence.context != context
+            or evidence.result.reference != reference
+        ):
+            raise error_type()
+        return evidence
+
+    def cleanup_component_export_evidence(
+        self,
+        *,
+        context,
+        reference,
+    ) -> bool:
+        """Exactly clean a component publication bound to provider evidence."""
+
+        if (
+            type(context) is not BackupExecutionContext
+            or type(context.workspace_reference) is not WorkspaceReference
+            or type(reference) is not ComponentExportReference
+            or type(reference.identifier) is not uuid.UUID
+        ):
+            raise ComponentExportCleanupError()
+        key = (
+            context.workspace_reference.identifier,
+            reference.identifier,
+        )
+        with self._published_results_lock:
+            if key in self._exactly_cleaned_results:
+                if self._exactly_cleaned_results[key] != context:
+                    raise ComponentExportCleanupError()
+                return True
+            evidence = self._published_results.get(key)
+        if (
+            type(evidence) is not _PublishedComponentEvidence
+            or evidence.context != context
+            or evidence.result.reference != reference
+        ):
+            raise ComponentExportCleanupError()
+
+        try:
+            workspace = self._existing_workspace(
+                context,
+                error_type=ComponentExportCleanupError,
+            )
+            parent = workspace.system_area_path(WorkspaceArea.COMPONENTS)
+            directory = self._component_directory(
+                context,
+                reference,
+                require_exists=True,
+                error_type=ComponentExportCleanupError,
+            )
+            if (
+                _directory_identity(
+                    directory,
+                    error_type=ComponentExportCleanupError,
+                )
+                != evidence.directory_identity
+            ):
+                raise ComponentExportCleanupError()
+            _same_device(
+                parent,
+                directory,
+                error_type=ComponentExportCleanupError,
+            )
+
+            remaining_names = {
+                name
+                for name, file_identity, _byte_count in evidence.expected_files
+                if file_identity is not None
+            }
+            with os.scandir(directory) as entries:
+                if {entry.name for entry in entries} != remaining_names:
+                    raise ComponentExportCleanupError()
+
+            for file_name, file_identity, byte_count in evidence.expected_files:
+                if file_identity is None:
+                    continue
+                path = contained_path(directory, directory / file_name)
+                current_identity = _regular_file_identity(
+                    path,
+                    error_type=ComponentExportCleanupError,
+                )
+                try:
+                    current = os.stat(path, follow_symlinks=False)
+                except OSError:
+                    raise ComponentExportCleanupError() from None
+                if (
+                    current_identity != file_identity
+                    or current.st_dev != evidence.directory_identity[0]
+                    or current.st_size != byte_count
+                ):
+                    raise ComponentExportCleanupError()
+
+                unlink_abort = None
+                unlink_abort_traceback = None
+                try:
+                    os.unlink(path)
+                except BaseException as exc:
+                    if os.path.lexists(path):
+                        raise
+                    if not isinstance(exc, Exception):
+                        unlink_abort = exc
+                        unlink_abort_traceback = exc.__traceback__
+                if os.path.lexists(path):
+                    raise ComponentExportCleanupError()
+
+                updated_files = tuple(
+                    (
+                        expected_name,
+                        None
+                        if expected_name == file_name
+                        else expected_identity,
+                        expected_byte_count,
+                    )
+                    for (
+                        expected_name,
+                        expected_identity,
+                        expected_byte_count,
+                    ) in evidence.expected_files
+                )
+                updated_evidence = replace(
+                    evidence,
+                    expected_files=updated_files,
+                )
+                with self._published_results_lock:
+                    if self._published_results.get(key) != evidence:
+                        raise ComponentExportCleanupError()
+                    self._published_results[key] = updated_evidence
+                evidence = updated_evidence
+                if unlink_abort is not None:
+                    raise unlink_abort.with_traceback(unlink_abort_traceback)
+
+            with os.scandir(directory) as entries:
+                if next(entries, None) is not None:
+                    raise ComponentExportCleanupError()
+            if (
+                _directory_identity(
+                    directory,
+                    error_type=ComponentExportCleanupError,
+                )
+                != evidence.directory_identity
+            ):
+                raise ComponentExportCleanupError()
+
+            directory_abort = None
+            directory_abort_traceback = None
+            try:
+                os.rmdir(directory)
+            except BaseException as exc:
+                if os.path.lexists(directory):
+                    raise
+                if not isinstance(exc, Exception):
+                    directory_abort = exc
+                    directory_abort_traceback = exc.__traceback__
+            if os.path.lexists(directory):
+                raise ComponentExportCleanupError()
+            with self._published_results_lock:
+                if self._published_results.get(key) != evidence:
+                    raise ComponentExportCleanupError()
+                self._published_results.pop(key, None)
+                self._exactly_cleaned_results[key] = context
+            if directory_abort is not None:
+                raise directory_abort.with_traceback(
+                    directory_abort_traceback
+                )
+            return True
+        except ComponentExportCleanupError:
+            raise
+        except LogicalExportEngineError:
+            raise ComponentExportCleanupError() from None
+        except Exception:
+            raise ComponentExportCleanupError() from None
+
+    def cleanup_component_export(
+        self,
+        *,
+        context,
+        reference,
+        require_exact_evidence=False,
+    ) -> bool:
+        if type(require_exact_evidence) is not bool:
+            raise ComponentExportCleanupError()
+        if require_exact_evidence:
+            return self.cleanup_component_export_evidence(
+                context=context,
+                reference=reference,
+            )
         if (
             type(context) is not BackupExecutionContext
             or type(reference) is not ComponentExportReference
@@ -1649,7 +2049,15 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
                 if os.path.lexists(directory):
                     raise ComponentExportCleanupError()
                 removed_directory = True
-            return bool(existing) or removed_directory
+            cleaned = bool(existing) or removed_directory
+            if cleaned:
+                key = (
+                    context.workspace_reference.identifier,
+                    reference.identifier,
+                )
+                with self._published_results_lock:
+                    self._published_results.pop(key, None)
+            return cleaned
         except ComponentExportNotFound:
             return False
         except LogicalExportEngineError as exc:

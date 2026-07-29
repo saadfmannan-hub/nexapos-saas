@@ -36,6 +36,7 @@ class WorkspaceReference:
 class WorkspaceArea(StrEnum):
     SNAPSHOT = "snapshot"
     COMPONENTS = "components"
+    MEDIA = "media"
     MANIFEST = "manifest"
     PACKAGE = "package"
     VERIFICATION = "verification"

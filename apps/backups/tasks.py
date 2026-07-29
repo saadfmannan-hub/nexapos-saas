@@ -1,6 +1,6 @@
 """Safe asynchronous integration boundary for future backup phases.
 
-No Celery task is registered in Phase 2C.  ``execute_backup`` is a deliberately
+No Celery task is registered in Phase 2D-1. ``execute_backup`` is a deliberately
 disabled plain function: it has no ``delay`` method, retry policy, beat entry,
 or eager fallback.
 """
@@ -72,9 +72,10 @@ def check_backup_async_execution_configuration(app_configs, **kwargs):
             Error(
                 "The backup engine provider stack is not operational.",
                 hint=(
-                    "SQLite snapshot and logical export support exist, but media "
-                    "capture, package, verification, encryption, and storage "
-                    "providers are incomplete. "
+                    "SQLite snapshot, logical export, local media capture, and "
+                    "canonical manifest support exist internally, but package "
+                    "construction, verification, encryption, durable storage, "
+                    "and operational orchestration are incomplete. "
                     "Keep BACKUP_EXECUTION_ENGINE_ENABLED false."
                 ),
                 id="backups.E012",
@@ -84,7 +85,7 @@ def check_backup_async_execution_configuration(app_configs, **kwargs):
 
 
 def execute_backup(backup_public_id, business_public_id):
-    """Fail safely if the future task entrypoint is invoked in Phase 2C.
+    """Fail safely if the future task entrypoint is invoked in Phase 2D-1.
 
     This is intentionally not decorated as a Celery task.  The durable record
     is marked failed when possible so a disabled invocation never remains

@@ -225,3 +225,114 @@ class ComponentExportCleanupError(LogicalExportEngineError):
 class SnapshotCleanupAfterExportError(LogicalExportEngineError):
     default_message = "The temporary snapshot could not be cleaned after logical export."
     default_code = "snapshot_cleanup_after_export_failed"
+
+
+class CrossTenantMediaReference(TenantIsolationViolation):
+    default_message = "A logical media reference is not exclusive to the selected tenant."
+    default_code = "cross_tenant_media_reference"
+
+
+class Phase2D1EngineError(BackupEngineError):
+    """Base for sanitized media-capture and canonical-manifest failures."""
+
+    retryable = False
+
+    def __init__(self, message=None, *, code=None, cleanup_incomplete=False):
+        self.cleanup_incomplete = bool(cleanup_incomplete)
+        super().__init__(message, code=code)
+
+
+class MediaCapturePolicyError(Phase2D1EngineError):
+    default_message = "The media capture policy configuration is invalid."
+    default_code = "media_capture_policy_invalid"
+
+
+class UnsupportedMediaStorageBackend(Phase2D1EngineError):
+    default_message = "The configured media storage backend is not supported."
+    default_code = "unsupported_media_storage_backend"
+
+
+class UnsafeMediaStorageObject(Phase2D1EngineError):
+    default_message = "A referenced media object is not safe to capture."
+    default_code = "unsafe_media_storage_object"
+
+
+class MediaObjectNotFound(Phase2D1EngineError, LookupError):
+    default_message = "A required media object is unavailable."
+    default_code = "media_object_not_found"
+
+
+class MediaObjectChanged(Phase2D1EngineError):
+    default_message = "A media object changed during secure capture."
+    default_code = "media_object_changed"
+
+
+class MediaCaptureLimitExceeded(Phase2D1EngineError):
+    default_message = "Media capture exceeded a configured safety limit."
+    default_code = "media_capture_limit_exceeded"
+
+
+class InsufficientMediaCaptureCapacity(MediaCaptureLimitExceeded):
+    default_message = "The private staging area has insufficient media capacity."
+    default_code = "insufficient_media_capture_capacity"
+
+
+class MediaCaptureTimeout(Phase2D1EngineError):
+    default_message = "Media capture exceeded its bounded deadline."
+    default_code = "media_capture_timeout"
+    retryable = True
+
+
+class MediaCaptureCreationError(Phase2D1EngineError):
+    default_message = "A private media capture could not be created safely."
+    default_code = "media_capture_creation_failed"
+
+
+class MediaCaptureCleanupError(Phase2D1EngineError):
+    default_message = "A private media capture could not be cleaned safely."
+    default_code = "media_capture_cleanup_failed"
+
+
+class MediaStorageNameCollision(Phase2D1EngineError):
+    default_message = "Distinct media names are ambiguous across supported filesystems."
+    default_code = "media_storage_name_collision"
+
+
+class MediaStorageAliasCollision(Phase2D1EngineError):
+    default_message = "Distinct media names resolve to the same physical object."
+    default_code = "media_storage_alias_collision"
+
+
+class MediaIndexValidationError(Phase2D1EngineError):
+    default_message = "A logical media index failed strict validation."
+    default_code = "media_index_validation_failed"
+
+
+class CanonicalManifestValidationError(Phase2D1EngineError):
+    default_message = "Canonical manifest inputs failed validation."
+    default_code = "canonical_manifest_validation_failed"
+
+
+class CanonicalManifestCreationError(Phase2D1EngineError):
+    default_message = "The canonical manifest could not be created safely."
+    default_code = "canonical_manifest_creation_failed"
+
+
+class CanonicalManifestCleanupError(Phase2D1EngineError):
+    default_message = "The canonical manifest could not be cleaned safely."
+    default_code = "canonical_manifest_cleanup_failed"
+
+
+class CanonicalManifestNotFound(Phase2D1EngineError, LookupError):
+    default_message = "The opaque canonical manifest reference is unavailable."
+    default_code = "canonical_manifest_not_found"
+
+
+class ComponentContentMismatch(Phase2D1EngineError):
+    default_message = "A logical component stream does not match its validated metadata."
+    default_code = "component_content_mismatch"
+
+
+class Phase2D1CoordinationError(Phase2D1EngineError):
+    default_message = "Secure media and manifest coordination failed."
+    default_code = "phase2d1_coordination_failed"

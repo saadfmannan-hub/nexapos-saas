@@ -336,7 +336,16 @@ class LogicalExportRegistry:
             if definition.scope_eligibility
             for field_name in definition.media_fields
         }
-        if declared_media != component_media:
+        concrete_media = {
+            f"{model._meta.label}.{field.name}"
+            for model in registry.get_models()
+            for field in model._meta.concrete_fields
+            if isinstance(field, models.FileField)
+        }
+        if (
+            declared_media != component_media
+            or declared_media != concrete_media
+        ):
             raise LogicalExportRegistryError()
         return True
 
