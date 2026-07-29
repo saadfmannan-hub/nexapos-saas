@@ -250,7 +250,7 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
-# Backup engine foundation (Phase 2A remains deliberately disabled)
+# Backup engine foundation (Phase 2C providers remain operationally disabled)
 # ------------------------------------------------------------------
 BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
     "BACKUP_EXECUTION_ENGINE_ENABLED",
@@ -307,6 +307,34 @@ BACKUP_SQLITE_HEADROOM_MULTIPLIER = env.float(
 BACKUP_SQLITE_REQUIRE_LOCAL_STAGING = env.bool(
     "BACKUP_SQLITE_REQUIRE_LOCAL_STAGING",
     default=True,
+)
+BACKUP_LOGICAL_EXPORT_FETCH_BATCH_SIZE = env.int(
+    "BACKUP_LOGICAL_EXPORT_FETCH_BATCH_SIZE",
+    default=200,
+)
+BACKUP_LOGICAL_EXPORT_COMPONENT_TIMEOUT_SECONDS = env.float(
+    "BACKUP_LOGICAL_EXPORT_COMPONENT_TIMEOUT_SECONDS",
+    default=120.0,
+)
+BACKUP_LOGICAL_EXPORT_MAX_RECORDS_BYTES = env.int(
+    "BACKUP_LOGICAL_EXPORT_MAX_RECORDS_BYTES",
+    default=536_870_912,
+)
+BACKUP_LOGICAL_EXPORT_MAX_MEDIA_INDEX_BYTES = env.int(
+    "BACKUP_LOGICAL_EXPORT_MAX_MEDIA_INDEX_BYTES",
+    default=33_554_432,
+)
+BACKUP_LOGICAL_EXPORT_MAX_ROW_INPUT_BYTES = env.int(
+    "BACKUP_LOGICAL_EXPORT_MAX_ROW_INPUT_BYTES",
+    default=65_536,
+)
+BACKUP_LOGICAL_EXPORT_MAX_JSON_DEPTH = env.int(
+    "BACKUP_LOGICAL_EXPORT_MAX_JSON_DEPTH",
+    default=20,
+)
+BACKUP_LOGICAL_EXPORT_MAX_MEDIA_NAME_LENGTH = env.int(
+    "BACKUP_LOGICAL_EXPORT_MAX_MEDIA_NAME_LENGTH",
+    default=1024,
 )
 
 # ------------------------------------------------------------------

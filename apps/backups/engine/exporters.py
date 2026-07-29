@@ -1,7 +1,7 @@
 """Component exporter integration point.
 
-Phase 2A intentionally provides only the typed ``ComponentExporter`` contract.
-No Django model query or logical row exporter is registered here.
+Phase 2C provides an internal SQLite-snapshot logical exporter while the full
+operational provider stack remains disabled.
 """
 
 from .contracts import (
@@ -10,10 +10,12 @@ from .contracts import (
     ComponentExportRequest,
     ComponentExportResult,
 )
+from .logical_export import SQLiteLogicalComponentExporter
 
 __all__ = [
     "ComponentExporter",
     "ComponentExportReference",
     "ComponentExportRequest",
     "ComponentExportResult",
+    "SQLiteLogicalComponentExporter",
 ]

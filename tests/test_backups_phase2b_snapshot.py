@@ -16,6 +16,7 @@ from django.test import SimpleTestCase, override_settings
 from apps.backups.engine.availability import (
     OPERATIONAL_PROVIDER_STACK_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
+    TENANT_LOGICAL_EXPORT_PROVIDER_READY,
     get_engine_capability,
     real_execution_available,
 )
@@ -1299,6 +1300,7 @@ class SQLiteSnapshotEngineBoundaryTests(BackupPhase1TestCase):
     )
     def test_snapshot_capability_does_not_enable_full_execution(self):
         self.assertTrue(SQLITE_SNAPSHOT_PROVIDER_READY)
+        self.assertTrue(TENANT_LOGICAL_EXPORT_PROVIDER_READY)
         self.assertFalse(OPERATIONAL_PROVIDER_STACK_READY)
         capability = get_engine_capability()
         self.assertTrue(capability.snapshot_provider_ready)
@@ -1339,8 +1341,11 @@ class SQLiteSnapshotEngineBoundaryTests(BackupPhase1TestCase):
             states[PipelineStage.PREPARE_SNAPSHOT],
             PipelineStageState.PLANNED,
         )
+        self.assertEqual(
+            states[PipelineStage.EXPORT_COMPONENTS],
+            PipelineStageState.PLANNED,
+        )
         for stage in (
-            PipelineStage.EXPORT_COMPONENTS,
             PipelineStage.BUILD_PACKAGE,
             PipelineStage.VERIFY_ARTIFACT,
             PipelineStage.COMPLETE,

@@ -144,3 +144,84 @@ class SnapshotNotFound(SnapshotEngineError, LookupError):
 class SnapshotCleanupError(SnapshotEngineError):
     default_message = "The temporary SQLite snapshot could not be cleaned safely."
     default_code = "snapshot_cleanup_failed"
+
+
+class LogicalExportEngineError(BackupEngineError):
+    """Base for sanitized tenant logical-export failures."""
+
+    retryable = False
+
+    def __init__(self, message=None, *, code=None, cleanup_incomplete=False):
+        self.cleanup_incomplete = bool(cleanup_incomplete)
+        super().__init__(message, code=code)
+
+
+class LogicalExportRegistryError(LogicalExportEngineError):
+    default_message = "The logical export registry is not valid."
+    default_code = "logical_export_registry_invalid"
+
+
+class UnknownLogicalExportModel(LogicalExportRegistryError, LookupError):
+    default_message = "The logical export model is not registered."
+    default_code = "unknown_logical_export_model"
+
+
+class UnsupportedLogicalExportField(LogicalExportRegistryError):
+    default_message = "A logical export field has no safe serialization policy."
+    default_code = "unsupported_logical_export_field"
+
+
+class TenantIsolationViolation(LogicalExportEngineError):
+    default_message = "Tenant isolation validation failed during logical export."
+    default_code = "logical_export_tenant_isolation_failed"
+
+
+class LogicalReferenceResolutionError(LogicalExportEngineError):
+    default_message = "A logical export reference could not be resolved safely."
+    default_code = "logical_export_reference_failed"
+
+
+class UnsafeMediaReference(LogicalExportEngineError):
+    default_message = "A logical media reference is not safe."
+    default_code = "unsafe_logical_media_reference"
+
+
+class LogicalExportPolicyError(LogicalExportEngineError):
+    default_message = "The logical export policy configuration is invalid."
+    default_code = "logical_export_policy_invalid"
+
+
+class ComponentExportLimitExceeded(LogicalExportEngineError):
+    default_message = "The logical component export exceeded a configured limit."
+    default_code = "component_export_limit_exceeded"
+
+
+class ComponentExportTimeout(LogicalExportEngineError):
+    default_message = "The logical component export exceeded its deadline."
+    default_code = "component_export_timeout"
+    retryable = True
+
+
+class ComponentExportCreationError(LogicalExportEngineError):
+    default_message = "The logical component export could not be created safely."
+    default_code = "component_export_creation_failed"
+
+
+class ComponentExportValidationError(LogicalExportEngineError):
+    default_message = "The logical component export request is not valid."
+    default_code = "component_export_validation_failed"
+
+
+class ComponentExportNotFound(LogicalExportEngineError, LookupError):
+    default_message = "The opaque logical component export is unavailable."
+    default_code = "component_export_not_found"
+
+
+class ComponentExportCleanupError(LogicalExportEngineError):
+    default_message = "The logical component export could not be cleaned safely."
+    default_code = "component_export_cleanup_failed"
+
+
+class SnapshotCleanupAfterExportError(LogicalExportEngineError):
+    default_message = "The temporary snapshot could not be cleaned after logical export."
+    default_code = "snapshot_cleanup_after_export_failed"

@@ -52,6 +52,7 @@ class ComponentExportRequest:
     context: "BackupExecutionContext"
     component: "ComponentPlanItem"
     snapshot: SnapshotReference
+    component_plan: tuple["ComponentPlanItem", ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,14 @@ class ComponentExportResult:
     row_count: int
     media_count: int
     deterministic_ordering_version: str
+    model_counts: tuple[tuple[str, int], ...] = ()
+    byte_count: int = 0
+    media_index_byte_count: int = 0
+    component_version: str = ""
+    record_schema_version: str = ""
+    created_at: datetime | None = None
+    duration_ms: int = 0
+    provider_identifier: str = ""
 
 
 class ComponentExporter(ABC):

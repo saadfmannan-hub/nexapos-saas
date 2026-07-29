@@ -280,7 +280,6 @@ def planning_stage_reports() -> tuple[PipelineStageReport, ...]:
         PipelineStage.RESOLVE_SCOPE: "Current product entitlement was resolved.",
         PipelineStage.ACQUIRE_LOCK: "No conflicting tenant operation lock was found.",
         PipelineStage.RESOLVE_COMPONENTS: "Registered component dependencies were resolved.",
-        PipelineStage.BUILD_MANIFEST: "In-memory manifest metadata was prepared.",
     }
     reports = []
     for stage in PIPELINE_STAGE_ORDER:
@@ -300,6 +299,17 @@ def planning_stage_reports() -> tuple[PipelineStageReport, ...]:
                     (
                         "The internal SQLite snapshot provider is available, "
                         "but planning performs no filesystem or database work."
+                    ),
+                )
+            )
+        elif stage == PipelineStage.EXPORT_COMPONENTS:
+            reports.append(
+                PipelineStageReport(
+                    stage,
+                    PipelineStageState.PLANNED,
+                    (
+                        "The internal tenant logical export provider is available, "
+                        "but planning performs no database or filesystem work."
                     ),
                 )
             )

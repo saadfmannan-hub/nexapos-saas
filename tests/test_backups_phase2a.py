@@ -203,6 +203,10 @@ class BackupPhase2APlanningTests(BackupPhase1TestCase):
             PipelineStageState.PLANNED,
         )
         self.assertEqual(
+            states[PipelineStage.EXPORT_COMPONENTS],
+            PipelineStageState.PLANNED,
+        )
+        self.assertEqual(
             states[PipelineStage.COMPLETE],
             PipelineStageState.NOT_STARTED,
         )

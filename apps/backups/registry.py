@@ -74,6 +74,28 @@ class ComponentDefinition:
             raise ComponentRegistryError(
                 f"Component '{self.key}' contains duplicate model labels."
             )
+        if any(
+            not label
+            or label.strip() != label
+            or label.count(".") != 1
+            for label in self.included_model_labels
+        ):
+            raise ComponentRegistryError(
+                f"Component '{self.key}' contains a non-canonical model label."
+            )
+        if (
+            not self.component_version
+            or self.component_version.strip() != self.component_version
+        ):
+            raise ComponentRegistryError(
+                f"Component '{self.key}' has an invalid component version."
+            )
+        if len(set(self.required_component_keys)) != len(
+            self.required_component_keys
+        ):
+            raise ComponentRegistryError(
+                f"Component '{self.key}' contains duplicate dependencies."
+            )
         if self.key in self.required_component_keys:
             raise ComponentRegistryError(
                 f"Component '{self.key}' cannot depend on itself."
@@ -115,9 +137,33 @@ class ComponentRegistry:
                 "Unknown component dependencies: "
                 + ", ".join(sorted(unknown_dependencies))
             )
+        self._assert_acyclic(definitions_by_key)
 
         self._definitions = MappingProxyType(definitions_by_key)
         self._model_owners = MappingProxyType(model_owners)
+
+    @staticmethod
+    def _assert_acyclic(definitions_by_key):
+        visiting = set()
+        visited = set()
+
+        def visit(component_key):
+            if component_key in visited:
+                return
+            if component_key in visiting:
+                raise ComponentRegistryError(
+                    "Backup component dependencies contain a cycle."
+                )
+            visiting.add(component_key)
+            for dependency_key in definitions_by_key[
+                component_key
+            ].required_component_keys:
+                visit(dependency_key)
+            visiting.remove(component_key)
+            visited.add(component_key)
+
+        for component_key in definitions_by_key:
+            visit(component_key)
 
     @property
     def definitions(self):
@@ -240,26 +286,7 @@ _DEFINITIONS = (
         export_order=10,
         import_order=10,
         restore_behavior=RestoreBehavior.REFERENCE_ONLY,
-        scope_eligibility=SHARED_SCOPES,
-    ),
-    ComponentDefinition(
-        key="shared.tenant_settings",
-        product_owner=ProductOwner.SHARED,
-        included_model_labels=("tenants.BusinessSettings",),
-        required_component_keys=("shared.tenant_identity",),
-        export_order=20,
-        import_order=20,
-        restore_behavior=RestoreBehavior.DEPENDENCY_ONLY,
-        scope_eligibility=SHARED_SCOPES,
-    ),
-    ComponentDefinition(
-        key="shared.access_control",
-        product_owner=ProductOwner.SHARED,
-        included_model_labels=("accounts.Role", "accounts.Membership"),
-        required_component_keys=("shared.tenant_identity",),
-        export_order=30,
-        import_order=30,
-        restore_behavior=RestoreBehavior.REFERENCE_ONLY,
+        media_fields=("tenants.Business.logo",),
         scope_eligibility=SHARED_SCOPES,
     ),
     ComponentDefinition(
@@ -267,9 +294,35 @@ _DEFINITIONS = (
         product_owner=ProductOwner.SHARED,
         included_model_labels=("branches.Branch", "branches.Warehouse"),
         required_component_keys=("shared.tenant_identity",),
+        export_order=20,
+        import_order=20,
+        restore_behavior=RestoreBehavior.DEPENDENCY_ONLY,
+        scope_eligibility=SHARED_SCOPES,
+    ),
+    ComponentDefinition(
+        key="shared.tenant_settings",
+        product_owner=ProductOwner.SHARED,
+        included_model_labels=("tenants.BusinessSettings",),
+        required_component_keys=(
+            "shared.tenant_identity",
+            "shared.locations",
+        ),
+        export_order=30,
+        import_order=30,
+        restore_behavior=RestoreBehavior.DEPENDENCY_ONLY,
+        scope_eligibility=SHARED_SCOPES,
+    ),
+    ComponentDefinition(
+        key="shared.access_control",
+        product_owner=ProductOwner.SHARED,
+        included_model_labels=("accounts.Role", "accounts.Membership"),
+        required_component_keys=(
+            "shared.tenant_identity",
+            "shared.locations",
+        ),
         export_order=40,
         import_order=40,
-        restore_behavior=RestoreBehavior.DEPENDENCY_ONLY,
+        restore_behavior=RestoreBehavior.REFERENCE_ONLY,
         scope_eligibility=SHARED_SCOPES,
     ),
     ComponentDefinition(
@@ -320,7 +373,10 @@ _DEFINITIONS = (
         required_component_keys=("shared.tenant_identity",),
         export_order=100,
         import_order=100,
-        media_fields=("catalog.Product.image",),
+        media_fields=(
+            "catalog.Product.image",
+            "catalog.ProductVariant.image",
+        ),
         scope_eligibility=POS_SCOPES,
     ),
     ComponentDefinition(
@@ -375,6 +431,7 @@ _DEFINITIONS = (
         required_component_keys=("pos.catalog", "pos.inventory", "pos.suppliers"),
         export_order=140,
         import_order=140,
+        media_fields=("purchases.Purchase.attachment",),
         scope_eligibility=POS_SCOPES,
     ),
     ComponentDefinition(
@@ -395,7 +452,6 @@ _DEFINITIONS = (
             "sales.Sale",
             "sales.SaleItem",
             "sales.SalePayment",
-            "sales.HeldSale",
             "sales.SaleReturn",
             "sales.SaleReturnItem",
         ),
@@ -411,6 +467,13 @@ _DEFINITIONS = (
         scope_eligibility=POS_SCOPES,
     ),
     ComponentDefinition(
+        key="pos.transient_sales",
+        product_owner=ProductOwner.POS,
+        included_model_labels=("sales.HeldSale",),
+        restore_behavior=RestoreBehavior.NON_RESTORABLE,
+        scope_eligibility=(),
+    ),
+    ComponentDefinition(
         key="pos.expenses",
         product_owner=ProductOwner.POS,
         included_model_labels=(
@@ -421,6 +484,7 @@ _DEFINITIONS = (
         required_component_keys=("shared.locations",),
         export_order=170,
         import_order=170,
+        media_fields=("expenses.Expense.attachment",),
         scope_eligibility=POS_SCOPES,
     ),
     ComponentDefinition(

@@ -128,6 +128,17 @@ class SQLiteSnapshotReader:
         if self.__deadline_check is not None:
             self.__deadline_check()
 
+    @staticmethod
+    def _close_cursor(cursor, *, active_exception):
+        try:
+            cursor.close()
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            if not active_exception:
+                raise
+        except BaseException:
+            if not active_exception:
+                raise SnapshotValidationError() from None
+
     def query(self, sql, parameters=()):
         cursor = None
         try:
@@ -145,12 +156,47 @@ class SQLiteSnapshotReader:
             ) from None
         finally:
             if cursor is not None:
-                active_exception = sys.exc_info()[0] is not None
-                try:
-                    cursor.close()
-                except sqlite3.Error:
-                    if not active_exception:
-                        raise SnapshotValidationError() from None
+                self._close_cursor(
+                    cursor,
+                    active_exception=sys.exc_info()[0] is not None,
+                )
+
+    def iter_query(self, sql, parameters=(), *, batch_size):
+        """Yield bounded row batches without exposing the raw cursor."""
+
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or not 1 <= batch_size <= 10_000
+        ):
+            raise SnapshotValidationError("The read-only snapshot operation was rejected.")
+        cursor = None
+        try:
+            self._check_deadline()
+            cursor = self.__connection.execute(sql, tuple(parameters))
+            while True:
+                self._check_deadline()
+                batch = cursor.fetchmany(batch_size)
+                self._check_deadline()
+                if not batch:
+                    break
+                for row in batch:
+                    self._check_deadline()
+                    yield tuple(row)
+            self._check_deadline()
+        except SnapshotTimeout:
+            raise
+        except sqlite3.Error:
+            self._check_deadline()
+            raise SnapshotValidationError(
+                "The read-only snapshot operation was rejected."
+            ) from None
+        finally:
+            if cursor is not None:
+                self._close_cursor(
+                    cursor,
+                    active_exception=sys.exc_info()[0] is not None,
+                )
 
     def first(self, sql, parameters=()):
         cursor = None
@@ -169,12 +215,10 @@ class SQLiteSnapshotReader:
             ) from None
         finally:
             if cursor is not None:
-                active_exception = sys.exc_info()[0] is not None
-                try:
-                    cursor.close()
-                except sqlite3.Error:
-                    if not active_exception:
-                        raise SnapshotValidationError() from None
+                self._close_cursor(
+                    cursor,
+                    active_exception=sys.exc_info()[0] is not None,
+                )
 
     def scalar(self, sql, parameters=()):
         rows = self.query(sql, parameters)
@@ -570,6 +614,7 @@ class SQLiteSnapshotProvider(SnapshotProvider):
             except AttributeError:
                 pass
             connection.set_authorizer(_reader_authorizer)
+            connection.execute("BEGIN")
             deadline_check = (
                 None if _deadline is None else lambda: self._assert_before_deadline(_deadline)
             )
@@ -586,13 +631,40 @@ class SQLiteSnapshotProvider(SnapshotProvider):
         finally:
             active_exception = sys.exc_info()[0] is not None
             final_error = None
+            cleanup_abort = None
+            cleanup_abort_traceback = None
+
+            def record_cleanup_failure(exc):
+                nonlocal final_error
+                nonlocal cleanup_abort
+                nonlocal cleanup_abort_traceback
+                if active_exception:
+                    return
+                if isinstance(
+                    exc,
+                    (KeyboardInterrupt, SystemExit, GeneratorExit),
+                ):
+                    if cleanup_abort is None:
+                        cleanup_abort = exc
+                        cleanup_abort_traceback = exc.__traceback__
+                    return
+                final_error = SnapshotValidationError()
+
             if connection is not None:
+                try:
+                    if connection.in_transaction:
+                        connection.rollback()
+                except BaseException as exc:
+                    record_cleanup_failure(exc)
                 try:
                     if _deadline is not None:
                         connection.set_progress_handler(None, 0)
+                except BaseException as exc:
+                    record_cleanup_failure(exc)
+                try:
                     connection.close()
-                except (sqlite3.Error, OSError):
-                    final_error = SnapshotValidationError()
+                except BaseException as exc:
+                    record_cleanup_failure(exc)
             try:
                 self._assert_expected_identity(
                     snapshot_path,
@@ -600,12 +672,15 @@ class SQLiteSnapshotProvider(SnapshotProvider):
                     error_type=SnapshotValidationError,
                 )
                 self._assert_no_sidecars(snapshot_path)
-            except SnapshotEngineError:
+            except BaseException as exc:
+                record_cleanup_failure(exc)
                 try:
                     self._remove_exact_sidecars(snapshot_path)
-                except SnapshotEngineError:
-                    pass
+                except BaseException as cleanup_exc:
+                    record_cleanup_failure(cleanup_exc)
                 final_error = SnapshotValidationError()
+            if cleanup_abort is not None and not active_exception:
+                raise cleanup_abort.with_traceback(cleanup_abort_traceback)
             if final_error is not None and not active_exception:
                 raise final_error from None
 

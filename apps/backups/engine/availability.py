@@ -9,10 +9,12 @@ from .exceptions import BackupEngineDisabled
 # Phase 2B implements the SQLite snapshot provider, but this is a code
 # capability rather than permission to run a commercial backup workflow.
 SQLITE_SNAPSHOT_PROVIDER_READY = True
+TENANT_LOGICAL_EXPORT_PROVIDER_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
-    "SQLite snapshot support is available internally, but logical export, "
-    "packaging, verification, encryption, and storage providers remain incomplete."
+    "SQLite snapshot and tenant logical export support are available internally, "
+    "but media capture, packaging, verification, encryption, and storage "
+    "providers remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -22,6 +24,7 @@ PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
 class BackupEngineCapability:
     setting_enabled: bool
     snapshot_provider_ready: bool
+    logical_export_provider_ready: bool
     runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
@@ -49,6 +52,7 @@ def get_engine_capability() -> BackupEngineCapability:
     return BackupEngineCapability(
         setting_enabled=setting_enabled,
         snapshot_provider_ready=SQLITE_SNAPSHOT_PROVIDER_READY,
+        logical_export_provider_ready=TENANT_LOGICAL_EXPORT_PROVIDER_READY,
         # Runtime readiness depends on the selected database and private
         # workspace. Planning deliberately does not perform that assessment.
         runtime_snapshot_policy_ready=None,
