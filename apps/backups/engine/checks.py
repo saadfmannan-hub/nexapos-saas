@@ -238,6 +238,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.MEDIA_CAPTURE_PROVIDER_READY is True
         and availability.CANONICAL_MANIFEST_PROVIDER_READY is True
         and availability.DETERMINISTIC_PACKAGE_PROVIDER_READY is True
+        and availability.INDEPENDENT_PACKAGE_VERIFIER_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -249,6 +250,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.CANONICAL_MANIFEST_PROVIDER_READY
         and capability.deterministic_package_provider_ready
         is availability.DETERMINISTIC_PACKAGE_PROVIDER_READY
+        and capability.independent_package_verifier_ready
+        is availability.INDEPENDENT_PACKAGE_VERIFIER_READY
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -259,7 +262,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all five internal providers ready while the operational "
+                    "Keep all six internal providers ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

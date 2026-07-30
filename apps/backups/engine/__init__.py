@@ -1,4 +1,4 @@
-"""Nexa backup engine foundations through the internal Phase 2D-2 providers.
+"""Nexa backup engine foundations through the internal Phase 2E providers.
 
 The public surface remains deliberately non-operational. It exposes typed
 contracts, immutable planning metadata, and central availability guards.
@@ -7,6 +7,7 @@ contracts, immutable planning metadata, and central availability guards.
 from .availability import (
     CANONICAL_MANIFEST_PROVIDER_READY,
     DETERMINISTIC_PACKAGE_PROVIDER_READY,
+    INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
     TENANT_LOGICAL_EXPORT_PROVIDER_READY,
@@ -19,10 +20,16 @@ from .context import ActorIdentitySnapshot, BackupExecutionContext
 from .contracts import (
     PackageBuildRequest,
     PackageBuildResult,
+    PackageCompatibilityStatus,
+    PackageVerificationRequest,
+    PackageVerificationResult,
     Phase2D1Request,
     Phase2D1Result,
     Phase2D2Request,
     Phase2D2Result,
+    RestoreReadinessResult,
+    VerificationIssue,
+    VerificationReference,
 )
 from .deterministic_package import DeterministicPackageProvider
 from .exceptions import BackupEngineDisabled, BackupEngineError
@@ -32,6 +39,7 @@ from .logical_export import (
 )
 from .media_capture import LocalFilesystemMediaCaptureProvider
 from .orchestration import prepare_backup_execution
+from .package_verification import IndependentPackageVerifier
 from .phase2d1 import Phase2D1Coordinator
 from .phase2d2 import Phase2D2Coordinator
 from .pipeline import BackupExecutionPlan, PipelineStage
@@ -47,10 +55,15 @@ __all__ = [
     "CanonicalManifestProvider",
     "DETERMINISTIC_PACKAGE_PROVIDER_READY",
     "DeterministicPackageProvider",
+    "INDEPENDENT_PACKAGE_VERIFIER_READY",
+    "IndependentPackageVerifier",
     "LocalFilesystemMediaCaptureProvider",
     "MEDIA_CAPTURE_PROVIDER_READY",
     "PackageBuildRequest",
     "PackageBuildResult",
+    "PackageCompatibilityStatus",
+    "PackageVerificationRequest",
+    "PackageVerificationResult",
     "Phase2D1Coordinator",
     "Phase2D1Request",
     "Phase2D1Result",
@@ -58,10 +71,13 @@ __all__ = [
     "Phase2D2Request",
     "Phase2D2Result",
     "PipelineStage",
+    "RestoreReadinessResult",
     "SQLITE_SNAPSHOT_PROVIDER_READY",
     "SQLiteSnapshotProvider",
     "SQLiteLogicalComponentExporter",
     "TENANT_LOGICAL_EXPORT_PROVIDER_READY",
+    "VerificationIssue",
+    "VerificationReference",
     "assert_real_execution_available",
     "get_engine_capability",
     "prepare_backup_execution",

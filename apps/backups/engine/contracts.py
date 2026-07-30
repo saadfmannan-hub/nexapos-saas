@@ -4,6 +4,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -186,6 +187,17 @@ class Phase2D2Result:
     package: PackageBuildResult
 
 
+class PackageCompatibilityStatus(StrEnum):
+    COMPATIBLE = "COMPATIBLE"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    NOT_PROVEN = "NOT_PROVEN"
+
+
+@dataclass(frozen=True, slots=True)
+class VerificationReference:
+    identifier: uuid.UUID
+
+
 @dataclass(frozen=True, slots=True)
 class VerificationIssue:
     code: str
@@ -193,23 +205,50 @@ class VerificationIssue:
 
 
 @dataclass(frozen=True, slots=True)
-class VerificationRequest:
+class PackageVerificationRequest:
     context: "BackupExecutionContext"
-    package: PackageReference
-    manifest: "BackupManifest"
+    package: PackageBuildResult
 
 
 @dataclass(frozen=True, slots=True)
-class VerificationResult:
+class RestoreReadinessResult:
+    restore_ready: bool
+    compatibility_status: PackageCompatibilityStatus
+    issue_codes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PackageVerificationResult:
+    reference: VerificationReference | None
     verified: bool
+    restore_ready: bool
+    verified_at: datetime
+    package_byte_count: int
+    plaintext_sha256: str
+    entry_count: int
+    manifest_sha256: str
+    payload_set_sha256: str
+    compatibility_status: PackageCompatibilityStatus
+    provider_identifier: str
+    verification_schema: str
     issues: tuple[VerificationIssue, ...]
-    verified_at: datetime | None
+    restore_readiness: RestoreReadinessResult
+    evidence_byte_count: int = 0
+    evidence_sha256: str = ""
 
 
 class VerificationProvider(ABC):
     @abstractmethod
-    def verify(self, request: VerificationRequest) -> VerificationResult:
-        """Verify a future artifact and its restore readiness."""
+    def verify(
+        self,
+        request: PackageVerificationRequest,
+    ) -> PackageVerificationResult:
+        """Independently verify a package and publish safe readiness evidence."""
+
+
+# Compatibility aliases retained for callers that imported the Phase 1 names.
+VerificationRequest = PackageVerificationRequest
+VerificationResult = PackageVerificationResult
 
 
 @dataclass(frozen=True, slots=True)
