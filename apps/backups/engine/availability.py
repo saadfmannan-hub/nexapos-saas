@@ -6,18 +6,20 @@ from django.conf import settings
 
 from .exceptions import BackupEngineDisabled
 
-# Phase 2B implements the SQLite snapshot provider, but this is a code
-# capability rather than permission to run a commercial backup workflow.
+# These code capabilities are internal building blocks. They do not permit a
+# commercial workflow to run until verification, encryption, durable storage,
+# and operational orchestration are complete.
 SQLITE_SNAPSHOT_PROVIDER_READY = True
 TENANT_LOGICAL_EXPORT_PROVIDER_READY = True
 MEDIA_CAPTURE_PROVIDER_READY = True
 CANONICAL_MANIFEST_PROVIDER_READY = True
+DETERMINISTIC_PACKAGE_PROVIDER_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
-    "SQLite snapshot, tenant logical export, local media capture, and canonical "
-    "manifest support are available internally, but deterministic package "
-    "construction, independent verification, encryption, durable private storage, "
-    "and operational orchestration remain incomplete."
+    "SQLite snapshot, tenant logical export, local media capture, canonical "
+    "manifest, and deterministic plaintext package support are available "
+    "internally, but independent verification, encryption, durable private "
+    "storage, and operational orchestration remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -30,6 +32,7 @@ class BackupEngineCapability:
     logical_export_provider_ready: bool
     media_capture_provider_ready: bool
     canonical_manifest_provider_ready: bool
+    deterministic_package_provider_ready: bool
     runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
@@ -60,6 +63,7 @@ def get_engine_capability() -> BackupEngineCapability:
         logical_export_provider_ready=TENANT_LOGICAL_EXPORT_PROVIDER_READY,
         media_capture_provider_ready=MEDIA_CAPTURE_PROVIDER_READY,
         canonical_manifest_provider_ready=CANONICAL_MANIFEST_PROVIDER_READY,
+        deterministic_package_provider_ready=DETERMINISTIC_PACKAGE_PROVIDER_READY,
         # Runtime readiness depends on the selected database and private
         # workspace. Planning deliberately does not perform that assessment.
         runtime_snapshot_policy_ready=None,

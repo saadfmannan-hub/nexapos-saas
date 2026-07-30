@@ -154,20 +154,36 @@ class PackageReference:
 @dataclass(frozen=True, slots=True)
 class PackageBuildRequest:
     context: "BackupExecutionContext"
-    manifest: "BackupManifest"
-    component_exports: tuple[ComponentExportResult, ...]
+    phase2d1_result: Phase2D1Result
 
 
 @dataclass(frozen=True, slots=True)
 class PackageBuildResult:
     reference: PackageReference
     byte_count: int
+    plaintext_sha256: str
+    entry_count: int
+    payload_set_sha256: str
+    format_identifier: str
+    created_at: datetime
+    provider_identifier: str
 
 
 class PackageBuilder(ABC):
     @abstractmethod
     def build_package(self, request: PackageBuildRequest) -> PackageBuildResult:
-        """Assemble a future artifact; no implementation exists in Phase 2A."""
+        """Assemble a deterministic private plaintext package."""
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2D2Request:
+    context: "BackupExecutionContext"
+    phase2d1_result: Phase2D1Result
+
+
+@dataclass(frozen=True, slots=True)
+class Phase2D2Result:
+    package: PackageBuildResult
 
 
 @dataclass(frozen=True, slots=True)
