@@ -2,34 +2,38 @@
   .backup-shell {
     --backup-ink: #172033;
     --backup-muted: #657084;
-    --backup-line: #e8edf4;
+    --backup-line: #e7ecf3;
+    --backup-soft: #f7f9fc;
   }
   .backup-shell .backup-hero {
-    position: relative;
     overflow: hidden;
     border: 0;
     border-radius: 1.1rem;
     color: #fff;
     background:
-      radial-gradient(circle at 92% 12%, rgba(255, 255, 255, .18), transparent 28%),
-      linear-gradient(135deg, #172554 0%, #1d4ed8 58%, #0ea5a4 125%);
-    box-shadow: 0 1rem 2.5rem rgba(30, 64, 175, .16);
+      radial-gradient(circle at 92% 12%, rgba(255,255,255,.2), transparent 28%),
+      linear-gradient(135deg, #172554 0%, #1d4ed8 58%, #0f9f9d 125%);
+    box-shadow: 0 1rem 2.5rem rgba(30,64,175,.16);
   }
-  .backup-shell .backup-hero .hero-mark {
+  .backup-shell .hero-mark,
+  .backup-shell .metric-icon {
     display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: .9rem;
+  }
+  .backup-shell .hero-mark {
     width: 3rem;
     height: 3rem;
-    place-items: center;
-    border: 1px solid rgba(255, 255, 255, .3);
-    border-radius: .9rem;
-    background: rgba(255, 255, 255, .14);
-    font-size: 1.4rem;
+    border: 1px solid rgba(255,255,255,.3);
+    background: rgba(255,255,255,.14);
+    font-size: 1.35rem;
   }
   .backup-shell .backup-card {
     height: 100%;
     border: 1px solid var(--backup-line);
     border-radius: 1rem;
-    box-shadow: 0 .45rem 1.3rem rgba(23, 32, 51, .045);
+    box-shadow: 0 .45rem 1.3rem rgba(23,32,51,.045);
   }
   .backup-shell .backup-card .card-header {
     border-bottom-color: var(--backup-line);
@@ -37,28 +41,24 @@
     padding: .9rem 1rem;
   }
   .backup-shell .metric-icon {
-    display: grid;
     width: 2.75rem;
     height: 2.75rem;
-    flex: 0 0 2.75rem;
-    place-items: center;
-    border-radius: .85rem;
-    font-size: 1.2rem;
+    font-size: 1.15rem;
   }
   .backup-shell .metric-label {
     color: var(--backup-muted);
-    font-size: .75rem;
+    font-size: .72rem;
     font-weight: 700;
     letter-spacing: .055em;
     text-transform: uppercase;
   }
   .backup-shell .metric-value {
     color: var(--backup-ink);
-    font-size: 1.25rem;
+    font-size: 1.15rem;
     font-weight: 750;
     line-height: 1.25;
   }
-  .backup-shell .engine-notice {
+  .backup-shell .capability-notice {
     border: 1px solid #fde68a;
     border-radius: .9rem;
     background: #fffbeb;
@@ -77,6 +77,41 @@
     padding: .28rem .58rem;
     white-space: nowrap;
   }
+  .backup-shell .status-dot {
+    width: .48rem;
+    height: .48rem;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .backup-shell .definition-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem 1.5rem;
+  }
+  .backup-shell .definition-grid dt {
+    color: var(--backup-muted);
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+  }
+  .backup-shell .definition-grid dd {
+    margin: .25rem 0 0;
+    color: var(--backup-ink);
+    overflow-wrap: anywhere;
+  }
+  .backup-shell .safety-panel {
+    border: 1px solid #fecaca;
+    border-radius: 1rem;
+    background: #fff8f8;
+  }
+  .backup-shell .check-item {
+    display: flex;
+    gap: .75rem;
+    padding: .8rem 0;
+    border-bottom: 1px solid var(--backup-line);
+  }
+  .backup-shell .check-item:last-child { border-bottom: 0; }
   .backup-shell .timeline {
     position: relative;
     margin: 0;
@@ -108,35 +143,29 @@
     background: #3b82f6;
     box-shadow: 0 0 0 2px #bfdbfe;
   }
-  .backup-shell .definition-grid dt {
-    color: var(--backup-muted);
-    font-size: .75rem;
-    font-weight: 700;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-  }
-  .backup-shell .definition-grid dd {
-    color: var(--backup-ink);
-    overflow-wrap: anywhere;
-  }
-  .backup-shell .check-row {
-    display: flex;
-    align-items: flex-start;
-    gap: .75rem;
-    padding: .85rem 0;
-    border-bottom: 1px solid var(--backup-line);
-  }
-  .backup-shell .check-row:last-child { border-bottom: 0; }
-  .backup-shell .check-icon {
-    display: grid;
-    width: 2rem;
-    height: 2rem;
-    flex: 0 0 2rem;
-    place-items: center;
-    border-radius: 50%;
+  .backup-shell .empty-state { color: var(--backup-muted); text-align: center; }
+  @media (max-width: 767.98px) {
+    .backup-shell .definition-grid { grid-template-columns: 1fr; }
+    .backup-shell .backup-table thead { display: none; }
+    .backup-shell .backup-table,
+    .backup-shell .backup-table tbody,
+    .backup-shell .backup-table tr,
+    .backup-shell .backup-table td { display: block; width: 100%; }
+    .backup-shell .backup-table tr { padding: .8rem 1rem; border-bottom: 1px solid var(--backup-line); }
+    .backup-shell .backup-table td { padding: .22rem 0; border: 0; text-align: left !important; }
+    .backup-shell .backup-table td[data-label]::before {
+      display: inline-block;
+      width: 7.2rem;
+      color: var(--backup-muted);
+      content: attr(data-label);
+      font-size: .7rem;
+      font-weight: 700;
+      letter-spacing: .035em;
+      text-transform: uppercase;
+    }
   }
   @media (max-width: 575.98px) {
-    .backup-shell .backup-hero .card-body { padding: 1.25rem !important; }
-    .backup-shell .metric-value { font-size: 1.05rem; }
+    .backup-shell .backup-hero .card-body { padding: 1.2rem !important; }
+    .backup-shell .metric-value { font-size: 1.02rem; }
   }
 </style>

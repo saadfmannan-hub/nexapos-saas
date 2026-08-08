@@ -5,7 +5,13 @@ from itertools import combinations
 from django.db.models import Q, Subquery
 from django.shortcuts import get_object_or_404
 
-from .enums import BackupStatus, IntegrityStatus, ProductOwner
+from .enums import (
+    BackupStatus,
+    CompatibilityStatus,
+    IntegrityStatus,
+    ProductOwner,
+    RestoreStatus,
+)
 from .models import BackupActivity, BackupRecord, BackupSchedule, RestoreOperation
 
 _PRODUCT_ORDER = (ProductOwner.POS, ProductOwner.WMS)
@@ -51,6 +57,12 @@ def get_backup_for_business(business, public_id):
     )
 
 
+def latest_backup(business):
+    """Return the latest visible attempt for the active tenant."""
+
+    return backups_for_business(business).first()
+
+
 def latest_successful_backup(business):
     return (
         backups_for_business(business)
@@ -59,6 +71,50 @@ def latest_successful_backup(business):
             integrity_status=IntegrityStatus.VERIFIED,
         )
         .first()
+    )
+
+
+def eligible_restore_backups(business):
+    """Return durable, verified recovery points that fail closed."""
+
+    return (
+        backups_for_business(business)
+        .filter(
+            status=BackupStatus.SUCCEEDED,
+            integrity_status=IntegrityStatus.VERIFIED,
+            deleted_at__isnull=True,
+        )
+        .exclude(storage_backend_identifier="")
+        .exclude(opaque_object_key="")
+        .exclude(whole_artifact_hash="")
+        .exclude(
+            compatibility_status__in=(
+                CompatibilityStatus.REQUIRES_UPGRADE,
+                CompatibilityStatus.INCOMPATIBLE,
+            )
+        )
+    )
+
+
+def is_backup_restore_eligible(business, backup):
+    """Re-resolve eligibility inside the tenant boundary."""
+
+    return eligible_restore_backups(business).filter(pk=backup.pk).exists()
+
+
+def active_backup_exists(business):
+    active_statuses = (
+        BackupStatus.QUEUED,
+        BackupStatus.PREPARING,
+        BackupStatus.SNAPSHOTTING,
+        BackupStatus.PACKAGING,
+        BackupStatus.UPLOADING,
+        BackupStatus.VERIFYING,
+    )
+    return (
+        BackupRecord.objects.for_business(business)
+        .filter(status__in=active_statuses)
+        .exists()
     )
 
 
@@ -77,6 +133,16 @@ def get_restore_for_business(business, public_id):
         restores_for_business(business),
         public_id=public_id,
     )
+
+
+def active_restore_exists(business):
+    terminal_statuses = (
+        RestoreStatus.SUCCEEDED,
+        RestoreStatus.FAILED,
+        RestoreStatus.ROLLED_BACK,
+        RestoreStatus.INDETERMINATE,
+    )
+    return restores_for_business(business).exclude(status__in=terminal_statuses).exists()
 
 
 def activities_for_business(business):

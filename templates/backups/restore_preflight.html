@@ -1,0 +1,41 @@
+{% extends "layouts/base.html" %}
+{% load humanize backup_ui %}
+{% block title %}Check restore readiness — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
+{% block content %}
+<div class="backup-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div><div class="small text-secondary mb-1">Safe restore selection</div><h1 class="page-title mb-1">Check restore readiness</h1><div class="text-secondary">{{ backup.queued_at|date:"M j, Y · H:i T" }} · {{ backup.get_scope_display }}</div></div>
+    <a class="btn btn-outline-secondary" href="{% url 'backups:detail' backup.public_id %}"><i class="bi bi-arrow-left me-1"></i> Backup details</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="safety-panel p-4">
+        <div class="d-flex gap-3 align-items-start mb-3"><span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-exclamation-triangle"></i></span><div><h2 class="h5 mb-1">Current data would be replaced</h2><p class="text-secondary mb-0">A restore changes this business back to the selected recovery point. Checking readiness does not change any business data.</p></div></div>
+        <div class="check-item"><i class="bi bi-shield-check text-success"></i><div><div class="fw-semibold">Mandatory safety backup</div><div class="small text-secondary">A fresh verified safety backup must complete before any future restore can alter data.</div></div></div>
+        <div class="check-item"><i class="bi bi-hourglass-split text-primary"></i><div><div class="fw-semibold">Operational pause</div><div class="small text-secondary">A restore may take time. Operational changes should pause while it runs.</div></div></div>
+        <div class="check-item"><i class="bi bi-lock text-primary"></i><div><div class="fw-semibold">No mutation on this step</div><div class="small text-secondary">This check validates compatibility, package contents, and durable evidence only.</div></div></div>
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="card backup-card"><div class="card-header fw-semibold">Selected backup</div><div class="card-body">
+        <dl class="definition-grid mb-3">
+          <div><dt>Date</dt><dd>{{ backup.queued_at|date:"M j, Y · H:i" }}</dd></div>
+          <div><dt>Size</dt><dd>{{ backup.backup_size_bytes|filesizeformat }}</dd></div>
+          <div><dt>Scope</dt><dd>{{ backup.get_scope_display }}</dd></div>
+          <div><dt>Eligibility</dt><dd>{% if eligible %}<span class="text-success">Eligible</span>{% else %}<span class="text-danger">Not eligible</span>{% endif %}</dd></div>
+        </dl>
+        {% if eligible %}
+        <form method="post">{% csrf_token %}
+          <div class="mb-3"><label class="form-label" for="{{ form.reason.id_for_label }}">{{ form.reason.label }}</label>{{ form.reason }}{% for error in form.reason.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-shield-check me-1"></i> Check Restore Readiness</button>
+        </form>
+        {% else %}
+        <button class="btn btn-secondary w-100" type="button" disabled aria-disabled="true"><i class="bi bi-lock me-1"></i> Restore unavailable</button><div class="form-text text-center mt-2">This backup is not eligible for restore.</div>
+        {% endif %}
+      </div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

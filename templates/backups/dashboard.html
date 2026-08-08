@@ -1,5 +1,5 @@
 {% extends "layouts/base.html" %}
-{% load humanize %}
+{% load humanize backup_ui %}
 {% block title %}Backup &amp; Restore — {{ PRODUCT_NAME }}{% endblock %}
 {% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
 {% block content %}
@@ -11,202 +11,147 @@
           <span class="hero-mark" aria-hidden="true"><i class="bi bi-shield-lock"></i></span>
           <div>
             <h1 class="h3 mb-1" id="backup-page-title">Backup &amp; Restore</h1>
-            <p class="mb-0 text-white-50">Protection history and recovery readiness for {{ current_business.name }}.</p>
+            <p class="mb-0 text-white-50">Protect and recover your business data securely.</p>
           </div>
         </div>
         <div class="d-flex gap-2 flex-wrap">
           <a class="btn btn-light btn-sm" href="{% url 'backups:history' %}">
-            <i class="bi bi-clock-history me-1"></i> History
-          </a>
-          <a class="btn btn-outline-light btn-sm" href="{% url 'backups:activity' %}">
-            <i class="bi bi-activity me-1"></i> Activity
+            <i class="bi bi-clock-history me-1"></i> View backup history
           </a>
           {% if can_create %}
-          <button class="btn btn-warning btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#createBackupModal">
-            <i class="bi bi-plus-lg me-1"></i> Create backup
-          </button>
+            {% if manual_capability.enabled and not active_backup %}
+            <button class="btn btn-warning btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#createBackupModal">
+              <i class="bi bi-plus-lg me-1"></i> Create backup
+            </button>
+            {% else %}
+            <button class="btn btn-warning btn-sm" type="button" disabled aria-disabled="true">
+              <i class="bi bi-lock me-1"></i> Create backup
+            </button>
+            {% endif %}
           {% endif %}
         </div>
       </div>
     </div>
   </section>
 
-  {% if not engine_enabled %}
-  <div class="engine-notice d-flex align-items-start gap-3 p-3 mb-3" role="status">
-    <i class="bi bi-cone-striped fs-5" aria-hidden="true"></i>
+  {% if not manual_capability.enabled or active_backup %}
+  <div class="capability-notice d-flex align-items-start gap-3 p-3 mb-3" role="status">
+    <i class="bi bi-info-circle fs-5" aria-hidden="true"></i>
     <div>
-      <div class="fw-semibold">Foundation Ready · Execution Engine Disabled</div>
-      <div class="small">
-        Phase 2A can validate internal execution plans only. No backup artifact is created,
-        uploaded, downloaded, verified, or restored from this screen.
-      </div>
+      <div class="fw-semibold">{% if active_backup %}Backup in progress{% else %}Manual backup unavailable{% endif %}</div>
+      <div class="small">{% if active_backup %}A secure backup is already being prepared. Refresh this page for its latest status.{% else %}{{ manual_capability.message }}{% endif %}</div>
     </div>
   </div>
   {% endif %}
 
   <div class="row g-3 mb-3">
     <div class="col-md-6 col-xl-3">
-      <div class="card backup-card">
-        <div class="card-body d-flex gap-3 align-items-start">
-          <span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-clock-history"></i></span>
-          <div class="min-w-0">
-            <div class="metric-label">Last backup</div>
-            {% if latest_backup %}
-              <div class="metric-value mt-1">{{ latest_backup.completed_at|default:latest_backup.queued_at|date:"M j, Y" }}</div>
-              <div class="small text-secondary mt-1">
-                {{ latest_backup.get_scope_display }} ·
-                {% include "backups/_status_badge.html" with value=latest_backup.status label=latest_backup.get_status_display %}
-              </div>
-            {% else %}
-              <div class="metric-value mt-1">No backup yet</div>
-              <div class="small text-secondary mt-1">No visible backup metadata is recorded.</div>
-            {% endif %}
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="col-md-6 col-xl-3">
-      <div class="card backup-card">
-        <div class="card-body d-flex gap-3 align-items-start">
-          {% if health_state == "healthy" %}
-            <span class="metric-icon bg-success-subtle text-success"><i class="bi bi-shield-check"></i></span>
-          {% elif health_state == "failed" %}
-            <span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-shield-x"></i></span>
+      <div class="card backup-card"><div class="card-body d-flex gap-3 align-items-start">
+        <span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-clock-history"></i></span>
+        <div>
+          <div class="metric-label">Last backup</div>
+          {% if latest_backup %}
+          <div class="metric-value mt-1">{{ latest_backup.status|owner_backup_status }}</div>
+          <div class="small text-secondary mt-1">{{ latest_backup.queued_at|date:"M j, Y · H:i" }}</div>
           {% else %}
-            <span class="metric-icon bg-warning-subtle text-warning"><i class="bi bi-shield-exclamation"></i></span>
+          <div class="metric-value mt-1">Never</div>
+          <div class="small text-secondary mt-1">Your first secure backup will appear here.</div>
           {% endif %}
-          <div>
-            <div class="metric-label">Backup health</div>
-            <div class="metric-value mt-1">{{ health_label }}</div>
-            <div class="small text-secondary mt-1">{{ health_message }}</div>
-          </div>
         </div>
-      </div>
+      </div></div>
     </div>
     <div class="col-md-6 col-xl-3">
-      <div class="card backup-card">
-        <div class="card-body d-flex gap-3 align-items-start">
-          <span class="metric-icon bg-info-subtle text-info"><i class="bi bi-cloud-check"></i></span>
-          <div>
-            <div class="metric-label">Storage usage</div>
-            <div class="metric-value mt-1">Not metered</div>
-            <div class="small text-secondary mt-1">Secure object storage arrives with the execution engine.</div>
-          </div>
+      <div class="card backup-card"><div class="card-body d-flex gap-3 align-items-start">
+        <span class="metric-icon bg-success-subtle text-success"><i class="bi bi-shield-check"></i></span>
+        <div>
+          <div class="metric-label">Last successful</div>
+          {% if latest_successful %}
+          <div class="metric-value mt-1">{{ latest_successful.completed_at|date:"M j, Y" }}</div>
+          <div class="small text-secondary mt-1">{{ latest_successful.completed_at|date:"H:i T" }}</div>
+          {% else %}
+          <div class="metric-value mt-1">Not yet</div>
+          <div class="small text-secondary mt-1">No ready recovery point.</div>
+          {% endif %}
         </div>
-      </div>
+      </div></div>
     </div>
     <div class="col-md-6 col-xl-3">
-      <div class="card backup-card">
-        <div class="card-body d-flex gap-3 align-items-start">
-          <span class="metric-icon bg-secondary-subtle text-secondary"><i class="bi bi-calendar2-check"></i></span>
-          <div>
-            <div class="metric-label">Daily schedule</div>
-            {% if schedule %}
-              <div class="metric-value mt-1">
-                {% if schedule.enabled %}Saved{% else %}Disabled{% endif %}
-              </div>
-              <div class="small text-secondary mt-1">
-                {{ schedule.local_execution_time|time:"H:i" }} {{ schedule.timezone_name }}
-                · execution inactive
-              </div>
-            {% else %}
-              <div class="metric-value mt-1">Not configured</div>
-              <div class="small text-secondary mt-1">Scheduling execution is deferred to a later phase.</div>
-            {% endif %}
-          </div>
+      <div class="card backup-card"><div class="card-body d-flex gap-3 align-items-start">
+        <span class="metric-icon bg-info-subtle text-info"><i class="bi bi-device-ssd"></i></span>
+        <div>
+          <div class="metric-label">Backup size</div>
+          {% if latest_successful %}
+          <div class="metric-value mt-1">{{ latest_successful.backup_size_bytes|filesizeformat }}</div>
+          <div class="small text-secondary mt-1">Duration {{ latest_successful.duration|duration_display }}</div>
+          {% else %}
+          <div class="metric-value mt-1">—</div>
+          <div class="small text-secondary mt-1">Available after a successful backup.</div>
+          {% endif %}
         </div>
-      </div>
+      </div></div>
+    </div>
+    <div class="col-md-6 col-xl-3">
+      <div class="card backup-card"><div class="card-body d-flex gap-3 align-items-start">
+        <span class="metric-icon bg-secondary-subtle text-secondary"><i class="bi bi-calendar2-check"></i></span>
+        <div>
+          <div class="metric-label">Automatic backup</div>
+          {% if schedule %}
+          <div class="metric-value mt-1">{% if schedule.enabled %}Enabled{% else %}Disabled{% endif %}</div>
+          <div class="small text-secondary mt-1">
+            {{ schedule.local_execution_time|time:"H:i" }} {{ schedule.timezone_name }}
+            {% if schedule.next_run %} · next {{ schedule.next_run|date:"M j, H:i" }}{% endif %}
+          </div>
+          {% else %}
+          <div class="metric-value mt-1">Not configured</div>
+          <div class="small text-secondary mt-1">Automatic backup is not configured.</div>
+          {% endif %}
+        </div>
+      </div></div>
     </div>
   </div>
 
   <div class="card backup-card">
-    <div class="card-header d-flex justify-content-between align-items-center">
+    <div class="card-header d-flex justify-content-between align-items-center gap-2">
       <div>
-        <div class="fw-semibold">Recent backup metadata</div>
-        <div class="small text-secondary">Only currently entitled product scopes are shown.</div>
+        <div class="fw-semibold">Recent backups</div>
+        <div class="small text-secondary">Recovery points for this business only.</div>
       </div>
       <a class="btn btn-sm btn-outline-secondary" href="{% url 'backups:history' %}">View all</a>
     </div>
     <div class="table-responsive">
-      <table class="table align-middle mb-0">
-        <thead>
-          <tr>
-            <th>Requested</th>
-            <th>Scope</th>
-            <th>Trigger</th>
-            <th>Status</th>
-            <th>Integrity</th>
-            <th class="text-end"><span class="visually-hidden">Actions</span></th>
-          </tr>
-        </thead>
+      <table class="table backup-table align-middle mb-0">
+        <thead><tr><th>Date/Time</th><th>Status</th><th>Type</th><th>Scope</th><th>Size</th><th class="text-end">Actions</th></tr></thead>
         <tbody>
           {% for backup in recent_backups %}
           <tr>
-            <td class="text-nowrap">
-              <div class="fw-semibold">{{ backup.queued_at|date:"M j, Y H:i" }}</div>
-              <div class="small text-secondary">{{ backup.queued_at|naturaltime }}</div>
-            </td>
-            <td><span class="scope-chip"><i class="bi bi-layers"></i>{{ backup.get_scope_display }}</span></td>
-            <td>{{ backup.get_trigger_display }}</td>
-            <td>{% include "backups/_status_badge.html" with value=backup.status label=backup.get_status_display %}</td>
-            <td>{% include "backups/_status_badge.html" with value=backup.integrity_status label=backup.get_integrity_status_display %}</td>
-            <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="{% url 'backups:detail' backup.public_id %}" aria-label="View backup {{ backup.public_id }}">
-                View
-              </a>
-            </td>
+            <td data-label="Date/Time"><div class="fw-semibold">{{ backup.queued_at|date:"M j, Y H:i" }}</div><div class="small text-secondary">{{ backup.queued_at|naturaltime }}</div></td>
+            <td data-label="Status">{% include "backups/_status_badge.html" with value=backup.status label=backup.status|owner_backup_status %}</td>
+            <td data-label="Type">{{ backup.trigger|owner_backup_type }}</td>
+            <td data-label="Scope"><span class="scope-chip">{{ backup.get_scope_display }}</span></td>
+            <td data-label="Size">{% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}—{% endif %}</td>
+            <td data-label="Actions" class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'backups:detail' backup.public_id %}">View</a></td>
           </tr>
           {% empty %}
-          <tr>
-            <td colspan="6">
-              <div class="empty-state py-5">
-                <i class="bi bi-archive d-block mb-2"></i>
-                No backup metadata is available for your enabled products.
-              </div>
-            </td>
-          </tr>
+          <tr><td colspan="6"><div class="empty-state py-5"><i class="bi bi-archive d-block fs-3 mb-2"></i>Your first secure backup will appear here.</div></td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 
-  {% if can_create %}
+  {% if can_create and manual_capability.enabled and not active_backup %}
   <div class="modal fade" id="createBackupModal" tabindex="-1" aria-labelledby="createBackupTitle" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content border-0 shadow">
-        <div class="modal-header">
-          <div>
-            <h2 class="modal-title fs-5" id="createBackupTitle">Create a backup</h2>
-            <div class="small text-secondary">Scope choices follow the current subscription entitlement.</div>
-          </div>
-          <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
+    <div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0 shadow">
+      <div class="modal-header"><div><h2 class="modal-title fs-5" id="createBackupTitle">Create a secure backup</h2><div class="small text-secondary">The request runs safely in the background.</div></div><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button></div>
+      <form method="post" action="{% url 'backups:manual' %}">{% csrf_token %}
         <div class="modal-body">
-          <div class="alert alert-warning small">
-            <i class="bi bi-info-circle me-1"></i>
-            The execution engine is not enabled. Submitting a request is intentionally unavailable,
-            and no queued metadata record will be created.
-          </div>
-          <form aria-describedby="backupEngineUnavailable">
-            <label class="form-label" for="{{ create_form.scope.id_for_label }}">{{ create_form.scope.label }}</label>
-            {{ create_form.scope }}
-            {% if create_form.scope.help_text %}
-              <div class="form-text">{{ create_form.scope.help_text }}</div>
-            {% endif %}
-            <div class="form-text text-warning-emphasis mt-3" id="backupEngineUnavailable">
-              Backup creation becomes available only after storage, encryption, execution, and verification are certified.
-            </div>
-          </form>
+          <label class="form-label" for="{{ create_form.scope.id_for_label }}">{{ create_form.scope.label }}</label>
+          {{ create_form.scope }}
+          <div class="form-text">{{ create_form.scope.help_text }}</div>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Close</button>
-          <button class="btn btn-primary" type="button" disabled aria-disabled="true">
-            <i class="bi bi-lock me-1"></i> Engine not enabled
-          </button>
-        </div>
-      </div>
-    </div>
+        <div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancel</button><button class="btn btn-primary" type="submit"><i class="bi bi-shield-check me-1"></i> Create backup</button></div>
+      </form>
+    </div></div>
   </div>
   {% endif %}
 </div>

@@ -1,0 +1,50 @@
+{% extends "layouts/base.html" %}
+{% load humanize backup_ui %}
+{% block title %}Restore confirmation — {{ PRODUCT_NAME }}{% endblock %}
+{% block extra_css %}{% include "backups/_styles.html" %}{% endblock %}
+{% block content %}
+<div class="backup-shell">
+  <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+    <div><div class="small text-secondary mb-1">Restore readiness result</div><h1 class="page-title mb-1">{% if preflight.ready %}Restore Ready{% else %}Not Ready{% endif %}</h1><div class="text-secondary">{{ backup.queued_at|date:"M j, Y · H:i T" }} · {{ backup.get_scope_display }}</div></div>
+    <a class="btn btn-outline-secondary" href="{% url 'backups:restore_preflight' backup.public_id %}"><i class="bi bi-arrow-left me-1"></i> Run check again</a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-7">
+      <div class="card backup-card mb-3"><div class="card-header d-flex justify-content-between align-items-center"><span class="fw-semibold">Readiness summary</span>{% if preflight.ready %}<span class="badge text-bg-success">Ready</span>{% else %}<span class="badge text-bg-danger">Not ready</span>{% endif %}</div><div class="card-body">
+        <dl class="definition-grid mb-3">
+          <div><dt>Compatibility</dt><dd>{{ preflight.compatibility }}</dd></div>
+          <div><dt>Backup size</dt><dd>{{ backup.backup_size_bytes|filesizeformat }}</dd></div>
+          <div><dt>Components</dt><dd>{{ preflight.component_count|intcomma }}</dd></div>
+          <div><dt>Records</dt><dd>{{ preflight.record_count|intcomma }}</dd></div>
+          <div><dt>Media files</dt><dd>{{ preflight.media_count|intcomma }}</dd></div>
+          <div><dt>Selected scope</dt><dd>{{ backup.get_scope_display }}</dd></div>
+        </dl>
+        {% for message in preflight.messages %}<div class="alert {% if preflight.ready %}alert-success{% else %}alert-warning{% endif %} py-2 mb-0 small">{{ message }}</div>{% endfor %}
+      </div></div>
+
+      <div class="safety-panel p-4">
+        <h2 class="h5 text-danger mb-3"><i class="bi bi-exclamation-octagon me-2"></i>Final confirmation</h2>
+        <ul class="small text-secondary ps-3 mb-3">
+          <li>Current tenant data will be replaced.</li>
+          <li>A fresh safety backup will be created automatically.</li>
+          <li>Restore cannot start if the safety backup fails.</li>
+          <li>Do not make operational changes while a restore is running.</li>
+        </ul>
+        {% if preflight.ready %}
+        <form method="post" novalidate>{% csrf_token %}
+          <div class="form-check mb-3">{{ form.acknowledge_replacement }}<label class="form-check-label" for="{{ form.acknowledge_replacement.id_for_label }}">{{ form.acknowledge_replacement.label }}</label>{% for error in form.acknowledge_replacement.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+          <div class="mb-3"><label class="form-label" for="{{ form.confirmation.id_for_label }}">{{ form.confirmation.label }}</label>{{ form.confirmation }}{% for error in form.confirmation.errors %}<div class="invalid-feedback d-block">{{ error }}</div>{% endfor %}</div>
+          <button class="btn btn-danger w-100" type="submit" {% if not mutation_capability.enabled %}disabled aria-disabled="true"{% endif %}><i class="bi bi-lock me-1"></i> Start secure restore</button>
+        </form>
+        {% else %}
+        <button class="btn btn-secondary w-100" type="button" disabled aria-disabled="true">Restore unavailable</button>
+        {% endif %}
+      </div>
+    </div>
+    <div class="col-lg-5">
+      <div class="capability-notice p-3"><div class="fw-semibold mb-1"><i class="bi bi-shield-lock me-1"></i> Restore execution status</div><div class="small">{{ mutation_capability.message }}</div></div>
+    </div>
+  </div>
+</div>
+{% endblock %}

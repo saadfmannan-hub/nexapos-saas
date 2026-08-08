@@ -1,4 +1,4 @@
-"""Entitlement-aware, non-operational forms for the Phase 1 owner UI."""
+"""Strict, entitlement-aware forms for the tenant-owner backup UI."""
 
 from django import forms
 
@@ -25,29 +25,21 @@ def _scope_label(scope) -> str:
 
 
 class CreateBackupForm(forms.Form):
-    """Show allowed scopes without offering an operational submit action.
-
-    Phase 1 deliberately does not post this form.  The disabled widget makes
-    the safety boundary visible in rendered HTML; ``clean_scope`` still
-    delegates to the entitlement service so this form cannot become an
-    authorization bypass if it is reused later.
-    """
+    """Offer only currently entitled scopes and revalidate on POST."""
 
     scope = forms.ChoiceField(
         label="Backup scope",
         choices=(),
-        required=False,
+        required=True,
         widget=forms.Select(
             attrs={
                 **SELECT,
-                "disabled": "disabled",
-                "aria-disabled": "true",
             }
         ),
         help_text="Only products enabled for this business are listed.",
     )
 
-    def __init__(self, business, *args, **kwargs):
+    def __init__(self, business, *args, enabled=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.business = business
         allowed_scopes = tuple(services.available_backup_scopes(business))
@@ -62,6 +54,10 @@ class CreateBackupForm(forms.Form):
         self.initial["scope"] = (
             preferred_value if preferred_value in allowed_values else next(iter(allowed_values), "")
         )
+        if not enabled:
+            self.fields["scope"].widget.attrs.update(
+                {"disabled": "disabled", "aria-disabled": "true"}
+            )
 
     def clean_scope(self):
         value = self.cleaned_data.get("scope")
@@ -73,6 +69,47 @@ class CreateBackupForm(forms.Form):
 # The longer name is useful to future orchestration call sites while the
 # concise name remains the public UI form used in this phase.
 CreateBackupRequestForm = CreateBackupForm
+
+
+class RestorePreflightForm(forms.Form):
+    reason = forms.CharField(
+        label="Reason for restore",
+        max_length=500,
+        strip=True,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 3,
+                "placeholder": "Briefly explain why this restore is needed",
+            }
+        ),
+    )
+
+
+class RestoreConfirmationForm(forms.Form):
+    acknowledge_replacement = forms.BooleanField(
+        required=True,
+        label="I understand that current business data will be replaced.",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+    confirmation = forms.CharField(
+        label='Type "RESTORE" to confirm',
+        max_length=20,
+        strip=True,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "autocomplete": "off",
+                "spellcheck": "false",
+            }
+        ),
+    )
+
+    def clean_confirmation(self):
+        value = self.cleaned_data.get("confirmation", "")
+        if value != "RESTORE":
+            raise forms.ValidationError('Enter "RESTORE" exactly to continue.')
+        return value
 
 
 class BackupHistoryFilterForm(forms.Form):
