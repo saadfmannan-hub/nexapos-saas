@@ -447,6 +447,10 @@ BACKUP_RETENTION_TIMEOUT_SECONDS = env.float(
     "BACKUP_RETENTION_TIMEOUT_SECONDS",
     default=300.0,
 )
+BACKUP_EXECUTION_LOCK_LEASE_SECONDS = env.int(
+    "BACKUP_EXECUTION_LOCK_LEASE_SECONDS",
+    default=21_600,
+)
 
 # ------------------------------------------------------------------
 # Caching

@@ -8,7 +8,7 @@ from .exceptions import BackupEngineDisabled
 
 # These code capabilities are internal building blocks. They do not permit a
 # commercial workflow to run until production key management/object storage,
-# restore and operational orchestration are complete.
+# restore, restart-safe attestation, and operational activation are complete.
 SQLITE_SNAPSHOT_PROVIDER_READY = True
 TENANT_LOGICAL_EXPORT_PROVIDER_READY = True
 MEDIA_CAPTURE_PROVIDER_READY = True
@@ -18,15 +18,20 @@ INDEPENDENT_PACKAGE_VERIFIER_READY = True
 ENCRYPTED_ARTIFACT_PROVIDER_READY = True
 DURABLE_STORAGE_PROVIDER_READY = True
 RETENTION_ENGINE_READY = True
+# The coordinator is code-complete, but historical Phase 2G ownership evidence
+# cannot yet be re-attested after process restart. Destructive operational
+# retention therefore remains unavailable and the full stack stays fail-closed.
+RUNTIME_ORCHESTRATOR_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
     "verification, local encrypted-artifact support, and local private durable "
-    "storage, and immutable daily-full retention are available internally, "
-    "but production KEK/KMS and object storage integration, scheduling, "
-    "download authorization, "
-    "operational orchestration, and restore remain incomplete."
+    "storage, immutable daily-full retention, and operational coordination are "
+    "available internally, but restart-persistent historical storage attestation, "
+    "production KEK/KMS and object storage integration, dedicated worker "
+    "activation, scheduling, download authorization, and restore remain "
+    "incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -44,6 +49,7 @@ class BackupEngineCapability:
     encrypted_artifact_provider_ready: bool
     durable_storage_provider_ready: bool
     retention_engine_ready: bool
+    runtime_orchestrator_ready: bool
     runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
@@ -79,6 +85,7 @@ def get_engine_capability() -> BackupEngineCapability:
         encrypted_artifact_provider_ready=ENCRYPTED_ARTIFACT_PROVIDER_READY,
         durable_storage_provider_ready=DURABLE_STORAGE_PROVIDER_READY,
         retention_engine_ready=RETENTION_ENGINE_READY,
+        runtime_orchestrator_ready=RUNTIME_ORCHESTRATOR_READY,
         # Runtime readiness depends on the selected database and private
         # workspace. Planning deliberately does not perform that assessment.
         runtime_snapshot_policy_ready=None,

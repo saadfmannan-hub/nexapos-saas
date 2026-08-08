@@ -36,6 +36,7 @@ from .logical_export_registry import get_logical_export_registry
 from .media_capture_policy import MediaCapturePolicy
 from .retention_exceptions import RetentionPolicyError
 from .retention_policy import RetentionPolicy
+from .runtime_exceptions import RuntimeProviderStackError
 from .snapshot_policy import SQLiteSnapshotPolicy
 from .workspace import path_has_link_like_component, validate_staging_root
 
@@ -344,6 +345,42 @@ def check_retention_policy_settings(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_runtime_execution_settings(app_configs, **kwargs):
+    lease_seconds = getattr(settings, "BACKUP_EXECUTION_LOCK_LEASE_SECONDS", None)
+    if type(lease_seconds) is not int or not 300 <= lease_seconds <= 86_400:
+        return [
+            Error(
+                "The backup execution lock lease is invalid.",
+                hint="Configure a bounded 300 to 86400 second tenant lease.",
+                id="backups.E032",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_runtime_provider_stack_configuration(app_configs, **kwargs):
+    if not availability.engine_setting_enabled():
+        return []
+    try:
+        from .runtime import build_runtime_provider_stack
+
+        build_runtime_provider_stack()
+    except RuntimeProviderStackError:
+        return [
+            Error(
+                "The backup runtime provider stack cannot be composed safely.",
+                hint=(
+                    "Validate the private roots, policies, local development KEK, "
+                    "and exact provider composition before enabling execution."
+                ),
+                id="backups.E033",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_backup_capability_consistency(app_configs, **kwargs):
     capability = availability.get_engine_capability()
     consistent = (
@@ -356,6 +393,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
         and availability.DURABLE_STORAGE_PROVIDER_READY is True
         and availability.RETENTION_ENGINE_READY is True
+        and availability.RUNTIME_ORCHESTRATOR_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -374,6 +412,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and capability.durable_storage_provider_ready
         is availability.DURABLE_STORAGE_PROVIDER_READY
         and capability.retention_engine_ready is availability.RETENTION_ENGINE_READY
+        and capability.runtime_orchestrator_ready
+        is availability.RUNTIME_ORCHESTRATOR_READY
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -384,7 +424,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all nine internal providers ready while the operational "
+                    "Keep all ten internal foundations ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

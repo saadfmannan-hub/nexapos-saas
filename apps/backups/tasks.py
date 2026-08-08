@@ -1,8 +1,8 @@
 """Safe asynchronous integration boundary for future backup phases.
 
-No Celery task is registered in Phase 2D-2. ``execute_backup`` is a deliberately
-disabled plain function: it has no ``delay`` method, retry policy, beat entry,
-or eager fallback.
+No Celery task is registered in Phase 2I. ``execute_backup`` is a deliberately
+plain function: it has no ``delay`` method, retry policy, beat entry, or eager
+fallback. It reaches Phase 2I only after both capability and async guards pass.
 """
 
 from django.conf import settings
@@ -73,9 +73,9 @@ def check_backup_async_execution_configuration(app_configs, **kwargs):
                 "The backup engine provider stack is not operational.",
                 hint=(
                     "SQLite snapshot, logical export, local media capture, canonical "
-                    "manifest, and deterministic plaintext package support exist "
-                    "internally, but verification, encryption, durable storage, and "
-                    "operational orchestration are incomplete. Keep "
+                    "The internal runtime coordinator exists, but restart-persistent "
+                    "historical durable attestation and production safeguards remain "
+                    "incomplete. Keep "
                     "BACKUP_EXECUTION_ENGINE_ENABLED false."
                 ),
                 id="backups.E012",
@@ -85,7 +85,7 @@ def check_backup_async_execution_configuration(app_configs, **kwargs):
 
 
 def execute_backup(backup_public_id, business_public_id):
-    """Fail safely if the future task entrypoint is invoked in Phase 2D-2.
+    """Execute only inside a future dedicated worker after both safety guards.
 
     This is intentionally not decorated as a Celery task. The durable record
     is marked failed when possible so a disabled invocation never remains
@@ -148,6 +148,10 @@ def execute_backup(backup_public_id, business_public_id):
         )
         raise
 
-    # This remains unreachable while OPERATIONAL_PROVIDER_STACK_READY is false.
     assert_safe_async_execution_configuration()
-    raise BackupEngineDisabled()
+    from apps.backups.engine.runtime import request_backup_execution
+
+    return request_backup_execution(
+        backup_public_id=backup_public_id,
+        business_public_id=business_public_id,
+    )

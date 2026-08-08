@@ -12,6 +12,7 @@ from .availability import (
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
     RETENTION_ENGINE_READY,
+    RUNTIME_ORCHESTRATOR_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
     TENANT_LOGICAL_EXPORT_PROVIDER_READY,
     assert_real_execution_available,
@@ -73,6 +74,16 @@ from .retention import (
     RetentionSkipReason,
 )
 from .retention_policy import RetentionPolicy
+from .runtime import (
+    BackupExecutionCoordinator,
+    BackupExecutionRequest,
+    BackupExecutionResult,
+    FinalStoredObjectEvidence,
+    RuntimeProviderStack,
+    RuntimeRetentionOutcome,
+    build_runtime_provider_stack,
+    request_backup_execution,
+)
 from .sqlite_snapshot import SQLiteSnapshotProvider
 
 __all__ = [
@@ -80,7 +91,10 @@ __all__ = [
     "BackupEngineDisabled",
     "BackupEngineError",
     "BackupExecutionContext",
+    "BackupExecutionCoordinator",
     "BackupExecutionPlan",
+    "BackupExecutionRequest",
+    "BackupExecutionResult",
     "BackupRetentionClass",
     "CANONICAL_MANIFEST_PROVIDER_READY",
     "CanonicalManifestProvider",
@@ -126,6 +140,9 @@ __all__ = [
     "RetentionPlanReference",
     "RetentionPolicy",
     "RetentionSkipReason",
+    "RUNTIME_ORCHESTRATOR_READY",
+    "RuntimeProviderStack",
+    "RuntimeRetentionOutcome",
     "SQLITE_SNAPSHOT_PROVIDER_READY",
     "SQLiteSnapshotProvider",
     "SQLiteLogicalComponentExporter",
@@ -140,7 +157,10 @@ __all__ = [
     "WrappedDek",
     "assert_real_execution_available",
     "get_engine_capability",
+    "build_runtime_provider_stack",
     "prepare_backup_execution",
     "real_execution_available",
+    "request_backup_execution",
     "export_snapshot_components",
+    "FinalStoredObjectEvidence",
 ]
