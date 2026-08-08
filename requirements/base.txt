@@ -8,3 +8,4 @@ whitenoise>=6.6
 python-barcode>=0.15
 qrcode>=7.4
 cryptography>=46,<50
+celery>=5.4,<6.0

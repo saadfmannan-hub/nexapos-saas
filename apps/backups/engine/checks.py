@@ -394,6 +394,9 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.DURABLE_STORAGE_PROVIDER_READY is True
         and availability.RETENTION_ENGINE_READY is True
         and availability.RUNTIME_ORCHESTRATOR_READY is True
+        and availability.ASYNC_EXECUTION_BOUNDARY_READY is True
+        and availability.SCHEDULE_DISPATCHER_READY is True
+        and availability.RUNTIME_COMPOSITION_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -414,6 +417,15 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and capability.retention_engine_ready is availability.RETENTION_ENGINE_READY
         and capability.runtime_orchestrator_ready
         is availability.RUNTIME_ORCHESTRATOR_READY
+        and capability.async_execution_boundary_ready
+        is availability.ASYNC_EXECUTION_BOUNDARY_READY
+        and capability.schedule_dispatcher_ready
+        is availability.SCHEDULE_DISPATCHER_READY
+        and capability.runtime_composition_ready
+        is availability.RUNTIME_COMPOSITION_READY
+        and capability.async_configuration_ready
+        is availability.async_configuration_ready()
+        and capability.runtime_configuration_ready is False
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -424,7 +436,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all ten internal foundations ready while the operational "
+                    "Keep all thirteen internal foundations ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

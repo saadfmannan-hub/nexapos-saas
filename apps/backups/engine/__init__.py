@@ -1,10 +1,11 @@
-"""Nexa backup engine foundations through the internal Phase 2H providers.
+"""Nexa backup engine foundations through the Phase 2J async boundary.
 
 The public surface remains deliberately non-operational. It exposes typed
 contracts, immutable planning metadata, and central availability guards.
 """
 
 from .availability import (
+    ASYNC_EXECUTION_BOUNDARY_READY,
     CANONICAL_MANIFEST_PROVIDER_READY,
     DETERMINISTIC_PACKAGE_PROVIDER_READY,
     DURABLE_STORAGE_PROVIDER_READY,
@@ -12,10 +13,13 @@ from .availability import (
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
     RETENTION_ENGINE_READY,
+    RUNTIME_COMPOSITION_READY,
     RUNTIME_ORCHESTRATOR_READY,
+    SCHEDULE_DISPATCHER_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
     TENANT_LOGICAL_EXPORT_PROVIDER_READY,
     assert_real_execution_available,
+    async_configuration_ready,
     get_engine_capability,
     real_execution_available,
 )
@@ -88,6 +92,7 @@ from .sqlite_snapshot import SQLiteSnapshotProvider
 
 __all__ = [
     "ActorIdentitySnapshot",
+    "ASYNC_EXECUTION_BOUNDARY_READY",
     "BackupEngineDisabled",
     "BackupEngineError",
     "BackupExecutionContext",
@@ -130,6 +135,7 @@ __all__ = [
     "PipelineStage",
     "RestoreReadinessResult",
     "RETENTION_ENGINE_READY",
+    "RUNTIME_COMPOSITION_READY",
     "RetentionAuditEvent",
     "RetentionAuditEventType",
     "RetentionCandidate",
@@ -141,6 +147,7 @@ __all__ = [
     "RetentionPolicy",
     "RetentionSkipReason",
     "RUNTIME_ORCHESTRATOR_READY",
+    "SCHEDULE_DISPATCHER_READY",
     "RuntimeProviderStack",
     "RuntimeRetentionOutcome",
     "SQLITE_SNAPSHOT_PROVIDER_READY",
@@ -156,6 +163,7 @@ __all__ = [
     "VerificationReference",
     "WrappedDek",
     "assert_real_execution_available",
+    "async_configuration_ready",
     "get_engine_capability",
     "build_runtime_provider_stack",
     "prepare_backup_execution",

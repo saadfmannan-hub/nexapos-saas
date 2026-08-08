@@ -498,7 +498,7 @@ def create_backup_request(
         actor=actor,
         request=request,
         reason=getattr(getattr(request, "support_session", None), "reason", ""),
-        sanitized_message="Backup metadata request queued; the engine is not enabled.",
+        sanitized_message="Backup metadata request queued for guarded execution.",
         structured_metadata={
             "scope": str(record.scope),
             "trigger": str(record.trigger),
@@ -511,7 +511,7 @@ def create_backup_request(
         actor=actor,
         request=request,
         obj=record,
-        description="Backup metadata request queued; no artifact was created.",
+        description="Backup metadata request queued; no inline artifact was created.",
     )
     return record
 
@@ -953,7 +953,7 @@ def upsert_backup_schedule(
     next_run=None,
     request=None,
 ):
-    """Create/update schedule metadata; no dispatcher or task is activated."""
+    """Create/update one tenant-local daily schedule configuration."""
 
     resolution = resolve_requested_scope(business, scope)
     if resolution.scope != BackupScope.ALL_ENABLED:
@@ -972,6 +972,21 @@ def upsert_backup_schedule(
         raise ValidationError("The schedule timezone is not recognized.") from exc
     if next_run is not None and timezone.is_naive(next_run):
         raise ValidationError("The next schedule run must be timezone-aware.")
+    if enabled and next_run is None:
+        from .scheduling import ScheduleDispatchError, next_daily_occurrence
+
+        try:
+            next_run = next_daily_occurrence(
+                local_time=local_execution_time,
+                timezone_name=effective_timezone,
+                after=timezone.now(),
+            )
+        except ScheduleDispatchError:
+            raise ValidationError(
+                "The daily schedule time cannot be resolved safely."
+            ) from None
+    if not enabled:
+        next_run = None
 
     schedule = BackupSchedule.objects.for_business(business).first()
     created = schedule is None
@@ -990,9 +1005,9 @@ def upsert_backup_schedule(
         actor=actor,
         request=request,
         sanitized_message=(
-            "Daily backup schedule metadata created; no dispatcher is enabled."
+            "Daily backup schedule configuration created."
             if created
-            else "Daily backup schedule metadata updated; no dispatcher is enabled."
+            else "Daily backup schedule configuration updated."
         ),
         structured_metadata={
             "enabled": schedule.enabled,
@@ -1006,7 +1021,7 @@ def upsert_backup_schedule(
         actor=actor,
         request=request,
         obj=schedule,
-        description="Backup schedule metadata saved; no scheduler was activated.",
+        description="Backup schedule configuration saved.",
     )
     return schedule
 

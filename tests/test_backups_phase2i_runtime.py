@@ -552,7 +552,8 @@ class BackupRuntimeTests(TransactionTestCase):
             {error.id for error in errors},
             {"backups.E010", "backups.E011", "backups.E012"},
         )
-        self.assertFalse(hasattr(execute_backup, "delay"))
+        self.assertTrue(hasattr(execute_backup, "delay"))
+        self.assertEqual(execute_backup.name, "apps.backups.tasks.execute_backup")
 
     def test_unknown_workspace_content_is_preserved_with_cleanup_warning(self):
         backup = self._backup()

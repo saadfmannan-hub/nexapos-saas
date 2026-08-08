@@ -22,6 +22,9 @@ RETENTION_ENGINE_READY = True
 # cannot yet be re-attested after process restart. Destructive operational
 # retention therefore remains unavailable and the full stack stays fail-closed.
 RUNTIME_ORCHESTRATOR_READY = True
+ASYNC_EXECUTION_BOUNDARY_READY = True
+SCHEDULE_DISPATCHER_READY = True
+RUNTIME_COMPOSITION_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
@@ -29,8 +32,8 @@ INCOMPLETE_PROVIDER_STACK_REASON = (
     "verification, local encrypted-artifact support, and local private durable "
     "storage, immutable daily-full retention, and operational coordination are "
     "available internally, but restart-persistent historical storage attestation, "
-    "production KEK/KMS and object storage integration, dedicated worker "
-    "activation, scheduling, download authorization, and restore remain "
+    "production KEK/KMS and object storage integration, production worker/beat "
+    "activation, download authorization, and restore remain "
     "incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
@@ -50,6 +53,11 @@ class BackupEngineCapability:
     durable_storage_provider_ready: bool
     retention_engine_ready: bool
     runtime_orchestrator_ready: bool
+    async_execution_boundary_ready: bool
+    schedule_dispatcher_ready: bool
+    runtime_composition_ready: bool
+    async_configuration_ready: bool
+    runtime_configuration_ready: bool
     runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
@@ -65,15 +73,112 @@ def engine_setting_enabled() -> bool:
     )
 
 
+def async_configuration_ready() -> bool:
+    """Assess the non-mutating Celery routing prerequisites."""
+
+    routes = getattr(settings, "CELERY_TASK_ROUTES", {})
+    execution_route = (
+        routes.get("apps.backups.tasks.execute_backup")
+        if isinstance(routes, dict)
+        else None
+    )
+    dispatch_route = (
+        routes.get("apps.backups.tasks.dispatch_due_backup_schedules")
+        if isinstance(routes, dict)
+        else None
+    )
+    cadence = getattr(settings, "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS", None)
+    soft_limit = getattr(settings, "BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS", None)
+    hard_limit = getattr(settings, "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS", None)
+    beat = getattr(settings, "CELERY_BEAT_SCHEDULE", {})
+    beat_entry = (
+        beat.get("dispatch-due-backup-schedules")
+        if isinstance(beat, dict)
+        else None
+    )
+    return bool(
+        getattr(settings, "CELERY_BROKER_URL", "")
+        and getattr(settings, "CELERY_TASK_ALWAYS_EAGER", True) is False
+        and getattr(settings, "BACKUP_EXECUTION_QUEUE_NAME", "") == "nexa.backups"
+        and getattr(settings, "BACKUP_SCHEDULER_QUEUE_NAME", "")
+        == "nexa.backup_scheduling"
+        and isinstance(execution_route, dict)
+        and execution_route.get("queue") == "nexa.backups"
+        and isinstance(dispatch_route, dict)
+        and dispatch_route.get("queue") == "nexa.backup_scheduling"
+        and type(cadence) is int
+        and 60 <= cadence <= 3_600
+        and type(soft_limit) is int
+        and type(hard_limit) is int
+        and 3_600 <= soft_limit < hard_limit <= 90_000
+        and isinstance(beat_entry, dict)
+        and beat_entry.get("task")
+        == "apps.backups.tasks.dispatch_due_backup_schedules"
+        and beat_entry.get("schedule") == float(cadence)
+        and isinstance(beat_entry.get("options"), dict)
+        and beat_entry["options"].get("queue") == "nexa.backup_scheduling"
+    )
+
+
+def runtime_configuration_ready() -> bool:
+    """Run the non-mutating policy/root checks without constructing providers."""
+
+    if not (
+        engine_setting_enabled()
+        and OPERATIONAL_PROVIDER_STACK_READY
+        and ASYNC_EXECUTION_BOUNDARY_READY
+        and SCHEDULE_DISPATCHER_READY
+        and RUNTIME_COMPOSITION_READY
+        and async_configuration_ready()
+    ):
+        return False
+    try:
+        from . import checks
+
+        validators = (
+            checks.check_backup_staging_root,
+            checks.check_sqlite_snapshot_policy_settings,
+            checks.check_logical_export_policy_settings,
+            checks.check_logical_export_registry,
+            checks.check_media_capture_policy_settings,
+            checks.check_media_storage_configuration,
+            checks.check_encryption_policy_settings,
+            checks.check_local_kek_configuration,
+            checks.check_durable_storage_policy_settings,
+            checks.check_durable_storage_root,
+            checks.check_retention_policy_settings,
+            checks.check_runtime_execution_settings,
+        )
+        if any(validator(None) for validator in validators):
+            return False
+    except Exception:
+        return False
+    return True
+
+
 def get_engine_capability() -> BackupEngineCapability:
     setting_enabled = engine_setting_enabled()
-    available = bool(setting_enabled and OPERATIONAL_PROVIDER_STACK_READY)
+    async_ready = async_configuration_ready()
+    runtime_ready = runtime_configuration_ready()
+    available = bool(
+        setting_enabled
+        and OPERATIONAL_PROVIDER_STACK_READY
+        and ASYNC_EXECUTION_BOUNDARY_READY
+        and SCHEDULE_DISPATCHER_READY
+        and RUNTIME_COMPOSITION_READY
+        and async_ready
+        and runtime_ready
+    )
     if available:
         reason = ""
     elif not setting_enabled:
         reason = "Backup execution is disabled by application configuration."
-    else:
+    elif not OPERATIONAL_PROVIDER_STACK_READY:
         reason = INCOMPLETE_PROVIDER_STACK_REASON
+    elif not async_ready:
+        reason = "Backup execution requires its dedicated non-eager Celery queues."
+    else:
+        reason = "Backup runtime configuration is not safe."
     return BackupEngineCapability(
         setting_enabled=setting_enabled,
         snapshot_provider_ready=SQLITE_SNAPSHOT_PROVIDER_READY,
@@ -86,6 +191,11 @@ def get_engine_capability() -> BackupEngineCapability:
         durable_storage_provider_ready=DURABLE_STORAGE_PROVIDER_READY,
         retention_engine_ready=RETENTION_ENGINE_READY,
         runtime_orchestrator_ready=RUNTIME_ORCHESTRATOR_READY,
+        async_execution_boundary_ready=ASYNC_EXECUTION_BOUNDARY_READY,
+        schedule_dispatcher_ready=SCHEDULE_DISPATCHER_READY,
+        runtime_composition_ready=RUNTIME_COMPOSITION_READY,
+        async_configuration_ready=async_ready,
+        runtime_configuration_ready=runtime_ready,
         # Runtime readiness depends on the selected database and private
         # workspace. Planning deliberately does not perform that assessment.
         runtime_snapshot_policy_ready=None,

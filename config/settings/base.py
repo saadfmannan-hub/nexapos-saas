@@ -250,7 +250,7 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
-# Backup engine foundation (Phase 2H providers remain operationally disabled)
+# Backup engine foundation (Phase 2J boundaries remain operationally disabled)
 # ------------------------------------------------------------------
 BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
     "BACKUP_EXECUTION_ENGINE_ENABLED",
@@ -272,6 +272,35 @@ BACKUP_EXECUTION_QUEUE_NAME = env(
     "BACKUP_EXECUTION_QUEUE_NAME",
     default="nexa.backups",
 )
+BACKUP_SCHEDULER_QUEUE_NAME = env(
+    "BACKUP_SCHEDULER_QUEUE_NAME",
+    default="nexa.backup_scheduling",
+)
+BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS = env.int(
+    "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS",
+    default=300,
+)
+BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS = env.int(
+    "BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS",
+    default=21_600,
+)
+BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS = env.int(
+    "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS",
+    default=21_900,
+)
+CELERY_TASK_ROUTES = {
+    "apps.backups.tasks.execute_backup": {"queue": BACKUP_EXECUTION_QUEUE_NAME},
+    "apps.backups.tasks.dispatch_due_backup_schedules": {
+        "queue": BACKUP_SCHEDULER_QUEUE_NAME,
+    },
+}
+CELERY_BEAT_SCHEDULE = {
+    "dispatch-due-backup-schedules": {
+        "task": "apps.backups.tasks.dispatch_due_backup_schedules",
+        "schedule": float(BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS),
+        "options": {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
+    },
+}
 BACKUP_SQLITE_REQUIRED_JOURNAL_MODE = env(
     "BACKUP_SQLITE_REQUIRED_JOURNAL_MODE",
     default="WAL",
