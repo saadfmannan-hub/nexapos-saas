@@ -655,9 +655,9 @@ class RestorePreflightEndToEndTests(TransactionTestCase):
 
 
 class RestorePreflightContractTests(SimpleTestCase):
-    def test_capabilities_enable_preflight_but_not_mutation(self):
+    def test_capabilities_keep_preflight_ready_when_guarded_mutation_is_complete(self):
         self.assertIs(RESTORE_PREFLIGHT_ENGINE_READY, True)
-        self.assertIs(RESTORE_MUTATION_ENGINE_READY, False)
+        self.assertIs(RESTORE_MUTATION_ENGINE_READY, True)
 
     def test_request_is_immutable(self):
         request = RestorePreflightRequest(

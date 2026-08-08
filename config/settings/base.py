@@ -258,6 +258,10 @@ BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
 )
 # Compatibility alias retained for Phase 1 checks and deployment templates.
 BACKUP_ENGINE_ENABLED = BACKUP_EXECUTION_ENGINE_ENABLED
+BACKUP_RESTORE_MUTATION_ENABLED = env.bool(
+    "BACKUP_RESTORE_MUTATION_ENABLED",
+    default=False,
+)
 BACKUP_STAGING_ROOT = Path(
     env(
         "BACKUP_STAGING_ROOT",

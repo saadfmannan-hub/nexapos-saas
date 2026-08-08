@@ -438,7 +438,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.SCHEDULE_DISPATCHER_READY is True
         and availability.RUNTIME_COMPOSITION_READY is True
         and availability.RESTORE_PREFLIGHT_ENGINE_READY is True
-        and availability.RESTORE_MUTATION_ENGINE_READY is False
+        and availability.RESTORE_MUTATION_ENGINE_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -469,6 +469,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.RESTORE_PREFLIGHT_ENGINE_READY
         and capability.restore_mutation_engine_ready
         is availability.RESTORE_MUTATION_ENGINE_READY
+        and capability.restore_mutation_setting_enabled
+        is availability.restore_mutation_setting_enabled()
         and capability.async_configuration_ready
         is availability.async_configuration_ready()
         and capability.runtime_configuration_ready is False
@@ -482,9 +484,9 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep internal backup and restore-preflight foundations ready while "
-                    "restore mutation, the operational provider stack, and real "
-                    "execution remain disabled."
+                    "Keep internal backup, restore-preflight, and guarded restore "
+                    "mutation foundations ready while the operational provider stack "
+                    "and real production execution remain disabled."
                 ),
                 id="backups.E026",
             )

@@ -813,7 +813,7 @@ def transition_restore(
         RestoreStatus.INDETERMINATE,
     }:
         updates["completed_at"] = now
-    if target == RestoreStatus.FAILED:
+    if target in {RestoreStatus.FAILED, RestoreStatus.INDETERMINATE}:
         updates["failure_code"] = _sanitize_text(failure_code, 80)
         updates["sanitized_failure_summary"] = _sanitize_text(
             failure_summary,
@@ -828,6 +828,35 @@ def transition_restore(
         pk=current.pk,
         status=current.status,
     ).update(**updates)
+    if changed != 1:
+        raise BackupServiceError("The restore status changed concurrently.")
+    current.refresh_from_db()
+    return current
+
+
+@transaction.atomic
+def restart_failed_restore_before_mutation(restore):
+    """Permit a controlled retry only for an explicitly pre-mutation failure."""
+
+    current = RestoreOperation.objects.get(pk=restore.pk)
+    if (
+        current.status != RestoreStatus.FAILED
+        or not current.failure_code.startswith("pre_mutation_")
+        or current.rollback_attempted
+    ):
+        raise ValidationError("This restore operation is not safely retryable.")
+    changed = RestoreOperation.objects.filter(
+        pk=current.pk,
+        status=RestoreStatus.FAILED,
+        failure_code=current.failure_code,
+        rollback_attempted=False,
+    ).update(
+        status=RestoreStatus.AUTHORIZING,
+        failure_code="",
+        sanitized_failure_summary="",
+        completed_at=None,
+        updated_at=timezone.now(),
+    )
     if changed != 1:
         raise BackupServiceError("The restore status changed concurrently.")
     current.refresh_from_db()

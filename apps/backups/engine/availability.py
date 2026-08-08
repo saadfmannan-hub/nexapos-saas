@@ -25,18 +25,18 @@ ASYNC_EXECUTION_BOUNDARY_READY = True
 SCHEDULE_DISPATCHER_READY = True
 RUNTIME_COMPOSITION_READY = True
 RESTORE_PREFLIGHT_ENGINE_READY = True
-RESTORE_MUTATION_ENGINE_READY = False
+RESTORE_MUTATION_ENGINE_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
     "verification, local encrypted-artifact support, and local private durable "
     "storage, immutable daily-full retention, and operational coordination are "
-    "available internally. Non-mutating restore preflight and restart-safe local "
-    "durable-object re-attestation are also available, but production KEK/KMS and "
-    "object storage integration, destructive historical retention, production "
-    "worker/beat activation, download authorization, and restore mutation remain "
-    "incomplete."
+    "available internally. Guarded restore preflight and tenant restore mutation "
+    "with a mandatory protected safety backup are also code-complete, but restore "
+    "mutation remains disabled by default. Production KEK/KMS and object storage "
+    "integration, destructive historical retention, production worker/beat "
+    "activation, and download authorization remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -60,6 +60,7 @@ class BackupEngineCapability:
     runtime_composition_ready: bool
     restore_preflight_engine_ready: bool
     restore_mutation_engine_ready: bool
+    restore_mutation_setting_enabled: bool
     async_configuration_ready: bool
     runtime_configuration_ready: bool
     runtime_snapshot_policy_ready: bool | None
@@ -75,6 +76,12 @@ def engine_setting_enabled() -> bool:
         getattr(settings, "BACKUP_EXECUTION_ENGINE_ENABLED", False)
         or getattr(settings, "BACKUP_ENGINE_ENABLED", False)
     )
+
+
+def restore_mutation_setting_enabled() -> bool:
+    """Return true only for an explicit boolean restore-mutation opt-in."""
+
+    return getattr(settings, "BACKUP_RESTORE_MUTATION_ENABLED", False) is True
 
 
 def async_configuration_ready() -> bool:
@@ -200,6 +207,7 @@ def get_engine_capability() -> BackupEngineCapability:
         runtime_composition_ready=RUNTIME_COMPOSITION_READY,
         restore_preflight_engine_ready=RESTORE_PREFLIGHT_ENGINE_READY,
         restore_mutation_engine_ready=RESTORE_MUTATION_ENGINE_READY,
+        restore_mutation_setting_enabled=restore_mutation_setting_enabled(),
         async_configuration_ready=async_ready,
         runtime_configuration_ready=runtime_ready,
         # Runtime readiness depends on the selected database and private

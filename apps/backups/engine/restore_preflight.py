@@ -60,6 +60,7 @@ from .package_exceptions import PackageNotFound, PackageValidationError
 from .package_verification import IndependentPackageVerifier, PackageCompatibilityPolicy
 from .restore_exceptions import (
     Phase3ACoordinationError,
+    RestoreCompatibilityError,
     RestoreComponentPlanError,
     RestoreDecryptError,
     RestoreDurableObjectError,
@@ -75,7 +76,7 @@ from .restore_workspace import (
     RESTORED_PACKAGE_PROVIDER_IDENTIFIER,
     RestoredPackageProvider,
 )
-from .runtime import build_runtime_provider_stack
+from .runtime import RuntimeProviderStack, build_runtime_provider_stack
 from .verification_exceptions import (
     Phase2EEngineError,
 )
@@ -200,13 +201,29 @@ class _CompletedPreflight:
     package: PackageBuildResult
     verification: PackageVerificationResult
     result: RestorePreflightResult
+    document: dict
 
 
-def build_restore_preflight_provider_stack():
+@dataclass(frozen=True, slots=True)
+class RestorePreflightConsumption:
+    """Internal identity-bound handoff from Phase 3A to the mutation engine."""
+
+    context: BackupExecutionContext
+    package: PackageBuildResult
+    verification: PackageVerificationResult
+    result: RestorePreflightResult
+    document: dict
+
+
+def build_restore_preflight_provider_stack(*, runtime_stack=None):
     """Compose a restart-clean retrieval stack without enabling restore mutation."""
 
     try:
-        runtime_stack = build_runtime_provider_stack()
+        if runtime_stack is None:
+            runtime_stack = build_runtime_provider_stack()
+        elif type(runtime_stack) is not RuntimeProviderStack:
+            raise Phase3ACoordinationError()
+        runtime_stack = runtime_stack.validated()
         restored_package_provider = RestoredPackageProvider(
             workspace_manager=runtime_stack.workspace_manager,
         )
@@ -844,6 +861,7 @@ class RestorePreflightCoordinator:
                 package=package,
                 verification=verification,
                 result=result,
+                document=document,
             )
             with self._state_lock:
                 reference = result.preflight_reference.identifier
@@ -856,6 +874,143 @@ class RestorePreflightCoordinator:
                     raise Phase3ACoordinationError()
                 self._completed[reference] = completed
         return result
+
+    def revalidate_for_execution(
+        self,
+        *,
+        operation_public_id,
+        business_public_id,
+        backup_public_id,
+        actor_identity,
+        approved_result,
+    ):
+        """Re-attest a retained preflight under the caller's restore lease."""
+
+        if (
+            type(operation_public_id) is not uuid.UUID
+            or type(business_public_id) is not uuid.UUID
+            or type(backup_public_id) is not uuid.UUID
+            or type(actor_identity) is not ActorIdentitySnapshot
+            or type(approved_result) is not RestorePreflightResult
+            or approved_result.restore_ready is not True
+            or approved_result.state is not RestorePreflightState.RESTORE_READY
+            or approved_result.preflight_reference is None
+            or approved_result.operation_reference != operation_public_id
+            or approved_result.business_public_id != business_public_id
+            or approved_result.backup_public_id != backup_public_id
+            or approved_result.compatibility_status
+            is not PackageCompatibilityStatus.COMPATIBLE
+        ):
+            raise RestoreSelectionError(issue_code="restore_preflight_invalid")
+        reference = approved_result.preflight_reference.identifier
+        with self._state_lock:
+            completed = self._completed.get(reference)
+        if (
+            completed is None
+            or completed.result != approved_result
+            or completed.request.operation_public_id != operation_public_id
+            or completed.request.business_public_id != business_public_id
+            or completed.request.backup_public_id != backup_public_id
+            or completed.request.actor_identity != actor_identity
+            or completed.context.operation_correlation_id != operation_public_id
+            or completed.context.business_public_id != business_public_id
+            or completed.context.backup_public_id != backup_public_id
+        ):
+            raise RestoreSelectionError(issue_code="restore_preflight_replaced")
+        business = self._resolve_business(completed.request)
+        backup, stored_reference = self._resolve_backup(
+            business=business,
+            request=completed.request,
+        )
+        policy = self.provider_stack.verification_provider.compatibility_policy
+        if (
+            policy.current_schema_fingerprint != schema_migration_fingerprint()
+            or policy.current_application_version != get_application_version()
+            or policy.current_backup_format_version != BACKUP_FORMAT_VERSION
+            or completed.verification.verified is not True
+            or completed.verification.restore_ready is not True
+            or completed.verification.compatibility_status
+            is not PackageCompatibilityStatus.COMPATIBLE
+        ):
+            raise RestoreCompatibilityError(issue_code="restore_compatibility_changed")
+        try:
+            self.provider_stack.restored_package_provider.validate_consumable_preflight(
+                context=completed.context,
+                package=completed.package,
+                document=self._preflight_evidence_document(completed.result),
+            )
+            self.provider_stack.verification_provider.validate_verification_evidence(
+                context=completed.context,
+                package=completed.package,
+                result=completed.verification,
+            )
+            descriptor = PersistedStoredObjectDescriptor(
+                reference=stored_reference,
+                backend_identifier=backup.storage_backend_identifier,
+                byte_count=backup.backup_size_bytes,
+                sha256=backup.whole_artifact_hash,
+                backup_public_id=backup.public_id,
+                tenant_public_id=business.public_id,
+            )
+            reattested = self.provider_stack.durable_storage_provider.reattest_stored_object(
+                context=completed.context,
+                descriptor=descriptor,
+            )
+            try:
+                self.provider_stack.durable_storage_provider.validate_reattested_object(
+                    context=completed.context,
+                    result=reattested,
+                )
+            finally:
+                self.provider_stack.durable_storage_provider.release_reattested_object(
+                    context=completed.context,
+                    result=reattested,
+                )
+        except RestoreEngineError:
+            raise
+        except (DurableStorageEngineError, Phase2EEngineError, PackageValidationError):
+            raise RestoreSelectionError(issue_code="restore_preflight_revalidation_failed") from None
+        except Exception:
+            raise RestoreSelectionError(issue_code="restore_preflight_revalidation_failed") from None
+        return RestorePreflightConsumption(
+            context=completed.context,
+            package=completed.package,
+            verification=completed.verification,
+            result=completed.result,
+            document=completed.document,
+        )
+
+    def cleanup_consumed_preflight(self, consumption):
+        """Clean an exact consumed preflight while the Phase 3B lease is held."""
+
+        if type(consumption) is not RestorePreflightConsumption:
+            raise RestorePreflightCleanupError()
+        reference = consumption.result.preflight_reference.identifier
+        with self._state_lock:
+            completed = self._completed.get(reference)
+            cleaned = self._cleaned.get(reference)
+        if cleaned is not None:
+            return False
+        if (
+            completed is None
+            or completed.context != consumption.context
+            or completed.package != consumption.package
+            or completed.verification != consumption.verification
+            or completed.result != consumption.result
+            or completed.document != consumption.document
+        ):
+            raise RestorePreflightCleanupError()
+        self._cleanup_attempt(
+            context=completed.context,
+            package=completed.package,
+            verification=completed.verification,
+        )
+        with self._state_lock:
+            if self._completed.get(reference) != completed:
+                raise RestorePreflightCleanupError()
+            del self._completed[reference]
+            self._cleaned[reference] = completed
+        return True
 
     def cleanup_restore_preflight(self, request):
         if (
@@ -933,6 +1088,7 @@ __all__ = [
     "RESTORE_PREFLIGHT_PROVIDER_STACK_VERSION",
     "RestoreComponentPlanItem",
     "RestorePreflightCleanupRequest",
+    "RestorePreflightConsumption",
     "RestorePreflightCoordinator",
     "RestorePreflightProviderStack",
     "RestorePreflightReference",

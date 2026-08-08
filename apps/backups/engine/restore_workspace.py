@@ -1024,6 +1024,166 @@ class RestoredPackageProvider:
                 except OSError:
                     pass
 
+    def validate_consumable_preflight(self, *, context, package, document):
+        """Re-attest the exact private Phase 3A tree without exposing a path."""
+
+        if type(package) is not PackageBuildResult or type(document) is not dict:
+            raise RestoreExtractionError()
+        key = self._state_key(context, package.reference, error_type=RestoreExtractionError)
+        with self._state_lock:
+            evidence = self._published.get(key)
+        if (
+            evidence is None
+            or evidence.context != context
+            or evidence.result != package
+            or evidence.package_identity is None
+            or evidence.preflight_evidence_identity is None
+            or not evidence.file_identities
+            or not evidence.directory_identities
+        ):
+            raise RestoreExtractionError()
+        self._validate_published(evidence, error_type=RestoreExtractionError)
+        _workspace, _workspace_path, area, _package_path = self._paths(
+            context,
+            error_type=RestoreExtractionError,
+        )
+        expected_files = {
+            RESTORE_PACKAGE_FILE_NAME,
+            RESTORE_PREFLIGHT_EVIDENCE_FILE_NAME,
+            *(relative for relative, _identity_value in evidence.file_identities),
+        }
+        expected_directories = {
+            relative for relative, _identity_value in evidence.directory_identities
+        }
+        actual_files, actual_directories = self._enumerate_exact_tree(area)
+        if actual_files != expected_files or actual_directories != expected_directories:
+            raise RestoreExtractionError()
+        path = contained_path(area, area / RESTORE_PREFLIGHT_EVIDENCE_FILE_NAME)
+        expected_raw = encode_canonical_document(document, trailing_lf=True)
+        descriptor = None
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if (
+                _identity(opened) != evidence.preflight_evidence_identity
+                or opened.st_nlink != 1
+                or opened.st_size != len(expected_raw)
+            ):
+                raise RestoreExtractionError()
+            raw = b""
+            while len(raw) <= len(expected_raw):
+                chunk = os.read(descriptor, min(_PACKAGE_CHUNK_BYTES, len(expected_raw) + 1 - len(raw)))
+                if not chunk:
+                    break
+                raw += chunk
+            if raw != expected_raw:
+                raise RestoreExtractionError()
+        except RestoreExtractionError:
+            raise
+        except OSError:
+            raise RestoreExtractionError() from None
+        finally:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        return True
+
+    @contextmanager
+    def open_extracted_entry(
+        self,
+        *,
+        context,
+        package,
+        package_path,
+        expected_byte_count,
+        expected_sha256,
+    ):
+        """Open one identity-bound extracted payload behind a read-only handle."""
+
+        try:
+            safe_name = _safe_archive_name(package_path)
+        except PackageValidationError:
+            raise RestoreExtractionError() from None
+        if (
+            type(package) is not PackageBuildResult
+            or type(expected_byte_count) is not int
+            or expected_byte_count < 0
+            or type(expected_sha256) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", expected_sha256)
+        ):
+            raise RestoreExtractionError()
+        key = self._state_key(context, package.reference, error_type=RestoreExtractionError)
+        with self._state_lock:
+            evidence = self._published.get(key)
+        if evidence is None or evidence.context != context or evidence.result != package:
+            raise RestoreExtractionError()
+        relative = f"{RESTORE_EXTRACTED_DIRECTORY_NAME}/{safe_name}"
+        identities = dict(evidence.file_identities)
+        expected_identity = identities.get(relative)
+        if expected_identity is None:
+            raise RestoreExtractionError()
+        _workspace, _workspace_path, area, _package_path = self._paths(
+            context,
+            error_type=RestoreExtractionError,
+        )
+        path = contained_path(area, area / Path(*relative.split("/")))
+        descriptor = None
+        raw_file = None
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if (
+                _identity(opened) != expected_identity
+                or opened.st_nlink != 1
+                or opened.st_size != expected_byte_count
+                or not stat.S_ISREG(opened.st_mode)
+            ):
+                raise RestoreExtractionError()
+            digest = hashlib.sha256()
+            count = 0
+            while True:
+                chunk = os.read(descriptor, _PACKAGE_CHUNK_BYTES)
+                if not chunk:
+                    break
+                count += len(chunk)
+                if count > expected_byte_count:
+                    raise RestoreExtractionError()
+                digest.update(chunk)
+            if count != expected_byte_count or digest.hexdigest() != expected_sha256:
+                raise RestoreExtractionError()
+            os.lseek(descriptor, 0, os.SEEK_SET)
+            raw_file = os.fdopen(descriptor, "rb", closefd=True)
+            descriptor = None
+            yield _OpaqueRestorePackageReader(raw_file)
+            current = os.fstat(raw_file.fileno())
+            if (
+                _identity(current) != expected_identity
+                or current.st_nlink != 1
+                or current.st_size != expected_byte_count
+            ):
+                raise RestoreExtractionError()
+        except RestoreExtractionError:
+            raise
+        except OSError:
+            raise RestoreExtractionError() from None
+        finally:
+            if raw_file is not None:
+                try:
+                    raw_file.close()
+                except OSError:
+                    pass
+            elif descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
     @staticmethod
     def _enumerate_exact_tree(area):
         files = set()

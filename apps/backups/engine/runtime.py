@@ -24,7 +24,7 @@ from apps.backups.enums import (
     IntegrityStatus,
     OperationKind,
 )
-from apps.backups.models import BackupRecord
+from apps.backups.models import BackupRecord, TenantOperationLock
 from apps.backups.registry import COMPONENT_REGISTRY
 from apps.tenants.models import Business
 
@@ -138,6 +138,15 @@ class BackupExecutionRequest:
             )
         except (AttributeError, TypeError, ValueError):
             raise RuntimeRequestError() from None
+
+
+@dataclass(frozen=True, slots=True)
+class InheritedTenantOperationLease:
+    """Opaque proof that a restore coordinator already owns the tenant lease."""
+
+    business_public_id: uuid.UUID
+    restore_operation_public_id: uuid.UUID
+    lock_token: uuid.UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +431,31 @@ class BackupExecutionCoordinator:
             lease_seconds=self.lock_lease_seconds,
         ):
             raise RuntimeLockLost()
+
+    @staticmethod
+    def _resolve_inherited_lock(*, business, lease):
+        if (
+            type(lease) is not InheritedTenantOperationLease
+            or type(lease.business_public_id) is not uuid.UUID
+            or type(lease.restore_operation_public_id) is not uuid.UUID
+            or type(lease.lock_token) is not uuid.UUID
+            or lease.business_public_id != business.public_id
+        ):
+            raise RuntimeLockUnavailable()
+        current = (
+            TenantOperationLock.objects.for_business(business)
+            .filter(
+                operation_kind=OperationKind.RESTORE,
+                operation_public_id=lease.restore_operation_public_id,
+                lock_token=lease.lock_token,
+                active=True,
+                lease_expires_at__gt=timezone.now(),
+            )
+            .first()
+        )
+        if current is None:
+            raise RuntimeLockUnavailable()
+        return current
 
     @staticmethod
     def _retention_class(backup):
@@ -763,7 +797,12 @@ class BackupExecutionCoordinator:
         warning = "" if severity == ActivitySeverity.INFO else "retention_incomplete"
         return outcome, warning
 
-    def execute(self, request: BackupExecutionRequest) -> BackupExecutionResult:
+    def execute(
+        self,
+        request: BackupExecutionRequest,
+        *,
+        inherited_lease: InheritedTenantOperationLease | None = None,
+    ) -> BackupExecutionResult:
         try:
             started = float(self.monotonic())
         except Exception:
@@ -783,27 +822,34 @@ class BackupExecutionCoordinator:
         durable_store_attempted = False
         cleanup_incomplete = False
         stage = "preparing"
+        owns_lock = inherited_lease is None
 
         try:
-            try:
-                lock = services.acquire_tenant_operation_lock(
+            if inherited_lease is None:
+                try:
+                    lock = services.acquire_tenant_operation_lock(
+                        business=business,
+                        operation_kind=OperationKind.BACKUP,
+                        operation_public_id=backup.public_id,
+                        worker_task_identifier=request.worker_task_identifier,
+                        lease_seconds=self.lock_lease_seconds,
+                    )
+                except services.TenantOperationLocked:
+                    self._activity(
+                        business=business,
+                        backup=backup,
+                        actor=actor,
+                        event_type=BACKUP_FAILED,
+                        severity=ActivitySeverity.WARNING,
+                        message="Backup execution could not acquire the tenant lock.",
+                        metadata={"error_code": "lock_unavailable"},
+                    )
+                    raise RuntimeLockUnavailable() from None
+            else:
+                lock = self._resolve_inherited_lock(
                     business=business,
-                    operation_kind=OperationKind.BACKUP,
-                    operation_public_id=backup.public_id,
-                    worker_task_identifier=request.worker_task_identifier,
-                    lease_seconds=self.lock_lease_seconds,
+                    lease=inherited_lease,
                 )
-            except services.TenantOperationLocked:
-                self._activity(
-                    business=business,
-                    backup=backup,
-                    actor=actor,
-                    event_type=BACKUP_FAILED,
-                    severity=ActivitySeverity.WARNING,
-                    message="Backup execution could not acquire the tenant lock.",
-                    metadata={"error_code": "lock_unavailable"},
-                )
-                raise RuntimeLockUnavailable() from None
 
             business, backup, actor = self._resolve_request(request)
             resolution = services.resolve_requested_scope(business, backup.scope)
@@ -1163,7 +1209,7 @@ class BackupExecutionCoordinator:
                         )
                     except Exception:
                         pass
-                if lock is not None:
+                if lock is not None and owns_lock:
                     services.release_tenant_operation_lock(
                         lock,
                         lock_token=lock.lock_token,
@@ -1227,6 +1273,7 @@ __all__ = [
     "BackupExecutionRequest",
     "BackupExecutionResult",
     "FinalStoredObjectEvidence",
+    "InheritedTenantOperationLease",
     "RUNTIME_PROVIDER_STACK_VERSION",
     "RuntimeProviderStack",
     "RuntimeRetentionOutcome",

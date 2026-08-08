@@ -66,8 +66,49 @@ class Phase3ACoordinationError(RestoreEngineError):
     default_message = "Restore-preflight providers are not composed safely."
 
 
+class RestoreMutationError(RestoreEngineError):
+    default_message = "Restore mutation could not be completed safely."
+
+
+class RestoreSafetyBackupError(RestoreMutationError):
+    default_message = "The mandatory pre-restore safety backup was not proven durable."
+
+
+class RestoreImportError(RestoreMutationError):
+    default_message = "Tenant logical data could not be restored safely."
+
+
+class RestoreRelationResolutionError(RestoreImportError):
+    default_message = "A required restore relation could not be resolved safely."
+
+
+class RestoreTenantDeletionError(RestoreImportError):
+    default_message = "Tenant replacement rows could not be deleted safely."
+
+
+class RestoreMediaPublicationError(RestoreMutationError):
+    default_message = "Restored media could not be published safely."
+
+
+class RestorePostVerificationError(RestoreMutationError):
+    default_message = "The restored tenant state did not pass independent verification."
+
+
+class RestoreRollbackError(RestoreMutationError):
+    default_message = "Restore rollback could not be proven complete."
+
+
+class RestoreRecoveryRequired(RestoreMutationError):
+    default_message = "The restore requires controlled recovery from its safety backup."
+
+
+class Phase3BCoordinationError(RestoreMutationError):
+    default_message = "Restore-mutation providers are not composed safely."
+
+
 __all__ = [
     "Phase3ACoordinationError",
+    "Phase3BCoordinationError",
     "RestoreCompatibilityError",
     "RestoreComponentPlanError",
     "RestoreDecryptError",
@@ -77,9 +118,18 @@ __all__ = [
     "RestoreLockLost",
     "RestoreLockUnavailable",
     "RestoreMediaPreflightError",
+    "RestoreMediaPublicationError",
+    "RestoreMutationError",
     "RestorePackageVerificationError",
     "RestorePreflightCleanupError",
     "RestoreRecordPreflightError",
+    "RestoreImportError",
+    "RestorePostVerificationError",
+    "RestoreRecoveryRequired",
+    "RestoreRelationResolutionError",
+    "RestoreRollbackError",
+    "RestoreSafetyBackupError",
     "RestoreSelectionError",
     "RestoreTenantMismatch",
+    "RestoreTenantDeletionError",
 ]
