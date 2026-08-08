@@ -10,6 +10,11 @@ from django.core.files.storage import FileSystemStorage
 from django.utils.module_loading import import_string
 
 from . import availability
+from .encryption_exceptions import (
+    EncryptionPolicyError,
+    KeyProviderConfigurationError,
+)
+from .encryption_policy import EncryptionPolicy
 from .exceptions import (
     LogicalExportPolicyError,
     LogicalExportRegistryError,
@@ -17,6 +22,7 @@ from .exceptions import (
     SQLiteSnapshotPolicyError,
     UnsafeWorkspacePath,
 )
+from .key_management import LocalConfiguredKekProvider
 from .logical_export_policy import LogicalExportPolicy
 from .logical_export_registry import get_logical_export_registry
 from .media_capture_policy import MediaCapturePolicy
@@ -230,6 +236,49 @@ def check_media_storage_configuration(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_encryption_policy_settings(app_configs, **kwargs):
+    try:
+        EncryptionPolicy.from_settings()
+    except EncryptionPolicyError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint="Configure bounded fail-closed encrypted-artifact policy values.",
+                id="backups.E027",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_local_kek_configuration(app_configs, **kwargs):
+    configured_values = (
+        getattr(settings, "BACKUP_LOCAL_KEK_B64", ""),
+        getattr(settings, "BACKUP_LOCAL_KEK_ID", ""),
+        getattr(settings, "BACKUP_LOCAL_KEK_VERSION", ""),
+    )
+    encryption_configured_for_use = bool(
+        availability.engine_setting_enabled() or any(configured_values)
+    )
+    if not encryption_configured_for_use:
+        return []
+    try:
+        LocalConfiguredKekProvider.from_settings()
+    except KeyProviderConfigurationError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint=(
+                    "Configure an exact Base64-encoded 32-byte local KEK plus "
+                    "safe key identifier and version for internal development use."
+                ),
+                id="backups.E028",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_backup_capability_consistency(app_configs, **kwargs):
     capability = availability.get_engine_capability()
     consistent = (
@@ -239,6 +288,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.CANONICAL_MANIFEST_PROVIDER_READY is True
         and availability.DETERMINISTIC_PACKAGE_PROVIDER_READY is True
         and availability.INDEPENDENT_PACKAGE_VERIFIER_READY is True
+        and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -252,6 +302,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.DETERMINISTIC_PACKAGE_PROVIDER_READY
         and capability.independent_package_verifier_ready
         is availability.INDEPENDENT_PACKAGE_VERIFIER_READY
+        and capability.encrypted_artifact_provider_ready
+        is availability.ENCRYPTED_ARTIFACT_PROVIDER_READY
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -262,7 +314,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all six internal providers ready while the operational "
+                    "Keep all seven internal providers ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

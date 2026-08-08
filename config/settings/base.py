@@ -250,7 +250,7 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
-# Backup engine foundation (Phase 2C providers remain operationally disabled)
+# Backup engine foundation (Phase 2F providers remain operationally disabled)
 # ------------------------------------------------------------------
 BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
     "BACKUP_EXECUTION_ENGINE_ENABLED",
@@ -372,6 +372,39 @@ BACKUP_MEDIA_INDEX_MAX_LINE_BYTES = env.int(
     "BACKUP_MEDIA_INDEX_MAX_LINE_BYTES",
     default=65_536,
 )
+BACKUP_ENCRYPTION_CHUNK_BYTES = env.int(
+    "BACKUP_ENCRYPTION_CHUNK_BYTES",
+    default=1_048_576,
+)
+BACKUP_ENCRYPTION_MAX_PLAINTEXT_BYTES = env.int(
+    "BACKUP_ENCRYPTION_MAX_PLAINTEXT_BYTES",
+    default=10 * 1024**4,
+)
+BACKUP_ENCRYPTION_MAX_ARTIFACT_BYTES = env.int(
+    "BACKUP_ENCRYPTION_MAX_ARTIFACT_BYTES",
+    default=10 * 1024**4 + 16 * 1024**2,
+)
+BACKUP_ENCRYPTION_TIMEOUT_SECONDS = env.float(
+    "BACKUP_ENCRYPTION_TIMEOUT_SECONDS",
+    default=1800.0,
+)
+BACKUP_ENCRYPTION_MIN_FREE_BYTES = env.int(
+    "BACKUP_ENCRYPTION_MIN_FREE_BYTES",
+    default=1_073_741_824,
+)
+BACKUP_ENCRYPTION_HEADROOM_MULTIPLIER = env.float(
+    "BACKUP_ENCRYPTION_HEADROOM_MULTIPLIER",
+    default=1.25,
+)
+BACKUP_ENCRYPTION_MAX_HEADER_BYTES = env.int(
+    "BACKUP_ENCRYPTION_MAX_HEADER_BYTES",
+    default=65_536,
+)
+# Development/test-only local KEK provider. Empty defaults are deliberately
+# invalid and are accepted only while the provider is not configured for use.
+BACKUP_LOCAL_KEK_B64 = env("BACKUP_LOCAL_KEK_B64", default="")
+BACKUP_LOCAL_KEK_ID = env("BACKUP_LOCAL_KEK_ID", default="")
+BACKUP_LOCAL_KEK_VERSION = env("BACKUP_LOCAL_KEK_VERSION", default="")
 
 # ------------------------------------------------------------------
 # Caching

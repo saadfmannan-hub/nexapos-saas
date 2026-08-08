@@ -252,6 +252,36 @@ VerificationResult = PackageVerificationResult
 
 
 @dataclass(frozen=True, slots=True)
+class EncryptedArtifactReference:
+    identifier: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class EncryptedArtifactRequest:
+    context: "BackupExecutionContext"
+    package: PackageBuildResult
+    verification: PackageVerificationResult
+
+
+@dataclass(frozen=True, slots=True)
+class EncryptedArtifactResult:
+    reference: EncryptedArtifactReference
+    encrypted_byte_count: int
+    ciphertext_sha256: str
+    plaintext_byte_count: int
+    plaintext_sha256: str
+    header_sha256: str
+    format_identifier: str
+    encryption_algorithm: str
+    kek_provider_identifier: str
+    kek_key_identifier: str
+    kek_version: str
+    created_at: datetime
+    provider_identifier: str
+    plaintext_cleanup_incomplete: bool
+
+
+@dataclass(frozen=True, slots=True)
 class StorageObjectReference:
     backend_identifier: str
     opaque_object_key: str

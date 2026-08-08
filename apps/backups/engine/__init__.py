@@ -1,4 +1,4 @@
-"""Nexa backup engine foundations through the internal Phase 2E providers.
+"""Nexa backup engine foundations through the internal Phase 2F providers.
 
 The public surface remains deliberately non-operational. It exposes typed
 contracts, immutable planning metadata, and central availability guards.
@@ -7,6 +7,7 @@ contracts, immutable planning metadata, and central availability guards.
 from .availability import (
     CANONICAL_MANIFEST_PROVIDER_READY,
     DETERMINISTIC_PACKAGE_PROVIDER_READY,
+    ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
@@ -18,6 +19,9 @@ from .availability import (
 from .canonical_manifest import CanonicalManifestProvider
 from .context import ActorIdentitySnapshot, BackupExecutionContext
 from .contracts import (
+    EncryptedArtifactReference,
+    EncryptedArtifactRequest,
+    EncryptedArtifactResult,
     PackageBuildRequest,
     PackageBuildResult,
     PackageCompatibilityStatus,
@@ -32,7 +36,10 @@ from .contracts import (
     VerificationReference,
 )
 from .deterministic_package import DeterministicPackageProvider
+from .encrypted_artifact import EncryptedArtifactProvider
+from .encryption_policy import EncryptionPolicy
 from .exceptions import BackupEngineDisabled, BackupEngineError
+from .key_management import KekProvider, LocalConfiguredKekProvider, WrappedDek
 from .logical_export import (
     SQLiteLogicalComponentExporter,
     export_snapshot_components,
@@ -55,9 +62,17 @@ __all__ = [
     "CanonicalManifestProvider",
     "DETERMINISTIC_PACKAGE_PROVIDER_READY",
     "DeterministicPackageProvider",
+    "ENCRYPTED_ARTIFACT_PROVIDER_READY",
+    "EncryptedArtifactProvider",
+    "EncryptedArtifactReference",
+    "EncryptedArtifactRequest",
+    "EncryptedArtifactResult",
+    "EncryptionPolicy",
     "INDEPENDENT_PACKAGE_VERIFIER_READY",
     "IndependentPackageVerifier",
     "LocalFilesystemMediaCaptureProvider",
+    "LocalConfiguredKekProvider",
+    "KekProvider",
     "MEDIA_CAPTURE_PROVIDER_READY",
     "PackageBuildRequest",
     "PackageBuildResult",
@@ -78,6 +93,7 @@ __all__ = [
     "TENANT_LOGICAL_EXPORT_PROVIDER_READY",
     "VerificationIssue",
     "VerificationReference",
+    "WrappedDek",
     "assert_real_execution_available",
     "get_engine_capability",
     "prepare_backup_execution",

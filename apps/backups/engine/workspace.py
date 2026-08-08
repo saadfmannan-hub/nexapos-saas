@@ -40,6 +40,7 @@ class WorkspaceArea(StrEnum):
     MANIFEST = "manifest"
     PACKAGE = "package"
     VERIFICATION = "verification"
+    ENCRYPTED = "encrypted"
 
 
 def _resolved(path) -> Path:
