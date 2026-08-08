@@ -1,8 +1,8 @@
 """Independent fail-closed package verification for Backup Engine Phase 2E.
 
-The verifier accepts only immutable execution/build evidence and an exact
-``DeterministicPackageProvider``.  Package and verification-evidence paths are
-never accepted from, or returned to, callers.
+The verifier accepts only immutable execution/build evidence and an explicitly
+marked opaque package-access provider. Package and verification-evidence paths
+are never accepted from, or returned to, callers.
 """
 
 from __future__ import annotations
@@ -54,8 +54,8 @@ from .contracts import (
     VerificationReference,
 )
 from .deterministic_package import (
-    DETERMINISTIC_PACKAGE_PROVIDER_IDENTIFIER,
     DETERMINISTIC_ZIP_TIMESTAMP,
+    PACKAGE_ACCESS_PROVIDER_SCHEMA,
     DeterministicPackageProvider,
 )
 from .logical_export import LOGICAL_EXPORT_PROVIDER_IDENTIFIER
@@ -71,6 +71,7 @@ from .logical_serialization import (
 from .media_capture import media_storage_collision_key
 from .package_exceptions import PackageNotFound, PackageValidationError
 from .pipeline import ComponentPlanItem, resolve_component_plan
+from .restore_workspace import RestoredPackageProvider
 from .verification_exceptions import (
     Phase2EEngineError,
     VerificationCleanupError,
@@ -468,13 +469,13 @@ def _validated_context(context):
     return context
 
 
-def _validated_package_result(result):
+def _validated_package_result(result, *, provider_identifier):
     if (
         type(result) is not PackageBuildResult
         or type(result.reference) is not PackageReference
         or type(result.reference.identifier) is not uuid.UUID
         or result.format_identifier != PACKAGE_FORMAT_IDENTIFIER
-        or result.provider_identifier != DETERMINISTIC_PACKAGE_PROVIDER_IDENTIFIER
+        or result.provider_identifier != provider_identifier
         or not _is_aware(result.created_at)
     ):
         _failure("package_evidence_rejected")
@@ -1249,6 +1250,9 @@ class PackageCompatibilityPolicy:
     """Small code-owned compatibility policy for the current restore contract."""
 
     identifier: str = "nexa.restore-compatibility-policy.v1"
+    current_schema_fingerprint: str = ""
+    current_application_version: str = ""
+    current_backup_format_version: str = ""
 
     def assess(self, *, document, plan, context):
         issues = []
@@ -1290,8 +1294,21 @@ class PackageCompatibilityPolicy:
             if not recognized_restore or not exact:
                 incompatible = True
 
-        minimum = document["backup"]["minimum_restore_version"]
-        application = context.application_version
+        backup_metadata = document["backup"]
+        minimum = backup_metadata["minimum_restore_version"]
+        application = self.current_application_version or context.application_version
+        if (
+            self.current_backup_format_version
+            and backup_metadata["backup_format_version"]
+            != self.current_backup_format_version
+        ):
+            incompatible = True
+        if (
+            self.current_schema_fingerprint
+            and backup_metadata["schema_migration_fingerprint"]
+            != self.current_schema_fingerprint
+        ):
+            not_proven = True
         if minimum != application:
             minimum_parts = _numeric_version(minimum)
             application_parts = _numeric_version(application)
@@ -1801,7 +1818,19 @@ class IndependentPackageVerifier:
         clock=None,
         failure_hook=None,
     ):
-        if type(package_provider) is not DeterministicPackageProvider:
+        if (
+            type(package_provider)
+            not in {DeterministicPackageProvider, RestoredPackageProvider}
+            or getattr(package_provider, "package_access_provider_schema", None)
+            != PACKAGE_ACCESS_PROVIDER_SCHEMA
+            or not callable(getattr(package_provider, "validate_package_evidence", None))
+            or not callable(getattr(package_provider, "open_package", None))
+            or type(
+                getattr(package_provider, "package_result_provider_identifier", None)
+            )
+            is not str
+            or not package_provider.package_result_provider_identifier
+        ):
             raise VerificationProviderStateError()
         manager = workspace_manager or package_provider.workspace_manager
         if (
@@ -1813,6 +1842,9 @@ class IndependentPackageVerifier:
         if type(policy) is not PackageCompatibilityPolicy:
             raise VerificationProviderStateError()
         self.package_provider = package_provider
+        self.package_provider_identifier = (
+            package_provider.package_result_provider_identifier
+        )
         self.workspace_manager = manager
         self.compatibility_policy = policy
         self.reference_factory = reference_factory or (lambda: VerificationReference(uuid.uuid4()))
@@ -2282,7 +2314,10 @@ class IndependentPackageVerifier:
             if type(request) is not PackageVerificationRequest:
                 _failure("package_evidence_rejected")
             context = _validated_context(request.context)
-            package = _validated_package_result(request.package)
+            package = _validated_package_result(
+                request.package,
+                provider_identifier=self.package_provider_identifier,
+            )
             try:
                 self.package_provider.validate_package_evidence(
                     context=context,

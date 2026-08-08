@@ -24,6 +24,8 @@ from .contracts import (
     DurableBackupStorageProvider,
     EncryptedArtifactReference,
     EncryptedArtifactResult,
+    PersistedStoredObjectDescriptor,
+    ReattestedStoredObjectResult,
     StoredBackupObjectReference,
     StoredBackupObjectRequest,
     StoredBackupObjectResult,
@@ -83,6 +85,19 @@ class _StoredEvidence:
     backup_identity: tuple[int, int]
     directory_identity: tuple[int, int]
     file_identity: tuple[int, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class _ReattestedEvidence:
+    context: BackupExecutionContext
+    descriptor: PersistedStoredObjectDescriptor
+    result: ReattestedStoredObjectResult
+    root_identity: tuple[int, int]
+    objects_identity: tuple[int, int]
+    tenant_identity: tuple[int, int]
+    backup_identity: tuple[int, int]
+    directory_identity: tuple[int, int]
+    file_identity: tuple[int, int]
 
 
 class _OpaqueStoredObjectReader:
@@ -292,6 +307,7 @@ class LocalPrivateDurableStorageProvider(DurableBackupStorageProvider):
         self._stored = {}
         self._deleted = {}
         self._by_source = {}
+        self._reattested = {}
         self._state_lock = threading.RLock()
 
     def __repr__(self):
@@ -653,6 +669,307 @@ class LocalPrivateDurableStorageProvider(DurableBackupStorageProvider):
                 except OSError:
                     pass
         return directory, path
+
+    def _validate_reattested_path(self, evidence, *, error_type):
+        context = evidence.context
+        result = evidence.result
+        objects, tenant, backup, directory, path = self._object_paths(
+            context,
+            result.reference,
+            error_type=error_type,
+        )
+        root_state = _directory_state(self.root, error_type=error_type)
+        objects_state = _directory_state(objects, error_type=error_type)
+        tenant_state = _directory_state(tenant, error_type=error_type)
+        backup_state = _directory_state(backup, error_type=error_type)
+        directory_state = _directory_state(directory, error_type=error_type)
+        if (
+            _identity(root_state) != evidence.root_identity
+            or _identity(objects_state) != evidence.objects_identity
+            or _identity(tenant_state) != evidence.tenant_identity
+            or _identity(backup_state) != evidence.backup_identity
+            or _identity(directory_state) != evidence.directory_identity
+            or len(
+                {
+                    root_state.st_dev,
+                    objects_state.st_dev,
+                    tenant_state.st_dev,
+                    backup_state.st_dev,
+                    directory_state.st_dev,
+                }
+            )
+            != 1
+        ):
+            raise error_type()
+        for directory_path in (self.root, objects, tenant, backup, directory):
+            _assert_private_mode(directory_path, 0o700, error_type=error_type)
+        try:
+            with os.scandir(directory) as contents:
+                if {entry.name for entry in contents} != {STORED_OBJECT_FILE_NAME}:
+                    raise error_type()
+        except DurableStorageEngineError:
+            raise
+        except OSError:
+            raise error_type() from None
+        current = _regular_file_state(path, error_type=error_type)
+        if (
+            _identity(current) != evidence.file_identity
+            or current.st_dev != evidence.directory_identity[0]
+            or current.st_size != result.byte_count
+        ):
+            raise error_type()
+        _assert_private_mode(path, 0o600, error_type=error_type)
+        byte_count, sha256 = self._hash_path(
+            path,
+            expected_identity=evidence.file_identity,
+            deadline=self.monotonic() + self.policy.timeout_seconds,
+            error_type=error_type,
+        )
+        if byte_count != result.byte_count or sha256 != result.sha256:
+            raise error_type()
+        return directory, path
+
+    def reattest_stored_object(self, *, context, descriptor):
+        """Re-establish exact process-local ownership from persisted opaque evidence.
+
+        The lookup is deterministic and provider-owned. It never accepts or scans
+        a caller-supplied path.
+        """
+
+        if (
+            type(descriptor) is not PersistedStoredObjectDescriptor
+            or type(descriptor.reference) is not StoredBackupObjectReference
+            or descriptor.backend_identifier
+            != LOCAL_DURABLE_STORAGE_BACKEND_IDENTIFIER
+            or descriptor.backup_public_id != getattr(context, "backup_public_id", None)
+            or descriptor.tenant_public_id
+            != getattr(context, "business_public_id", None)
+            or type(descriptor.byte_count) is not int
+            or not 1 <= descriptor.byte_count <= self.policy.maximum_object_bytes
+        ):
+            raise DurableObjectValidationError()
+        _safe_sha256(descriptor.sha256, error_type=DurableObjectValidationError)
+        key = self._state_key(
+            context,
+            descriptor.reference,
+            error_type=DurableObjectValidationError,
+        )
+        with self._state_lock:
+            existing = self._reattested.get(key)
+        if existing is not None:
+            if existing.context != context or existing.descriptor != descriptor:
+                raise DurableObjectValidationError()
+            self._validate_reattested_path(
+                existing,
+                error_type=DurableObjectValidationError,
+            )
+            return existing.result
+
+        self.root = validate_durable_storage_root(
+            self.root,
+            staging_root=self.encrypted_artifact_provider.workspace_manager.root,
+            media_root=getattr(settings, "MEDIA_ROOT", None),
+            static_root=getattr(settings, "STATIC_ROOT", None),
+            require_local=self.policy.require_local,
+            filesystem_inspector=self.filesystem_inspector,
+        )
+        objects, tenant, backup, directory, path = self._object_paths(
+            context,
+            descriptor.reference,
+            error_type=DurableObjectNotFound,
+        )
+        root_state = _directory_state(self.root, error_type=DurableObjectNotFound)
+        objects_state = _directory_state(objects, error_type=DurableObjectNotFound)
+        tenant_state = _directory_state(tenant, error_type=DurableObjectNotFound)
+        backup_state = _directory_state(backup, error_type=DurableObjectNotFound)
+        directory_state = _directory_state(directory, error_type=DurableObjectNotFound)
+        file_state = _regular_file_state(path, error_type=DurableObjectNotFound)
+        if (
+            len(
+                {
+                    root_state.st_dev,
+                    objects_state.st_dev,
+                    tenant_state.st_dev,
+                    backup_state.st_dev,
+                    directory_state.st_dev,
+                    file_state.st_dev,
+                }
+            )
+            != 1
+            or file_state.st_size != descriptor.byte_count
+        ):
+            raise DurableObjectValidationError()
+        for directory_path in (self.root, objects, tenant, backup, directory):
+            _assert_private_mode(
+                directory_path,
+                0o700,
+                error_type=DurableObjectValidationError,
+            )
+        _assert_private_mode(path, 0o600, error_type=DurableObjectValidationError)
+        try:
+            with os.scandir(directory) as contents:
+                if {entry.name for entry in contents} != {STORED_OBJECT_FILE_NAME}:
+                    raise DurableObjectValidationError()
+        except DurableStorageEngineError:
+            raise
+        except OSError:
+            raise DurableObjectValidationError() from None
+        byte_count, sha256 = self._hash_path(
+            path,
+            expected_identity=_identity(file_state),
+            deadline=self.monotonic() + self.policy.timeout_seconds,
+            error_type=DurableObjectValidationError,
+        )
+        if byte_count != descriptor.byte_count or sha256 != descriptor.sha256:
+            raise DurableObjectValidationError()
+        attested_at = self.clock()
+        if not _is_aware(attested_at):
+            raise DurableObjectValidationError()
+        result = ReattestedStoredObjectResult(
+            reference=descriptor.reference,
+            backend_identifier=descriptor.backend_identifier,
+            object_schema_identifier=STORED_OBJECT_SCHEMA_IDENTIFIER,
+            byte_count=byte_count,
+            sha256=sha256,
+            backup_public_id=context.backup_public_id,
+            tenant_public_id=context.business_public_id,
+            provider_identifier=LOCAL_DURABLE_STORAGE_PROVIDER_IDENTIFIER,
+            attested_at=attested_at.astimezone(UTC),
+        )
+        evidence = _ReattestedEvidence(
+            context=context,
+            descriptor=descriptor,
+            result=result,
+            root_identity=_identity(root_state),
+            objects_identity=_identity(objects_state),
+            tenant_identity=_identity(tenant_state),
+            backup_identity=_identity(backup_state),
+            directory_identity=_identity(directory_state),
+            file_identity=_identity(file_state),
+        )
+        self._validate_reattested_path(
+            evidence,
+            error_type=DurableObjectValidationError,
+        )
+        with self._state_lock:
+            current = self._reattested.get(key)
+            if current is not None and current != evidence:
+                raise DurableObjectValidationError()
+            self._reattested[key] = evidence
+        return result
+
+    def validate_reattested_object(self, *, context, result):
+        if (
+            type(result) is not ReattestedStoredObjectResult
+            or type(result.reference) is not StoredBackupObjectReference
+        ):
+            raise DurableObjectValidationError()
+        key = self._state_key(
+            context,
+            result.reference,
+            error_type=DurableObjectValidationError,
+        )
+        with self._state_lock:
+            evidence = self._reattested.get(key)
+        if evidence is None or evidence.context != context or evidence.result != result:
+            raise DurableObjectValidationError()
+        self._validate_reattested_path(
+            evidence,
+            error_type=DurableObjectValidationError,
+        )
+        return True
+
+    @contextmanager
+    def open_reattested_object(self, *, context, result):
+        self.validate_reattested_object(context=context, result=result)
+        key = self._state_key(
+            context,
+            result.reference,
+            error_type=DurableObjectNotFound,
+        )
+        with self._state_lock:
+            evidence = self._reattested.get(key)
+        if evidence is None:
+            raise DurableObjectNotFound()
+        directory, path = self._validate_reattested_path(
+            evidence,
+            error_type=DurableObjectNotFound,
+        )
+        descriptor = None
+        raw_file = None
+        opaque = None
+        try:
+            flags = os.O_RDONLY
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            flags |= getattr(os, "O_BINARY", 0)
+            descriptor = os.open(path, flags)
+            opened = os.fstat(descriptor)
+            if (
+                _identity(opened) != evidence.file_identity
+                or opened.st_nlink != 1
+                or opened.st_size != result.byte_count
+            ):
+                raise DurableObjectNotFound()
+            raw_file = os.fdopen(descriptor, "rb", closefd=True)
+            descriptor = None
+            opaque = _OpaqueStoredObjectReader(raw_file)
+            yield opaque
+        except DurableObjectNotFound:
+            raise
+        except OSError:
+            raise DurableObjectNotFound() from None
+        finally:
+            active_exception = sys.exc_info()[0] is not None
+            close_error = None
+            target = opaque or raw_file
+            if target is not None:
+                try:
+                    target.close()
+                except BaseException as exc:
+                    if not active_exception:
+                        close_error = exc
+            elif descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except BaseException as exc:
+                    if not active_exception:
+                        close_error = exc
+            try:
+                if (
+                    _identity(_directory_state(directory, error_type=DurableObjectNotFound))
+                    != evidence.directory_identity
+                ):
+                    raise DurableObjectNotFound()
+                self._validate_reattested_path(
+                    evidence,
+                    error_type=DurableObjectNotFound,
+                )
+            except BaseException as exc:
+                if not active_exception:
+                    close_error = exc
+            if close_error is not None and not active_exception:
+                if isinstance(close_error, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                    raise close_error.with_traceback(close_error.__traceback__)
+                raise DurableObjectNotFound() from None
+
+    def release_reattested_object(self, *, context, result):
+        if (
+            type(result) is not ReattestedStoredObjectResult
+            or type(result.reference) is not StoredBackupObjectReference
+        ):
+            raise DurableObjectValidationError()
+        key = self._state_key(
+            context,
+            result.reference,
+            error_type=DurableObjectValidationError,
+        )
+        with self._state_lock:
+            evidence = self._reattested.get(key)
+            if evidence is None or evidence.context != context or evidence.result != result:
+                raise DurableObjectValidationError()
+            del self._reattested[key]
+        return True
 
     @staticmethod
     def _cleanup_owned_files(paths, *, expected_identity):

@@ -41,6 +41,7 @@ class WorkspaceArea(StrEnum):
     PACKAGE = "package"
     VERIFICATION = "verification"
     ENCRYPTED = "encrypted"
+    RESTORE_PREFLIGHT = "restore-preflight"
 
 
 def _resolved(path) -> Path:

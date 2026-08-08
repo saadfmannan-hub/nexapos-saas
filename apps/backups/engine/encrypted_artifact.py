@@ -23,6 +23,7 @@ from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from django.utils import timezone
 
+from .canonical_manifest import PACKAGE_FORMAT_IDENTIFIER
 from .context import BackupExecutionContext
 from .contracts import (
     EncryptedArtifactReference,
@@ -32,6 +33,7 @@ from .contracts import (
     PackageCompatibilityStatus,
     PackageReference,
     PackageVerificationResult,
+    RestoredPlaintextEvidence,
     VerificationReference,
 )
 from .deterministic_package import DeterministicPackageProvider
@@ -275,6 +277,18 @@ def _utc_timestamp(value, *, error_type):
             "+00:00",
             "Z",
         )
+    except (OverflowError, TypeError, ValueError):
+        raise error_type() from None
+
+
+def _parse_utc_timestamp(value, *, error_type):
+    try:
+        if type(value) is not str or not value.endswith("Z"):
+            raise ValueError
+        parsed = datetime.fromisoformat(f"{value[:-1]}+00:00")
+        if not _is_aware(parsed) or _utc_timestamp(parsed, error_type=error_type) != value:
+            raise ValueError
+        return parsed.astimezone(UTC)
     except (OverflowError, TypeError, ValueError):
         raise error_type() from None
 
@@ -907,6 +921,168 @@ class EncryptedArtifactProvider:
             except Exception:
                 raise EncryptedArtifactValidationError() from None
             return document, header_bytes, decryptor, ciphertext_count
+        except EncryptedArtifactValidationError:
+            raise
+        except (OSError, OverflowError, struct.error, TypeError, ValueError):
+            raise EncryptedArtifactValidationError() from None
+
+    def _parse_restored_header(
+        self,
+        file_object,
+        *,
+        file_size,
+        context,
+        expected_key_identifier,
+    ):
+        """Parse historical framing inside the authoritative Phase 2F boundary."""
+
+        try:
+            if (
+                type(context) is not BackupExecutionContext
+                or type(context.workspace_reference) is not WorkspaceReference
+                or type(expected_key_identifier) is not str
+                or not expected_key_identifier
+                or len(expected_key_identifier) > 255
+            ):
+                raise EncryptedArtifactValidationError()
+            file_object.seek(0)
+            prefix = file_object.read(_PREFIX.size)
+            if type(prefix) is not bytes or len(prefix) != _PREFIX.size:
+                raise EncryptedArtifactValidationError()
+            magic, header_size = _PREFIX.unpack(prefix)
+            if (
+                magic != ARTIFACT_MAGIC
+                or not 0 < header_size <= self.policy.maximum_header_bytes
+            ):
+                raise EncryptedArtifactValidationError()
+            header_bytes = file_object.read(header_size)
+            if type(header_bytes) is not bytes or len(header_bytes) != header_size:
+                raise EncryptedArtifactValidationError()
+            document = _strict_header(
+                header_bytes,
+                maximum_bytes=self.policy.maximum_header_bytes,
+            )
+            _exact_keys(
+                document,
+                _HEADER_KEYS,
+                error_type=EncryptedArtifactValidationError,
+            )
+            wrapped_document = _exact_keys(
+                document["wrapped_dek"],
+                _WRAPPED_KEYS,
+                error_type=EncryptedArtifactValidationError,
+            )
+            data_nonce = _strict_b64(
+                document["nonce_b64"],
+                expected_bytes=_NONCE_BYTES,
+                error_type=EncryptedArtifactValidationError,
+            )
+            wrapped = WrappedDek(
+                provider_identifier=wrapped_document["kek_provider_identifier"],
+                key_identifier=wrapped_document["kek_key_identifier"],
+                key_version=wrapped_document["kek_version"],
+                algorithm=wrapped_document["wrapping_algorithm"],
+                nonce=_strict_b64(
+                    wrapped_document["nonce_b64"],
+                    expected_bytes=_NONCE_BYTES,
+                    error_type=EncryptedArtifactValidationError,
+                ),
+                wrapped_key=_strict_b64(
+                    wrapped_document["wrapped_key_b64"],
+                    expected_bytes=_KEY_BYTES,
+                    error_type=EncryptedArtifactValidationError,
+                ),
+                tag=_strict_b64(
+                    wrapped_document["tag_b64"],
+                    expected_bytes=_TAG_BYTES,
+                    error_type=EncryptedArtifactValidationError,
+                ),
+            )
+            plaintext_count = _count(
+                document["plaintext_byte_count"],
+                maximum=self.policy.maximum_plaintext_bytes,
+                positive=True,
+                error_type=EncryptedArtifactValidationError,
+            )
+            ciphertext_count = _count(
+                document["ciphertext_byte_count"],
+                maximum=self.policy.maximum_plaintext_bytes,
+                positive=True,
+                error_type=EncryptedArtifactValidationError,
+            )
+            plaintext_sha256 = _sha256(
+                document["plaintext_sha256"],
+                error_type=EncryptedArtifactValidationError,
+            )
+            created_at = _parse_utc_timestamp(
+                document["created_timestamp"],
+                error_type=EncryptedArtifactValidationError,
+            )
+            persisted_key_identifier = (
+                f"{wrapped.provider_identifier}:"
+                f"{wrapped.key_identifier}:{wrapped.key_version}"
+            )[:255]
+            if (
+                document["schema"] != ENCRYPTED_ARTIFACT_FORMAT_IDENTIFIER
+                or document["format_version"] != ENCRYPTED_ARTIFACT_FORMAT_VERSION
+                or document["encryption_algorithm"] != ENCRYPTION_ALGORITHM
+                or plaintext_count != ciphertext_count
+                or document["verified_package_format"] != PACKAGE_FORMAT_IDENTIFIER
+                or document["backup_public_id"] != str(context.backup_public_id)
+                or document["tenant_public_id"] != str(context.business_public_id)
+                or document["verification_schema"] != VERIFICATION_SCHEMA_IDENTIFIER
+                or document["verification_version"] != VERIFICATION_VERSION
+                or document["verification_provider"]
+                != INDEPENDENT_PACKAGE_VERIFIER_IDENTIFIER
+                or wrapped.algorithm != KEY_WRAP_ALGORITHM
+                or persisted_key_identifier != expected_key_identifier
+            ):
+                raise EncryptedArtifactValidationError()
+            expected_size = _PREFIX.size + header_size + ciphertext_count + _TAG_BYTES
+            if file_size != expected_size:
+                raise EncryptedArtifactValidationError()
+            try:
+                dek = self.kek_provider.unwrap_dek(wrapped)
+            except (KeyProviderConfigurationError, KeyWrapError):
+                raise EncryptedArtifactValidationError() from None
+            ciphertext_offset = _PREFIX.size + header_size
+            file_object.seek(ciphertext_offset + ciphertext_count)
+            tag = file_object.read(_TAG_BYTES)
+            if type(tag) is not bytes or len(tag) != _TAG_BYTES:
+                raise EncryptedArtifactValidationError()
+            file_object.seek(ciphertext_offset)
+            try:
+                decryptor = Cipher(
+                    algorithms.AES(dek),
+                    modes.GCM(data_nonce, tag, min_tag_length=_TAG_BYTES),
+                ).decryptor()
+                decryptor.authenticate_additional_data(header_bytes)
+            except Exception:
+                raise EncryptedArtifactValidationError() from None
+            return (
+                RestoredPlaintextEvidence(
+                    plaintext_byte_count=plaintext_count,
+                    plaintext_sha256=plaintext_sha256,
+                    encrypted_byte_count=file_size,
+                    ciphertext_sha256="",
+                    header_sha256=hashlib.sha256(header_bytes).hexdigest(),
+                    encrypted_format_identifier=document["schema"],
+                    encrypted_format_version=document["format_version"],
+                    encryption_algorithm=document["encryption_algorithm"],
+                    verified_package_format=document["verified_package_format"],
+                    backup_public_id=context.backup_public_id,
+                    tenant_public_id=context.business_public_id,
+                    kek_provider_identifier=wrapped.provider_identifier,
+                    kek_key_identifier=wrapped.key_identifier,
+                    kek_version=wrapped.key_version,
+                    verification_schema=document["verification_schema"],
+                    verification_version=document["verification_version"],
+                    verification_provider=document["verification_provider"],
+                    created_at=created_at,
+                ),
+                decryptor,
+                ciphertext_count,
+            )
         except EncryptedArtifactValidationError:
             raise
         except (OSError, OverflowError, struct.error, TypeError, ValueError):
@@ -1604,6 +1780,95 @@ class EncryptedArtifactProvider:
                     decrypting_reader.close()
                 except Exception:
                     pass
+
+    @contextmanager
+    def open_restored_plaintext(
+        self,
+        *,
+        context,
+        reader,
+        encrypted_byte_count,
+        ciphertext_sha256,
+        encryption_key_identifier,
+    ):
+        """Authenticate and decrypt a restart-retrieved durable object.
+
+        The caller supplies only opaque stream access plus DB-backed expected
+        evidence. Framing, KEK access, AAD, tag verification, and plaintext
+        evidence remain owned by Phase 2F.
+        """
+
+        if (
+            type(context) is not BackupExecutionContext
+            or type(context.workspace_reference) is not WorkspaceReference
+            or not callable(getattr(reader, "read", None))
+            or not callable(getattr(reader, "seek", None))
+            or type(encrypted_byte_count) is not int
+            or not 1 <= encrypted_byte_count <= self.policy.maximum_artifact_bytes
+        ):
+            raise EncryptedArtifactValidationError()
+        _sha256(
+            ciphertext_sha256,
+            error_type=EncryptedArtifactValidationError,
+        )
+        deadline = self.monotonic() + self.policy.timeout_seconds
+        decrypting_reader = None
+        digest = hashlib.sha256()
+        byte_count = 0
+        try:
+            reader.seek(0)
+            while True:
+                self._check_deadline(
+                    deadline,
+                    error_type=EncryptedArtifactValidationError,
+                )
+                chunk = reader.read(self.policy.chunk_bytes)
+                if type(chunk) is not bytes or len(chunk) > self.policy.chunk_bytes:
+                    raise EncryptedArtifactValidationError()
+                if not chunk:
+                    break
+                byte_count += len(chunk)
+                if byte_count > self.policy.maximum_artifact_bytes:
+                    raise EncryptedArtifactValidationError()
+                digest.update(chunk)
+            if (
+                byte_count != encrypted_byte_count
+                or digest.hexdigest() != ciphertext_sha256
+            ):
+                raise EncryptedArtifactValidationError()
+            reader.seek(0)
+            evidence, decryptor, ciphertext_count = self._parse_restored_header(
+                reader,
+                file_size=byte_count,
+                context=context,
+                expected_key_identifier=encryption_key_identifier,
+            )
+            evidence = replace(evidence, ciphertext_sha256=ciphertext_sha256)
+            decrypting_reader = _DecryptingReader(
+                file_object=reader,
+                decryptor=decryptor,
+                ciphertext_bytes=ciphertext_count,
+                chunk_bytes=self.policy.chunk_bytes,
+                expected_count=evidence.plaintext_byte_count,
+                expected_sha256=evidence.plaintext_sha256,
+                deadline_check=lambda: self._check_deadline(
+                    deadline,
+                    error_type=EncryptedArtifactValidationError,
+                ),
+            )
+            yield decrypting_reader, evidence
+        except EncryptedArtifactValidationError:
+            raise
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise EncryptedArtifactValidationError() from None
+        finally:
+            if decrypting_reader is not None:
+                active_exception = sys.exc_info()[0] is not None
+                try:
+                    decrypting_reader.close()
+                except BaseException:
+                    if not active_exception:
+                        raise EncryptedArtifactValidationError() from None
 
     def retry_plaintext_package_cleanup(self, request, result):
         context, package, verification = self._validate_request_for_retry(request)

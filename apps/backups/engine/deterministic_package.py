@@ -42,8 +42,8 @@ from .contracts import (
     CanonicalManifestResult,
     ComponentExportReference,
     ComponentExportResult,
-    MediaCaptureReference,
     ManifestReference,
+    MediaCaptureReference,
     MediaCaptureResult,
     PackageBuildRequest,
     PackageBuildResult,
@@ -55,14 +55,6 @@ from .exceptions import (
     ComponentExportNotFound,
     MediaObjectNotFound,
     UnsafeWorkspacePath,
-)
-from .package_exceptions import (
-    PackageCleanupError,
-    PackageContentMismatch,
-    PackageCreationError,
-    PackageNotFound,
-    PackageValidationError,
-    Phase2D2EngineError,
 )
 from .logical_export import (
     LOGICAL_EXPORT_PROVIDER_IDENTIFIER,
@@ -79,6 +71,14 @@ from .media_capture import (
     LOCAL_FILESYSTEM_MEDIA_CAPTURE_PROVIDER_IDENTIFIER,
     LocalFilesystemMediaCaptureProvider,
 )
+from .package_exceptions import (
+    PackageCleanupError,
+    PackageContentMismatch,
+    PackageCreationError,
+    PackageNotFound,
+    PackageValidationError,
+    Phase2D2EngineError,
+)
 from .workspace import (
     BackupWorkspaceManager,
     WorkspaceArea,
@@ -88,6 +88,7 @@ from .workspace import (
 )
 
 DETERMINISTIC_PACKAGE_PROVIDER_IDENTIFIER = "deterministic-zip-store-v1"
+PACKAGE_ACCESS_PROVIDER_SCHEMA = "nexa.package-access.v1"
 PACKAGE_FILE_NAME = "package.zip"
 PLAINTEXT_PACKAGE_HASH_ALGORITHM = "sha256"
 DETERMINISTIC_ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
@@ -772,6 +773,8 @@ def _zip_info(path):
 
 
 class DeterministicPackageProvider:
+    package_access_provider_schema = PACKAGE_ACCESS_PROVIDER_SCHEMA
+    package_result_provider_identifier = DETERMINISTIC_PACKAGE_PROVIDER_IDENTIFIER
     """Build, open, validate, and exactly clean one private plaintext package."""
 
     def __init__(

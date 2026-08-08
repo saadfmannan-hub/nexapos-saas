@@ -381,6 +381,46 @@ def check_runtime_provider_stack_configuration(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_restore_preflight_configuration(app_configs, **kwargs):
+    """Validate restore prerequisites without retrieving or decrypting an object."""
+
+    try:
+        staging_root = validate_staging_root(
+            getattr(settings, "BACKUP_STAGING_ROOT", "")
+        )
+        encryption_policy = EncryptionPolicy.from_settings()
+        durable_policy = DurableStoragePolicy.from_settings()
+        validate_durable_storage_root(
+            durable_policy.root,
+            staging_root=staging_root,
+            media_root=getattr(settings, "MEDIA_ROOT", None),
+            static_root=getattr(settings, "STATIC_ROOT", None),
+            require_local=durable_policy.require_local,
+        )
+        if encryption_policy.maximum_artifact_bytes > durable_policy.maximum_object_bytes:
+            raise ValueError
+        configured_key_values = (
+            getattr(settings, "BACKUP_LOCAL_KEK_B64", ""),
+            getattr(settings, "BACKUP_LOCAL_KEK_ID", ""),
+            getattr(settings, "BACKUP_LOCAL_KEK_VERSION", ""),
+        )
+        if availability.engine_setting_enabled() or any(configured_key_values):
+            LocalConfiguredKekProvider.from_settings()
+    except Exception:
+        return [
+            Error(
+                "Restore-preflight provider configuration is not safe.",
+                hint=(
+                    "Configure compatible private staging, durable retrieval, "
+                    "encryption policy, and KEK settings before restore preflight."
+                ),
+                id="backups.E034",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_backup_capability_consistency(app_configs, **kwargs):
     capability = availability.get_engine_capability()
     consistent = (
@@ -397,6 +437,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.ASYNC_EXECUTION_BOUNDARY_READY is True
         and availability.SCHEDULE_DISPATCHER_READY is True
         and availability.RUNTIME_COMPOSITION_READY is True
+        and availability.RESTORE_PREFLIGHT_ENGINE_READY is True
+        and availability.RESTORE_MUTATION_ENGINE_READY is False
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -423,6 +465,10 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.SCHEDULE_DISPATCHER_READY
         and capability.runtime_composition_ready
         is availability.RUNTIME_COMPOSITION_READY
+        and capability.restore_preflight_engine_ready
+        is availability.RESTORE_PREFLIGHT_ENGINE_READY
+        and capability.restore_mutation_engine_ready
+        is availability.RESTORE_MUTATION_ENGINE_READY
         and capability.async_configuration_ready
         is availability.async_configuration_ready()
         and capability.runtime_configuration_ready is False
@@ -436,8 +482,9 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all thirteen internal foundations ready while the operational "
-                    "provider stack and real execution remain disabled."
+                    "Keep internal backup and restore-preflight foundations ready while "
+                    "restore mutation, the operational provider stack, and real "
+                    "execution remain disabled."
                 ),
                 id="backups.E026",
             )

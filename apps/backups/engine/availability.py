@@ -18,22 +18,24 @@ INDEPENDENT_PACKAGE_VERIFIER_READY = True
 ENCRYPTED_ARTIFACT_PROVIDER_READY = True
 DURABLE_STORAGE_PROVIDER_READY = True
 RETENTION_ENGINE_READY = True
-# The coordinator is code-complete, but historical Phase 2G ownership evidence
-# cannot yet be re-attested after process restart. Destructive operational
-# retention therefore remains unavailable and the full stack stays fail-closed.
+# Phase 3A can re-attest historical Phase 2G objects for non-mutating preflight.
+# Destructive operational retention and restore mutation remain unavailable.
 RUNTIME_ORCHESTRATOR_READY = True
 ASYNC_EXECUTION_BOUNDARY_READY = True
 SCHEDULE_DISPATCHER_READY = True
 RUNTIME_COMPOSITION_READY = True
+RESTORE_PREFLIGHT_ENGINE_READY = True
+RESTORE_MUTATION_ENGINE_READY = False
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
     "verification, local encrypted-artifact support, and local private durable "
     "storage, immutable daily-full retention, and operational coordination are "
-    "available internally, but restart-persistent historical storage attestation, "
-    "production KEK/KMS and object storage integration, production worker/beat "
-    "activation, download authorization, and restore remain "
+    "available internally. Non-mutating restore preflight and restart-safe local "
+    "durable-object re-attestation are also available, but production KEK/KMS and "
+    "object storage integration, destructive historical retention, production "
+    "worker/beat activation, download authorization, and restore mutation remain "
     "incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
@@ -56,6 +58,8 @@ class BackupEngineCapability:
     async_execution_boundary_ready: bool
     schedule_dispatcher_ready: bool
     runtime_composition_ready: bool
+    restore_preflight_engine_ready: bool
+    restore_mutation_engine_ready: bool
     async_configuration_ready: bool
     runtime_configuration_ready: bool
     runtime_snapshot_policy_ready: bool | None
@@ -194,6 +198,8 @@ def get_engine_capability() -> BackupEngineCapability:
         async_execution_boundary_ready=ASYNC_EXECUTION_BOUNDARY_READY,
         schedule_dispatcher_ready=SCHEDULE_DISPATCHER_READY,
         runtime_composition_ready=RUNTIME_COMPOSITION_READY,
+        restore_preflight_engine_ready=RESTORE_PREFLIGHT_ENGINE_READY,
+        restore_mutation_engine_ready=RESTORE_MUTATION_ENGINE_READY,
         async_configuration_ready=async_ready,
         runtime_configuration_ready=runtime_ready,
         # Runtime readiness depends on the selected database and private

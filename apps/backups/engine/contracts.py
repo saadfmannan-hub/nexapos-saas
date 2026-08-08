@@ -322,6 +322,57 @@ class StoredBackupObjectResult:
     encrypted_staging_cleanup_incomplete: bool
 
 
+@dataclass(frozen=True, slots=True)
+class PersistedStoredObjectDescriptor:
+    """DB-backed identity used only for provider-owned restart re-attestation."""
+
+    reference: StoredBackupObjectReference
+    backend_identifier: str
+    byte_count: int
+    sha256: str
+    backup_public_id: uuid.UUID
+    tenant_public_id: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class ReattestedStoredObjectResult:
+    """Short-lived ownership evidence for one exact historical durable object."""
+
+    reference: StoredBackupObjectReference
+    backend_identifier: str
+    object_schema_identifier: str
+    byte_count: int
+    sha256: str
+    backup_public_id: uuid.UUID
+    tenant_public_id: uuid.UUID
+    provider_identifier: str
+    attested_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RestoredPlaintextEvidence:
+    """Authenticated Phase 2F header evidence for a restored plaintext stream."""
+
+    plaintext_byte_count: int
+    plaintext_sha256: str
+    encrypted_byte_count: int
+    ciphertext_sha256: str
+    header_sha256: str
+    encrypted_format_identifier: str
+    encrypted_format_version: str
+    encryption_algorithm: str
+    verified_package_format: str
+    backup_public_id: uuid.UUID
+    tenant_public_id: uuid.UUID
+    kek_provider_identifier: str
+    kek_key_identifier: str
+    kek_version: str
+    verification_schema: str
+    verification_version: str
+    verification_provider: str
+    created_at: datetime
+
+
 class DurableBackupStorageProvider(ABC):
     @abstractmethod
     def store_encrypted_artifact(

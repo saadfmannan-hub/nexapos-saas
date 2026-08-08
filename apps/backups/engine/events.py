@@ -38,3 +38,10 @@ RETENTION_FAILED = "retention.failed"
 RETENTION_HISTORICAL_EVIDENCE_DEFERRED = (
     "retention.historical_evidence_deferred"
 )
+RESTORE_PREFLIGHT_STARTED = "restore.preflight_started"
+RESTORE_DURABLE_OBJECT_VALIDATED = "restore.durable_object_validated"
+RESTORE_DECRYPTED = "restore.decrypted"
+RESTORE_PACKAGE_VERIFIED = "restore.package_verified"
+RESTORE_COMPATIBILITY_CHECKED = "restore.compatibility_checked"
+RESTORE_PREFLIGHT_READY = "restore.preflight_ready"
+RESTORE_PREFLIGHT_FAILED = "restore.preflight_failed"
