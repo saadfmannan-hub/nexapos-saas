@@ -250,7 +250,7 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
-# Backup engine foundation (Phase 2G providers remain operationally disabled)
+# Backup engine foundation (Phase 2H providers remain operationally disabled)
 # ------------------------------------------------------------------
 BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
     "BACKUP_EXECUTION_ENGINE_ENABLED",
@@ -434,6 +434,18 @@ BACKUP_DURABLE_STORAGE_HEADROOM_MULTIPLIER = env.float(
 BACKUP_DURABLE_STORAGE_REQUIRE_LOCAL = env.bool(
     "BACKUP_DURABLE_STORAGE_REQUIRE_LOCAL",
     default=True,
+)
+BACKUP_RETENTION_DAILY_FULL_KEEP_COUNT = env.int(
+    "BACKUP_RETENTION_DAILY_FULL_KEEP_COUNT",
+    default=5,
+)
+BACKUP_RETENTION_MAX_DELETE_BATCH = env.int(
+    "BACKUP_RETENTION_MAX_DELETE_BATCH",
+    default=100,
+)
+BACKUP_RETENTION_TIMEOUT_SECONDS = env.float(
+    "BACKUP_RETENTION_TIMEOUT_SECONDS",
+    default=300.0,
 )
 
 # ------------------------------------------------------------------

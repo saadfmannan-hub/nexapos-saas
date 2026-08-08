@@ -358,6 +358,24 @@ class DurableBackupStorageProvider(ABC):
         """Return whether the exact context owns the opaque reference."""
 
     @abstractmethod
+    def owns_stored_object_result(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        result: StoredBackupObjectResult,
+    ) -> bool:
+        """Return whether result metadata exactly matches provider evidence."""
+
+    @abstractmethod
+    def confirm_stored_object_absent(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        reference: StoredBackupObjectReference,
+    ) -> bool:
+        """Confirm an exact provider deletion tombstone and absent object."""
+
+    @abstractmethod
     def delete_stored_object(
         self,
         *,

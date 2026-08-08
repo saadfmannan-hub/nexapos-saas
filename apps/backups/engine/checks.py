@@ -34,6 +34,8 @@ from .key_management import LocalConfiguredKekProvider
 from .logical_export_policy import LogicalExportPolicy
 from .logical_export_registry import get_logical_export_registry
 from .media_capture_policy import MediaCapturePolicy
+from .retention_exceptions import RetentionPolicyError
+from .retention_policy import RetentionPolicy
 from .snapshot_policy import SQLiteSnapshotPolicy
 from .workspace import path_has_link_like_component, validate_staging_root
 
@@ -327,6 +329,21 @@ def check_durable_storage_root(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_retention_policy_settings(app_configs, **kwargs):
+    try:
+        RetentionPolicy.from_settings()
+    except RetentionPolicyError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint="Configure bounded fail-closed backup retention policy values.",
+                id="backups.E031",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_backup_capability_consistency(app_configs, **kwargs):
     capability = availability.get_engine_capability()
     consistent = (
@@ -338,6 +355,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.INDEPENDENT_PACKAGE_VERIFIER_READY is True
         and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
         and availability.DURABLE_STORAGE_PROVIDER_READY is True
+        and availability.RETENTION_ENGINE_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -355,6 +373,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.ENCRYPTED_ARTIFACT_PROVIDER_READY
         and capability.durable_storage_provider_ready
         is availability.DURABLE_STORAGE_PROVIDER_READY
+        and capability.retention_engine_ready is availability.RETENTION_ENGINE_READY
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -365,7 +384,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all eight internal providers ready while the operational "
+                    "Keep all nine internal providers ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

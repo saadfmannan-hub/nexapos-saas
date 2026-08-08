@@ -1033,6 +1033,51 @@ class LocalPrivateDurableStorageProvider(DurableBackupStorageProvider):
             evidence = self._stored.get(key)
         return evidence is not None and evidence.context == context
 
+    def owns_stored_object_result(self, *, context, result):
+        if (
+            type(result) is not StoredBackupObjectResult
+            or type(result.reference) is not StoredBackupObjectReference
+        ):
+            return False
+        try:
+            key = self._state_key(
+                context,
+                result.reference,
+                error_type=DurableObjectValidationError,
+            )
+        except DurableObjectValidationError:
+            return False
+        with self._state_lock:
+            evidence = self._stored.get(key)
+        return (
+            evidence is not None
+            and evidence.context == context
+            and evidence.result == result
+        )
+
+    def confirm_stored_object_absent(self, *, context, reference):
+        try:
+            key = self._state_key(
+                context,
+                reference,
+                error_type=DurableObjectValidationError,
+            )
+        except DurableObjectValidationError:
+            return False
+        with self._state_lock:
+            evidence = self._deleted.get(key)
+        if evidence is None or evidence.context != context:
+            return False
+        try:
+            _objects, _tenant, _backup, directory, _path = self._object_paths(
+                context,
+                reference,
+                error_type=DurableObjectValidationError,
+            )
+            return not os.path.lexists(directory)
+        except DurableObjectValidationError:
+            return False
+
     def retry_encrypted_staging_cleanup(self, request, result):
         if (
             type(request) is not StoredBackupObjectRequest

@@ -1,4 +1,4 @@
-"""Nexa backup engine foundations through the internal Phase 2G providers.
+"""Nexa backup engine foundations through the internal Phase 2H providers.
 
 The public surface remains deliberately non-operational. It exposes typed
 contracts, immutable planning metadata, and central availability guards.
@@ -11,6 +11,7 @@ from .availability import (
     ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
+    RETENTION_ENGINE_READY,
     SQLITE_SNAPSHOT_PROVIDER_READY,
     TENANT_LOGICAL_EXPORT_PROVIDER_READY,
     assert_real_execution_available,
@@ -59,6 +60,19 @@ from .package_verification import IndependentPackageVerifier
 from .phase2d1 import Phase2D1Coordinator
 from .phase2d2 import Phase2D2Coordinator
 from .pipeline import BackupExecutionPlan, PipelineStage
+from .retention import (
+    BackupRetentionClass,
+    RetentionAuditEvent,
+    RetentionAuditEventType,
+    RetentionCandidate,
+    RetentionEngine,
+    RetentionExecutionResult,
+    RetentionExecutionState,
+    RetentionPlan,
+    RetentionPlanReference,
+    RetentionSkipReason,
+)
+from .retention_policy import RetentionPolicy
 from .sqlite_snapshot import SQLiteSnapshotProvider
 
 __all__ = [
@@ -67,6 +81,7 @@ __all__ = [
     "BackupEngineError",
     "BackupExecutionContext",
     "BackupExecutionPlan",
+    "BackupRetentionClass",
     "CANONICAL_MANIFEST_PROVIDER_READY",
     "CanonicalManifestProvider",
     "DETERMINISTIC_PACKAGE_PROVIDER_READY",
@@ -100,6 +115,17 @@ __all__ = [
     "Phase2D2Result",
     "PipelineStage",
     "RestoreReadinessResult",
+    "RETENTION_ENGINE_READY",
+    "RetentionAuditEvent",
+    "RetentionAuditEventType",
+    "RetentionCandidate",
+    "RetentionEngine",
+    "RetentionExecutionResult",
+    "RetentionExecutionState",
+    "RetentionPlan",
+    "RetentionPlanReference",
+    "RetentionPolicy",
+    "RetentionSkipReason",
     "SQLITE_SNAPSHOT_PROVIDER_READY",
     "SQLiteSnapshotProvider",
     "SQLiteLogicalComponentExporter",
