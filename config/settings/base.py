@@ -250,7 +250,7 @@ CELERY_RESULT_BACKEND = env("REDIS_URL", default="")
 CELERY_TASK_ALWAYS_EAGER = not bool(CELERY_BROKER_URL)
 
 # ------------------------------------------------------------------
-# Backup engine foundation (Phase 2F providers remain operationally disabled)
+# Backup engine foundation (Phase 2G providers remain operationally disabled)
 # ------------------------------------------------------------------
 BACKUP_EXECUTION_ENGINE_ENABLED = env.bool(
     "BACKUP_EXECUTION_ENGINE_ENABLED",
@@ -405,6 +405,36 @@ BACKUP_ENCRYPTION_MAX_HEADER_BYTES = env.int(
 BACKUP_LOCAL_KEK_B64 = env("BACKUP_LOCAL_KEK_B64", default="")
 BACKUP_LOCAL_KEK_ID = env("BACKUP_LOCAL_KEK_ID", default="")
 BACKUP_LOCAL_KEK_VERSION = env("BACKUP_LOCAL_KEK_VERSION", default="")
+BACKUP_DURABLE_STORAGE_ROOT = Path(
+    env(
+        "BACKUP_DURABLE_STORAGE_ROOT",
+        default=str(BASE_DIR.parent / ".nexa-backup-durable"),
+    )
+)
+BACKUP_DURABLE_STORAGE_CHUNK_BYTES = env.int(
+    "BACKUP_DURABLE_STORAGE_CHUNK_BYTES",
+    default=1_048_576,
+)
+BACKUP_DURABLE_STORAGE_MAX_OBJECT_BYTES = env.int(
+    "BACKUP_DURABLE_STORAGE_MAX_OBJECT_BYTES",
+    default=10 * 1024**4 + 16 * 1024**2,
+)
+BACKUP_DURABLE_STORAGE_TIMEOUT_SECONDS = env.float(
+    "BACKUP_DURABLE_STORAGE_TIMEOUT_SECONDS",
+    default=3600.0,
+)
+BACKUP_DURABLE_STORAGE_MIN_FREE_BYTES = env.int(
+    "BACKUP_DURABLE_STORAGE_MIN_FREE_BYTES",
+    default=1_073_741_824,
+)
+BACKUP_DURABLE_STORAGE_HEADROOM_MULTIPLIER = env.float(
+    "BACKUP_DURABLE_STORAGE_HEADROOM_MULTIPLIER",
+    default=1.25,
+)
+BACKUP_DURABLE_STORAGE_REQUIRE_LOCAL = env.bool(
+    "BACKUP_DURABLE_STORAGE_REQUIRE_LOCAL",
+    default=True,
+)
 
 # ------------------------------------------------------------------
 # Caching

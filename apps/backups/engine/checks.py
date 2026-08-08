@@ -10,6 +10,14 @@ from django.core.files.storage import FileSystemStorage
 from django.utils.module_loading import import_string
 
 from . import availability
+from .durable_storage_exceptions import (
+    DurableStoragePolicyError,
+    UnsafeDurableStorageRoot,
+)
+from .durable_storage_policy import (
+    DurableStoragePolicy,
+    validate_durable_storage_root,
+)
 from .encryption_exceptions import (
     EncryptionPolicyError,
     KeyProviderConfigurationError,
@@ -279,6 +287,46 @@ def check_local_kek_configuration(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_durable_storage_policy_settings(app_configs, **kwargs):
+    try:
+        DurableStoragePolicy.from_settings()
+    except DurableStoragePolicyError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint="Configure bounded fail-closed durable-storage policy values.",
+                id="backups.E029",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_durable_storage_root(app_configs, **kwargs):
+    try:
+        policy = DurableStoragePolicy.from_settings()
+        validate_durable_storage_root(
+            policy.root,
+            staging_root=getattr(settings, "BACKUP_STAGING_ROOT", None),
+            media_root=getattr(settings, "MEDIA_ROOT", None),
+            static_root=getattr(settings, "STATIC_ROOT", None),
+            require_local=policy.require_local,
+        )
+    except (DurableStoragePolicyError, UnsafeDurableStorageRoot) as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint=(
+                    "Configure an absolute confirmed-local private durable root "
+                    "that does not overlap staging, MEDIA_ROOT, or STATIC_ROOT."
+                ),
+                id="backups.E030",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_backup_capability_consistency(app_configs, **kwargs):
     capability = availability.get_engine_capability()
     consistent = (
@@ -289,6 +337,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.DETERMINISTIC_PACKAGE_PROVIDER_READY is True
         and availability.INDEPENDENT_PACKAGE_VERIFIER_READY is True
         and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
+        and availability.DURABLE_STORAGE_PROVIDER_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -304,6 +353,8 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.INDEPENDENT_PACKAGE_VERIFIER_READY
         and capability.encrypted_artifact_provider_ready
         is availability.ENCRYPTED_ARTIFACT_PROVIDER_READY
+        and capability.durable_storage_provider_ready
+        is availability.DURABLE_STORAGE_PROVIDER_READY
         and capability.provider_stack_ready
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
@@ -314,7 +365,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
             Error(
                 "Backup provider capability flags are not internally consistent.",
                 hint=(
-                    "Keep all seven internal providers ready while the operational "
+                    "Keep all eight internal providers ready while the operational "
                     "provider stack and real execution remain disabled."
                 ),
                 id="backups.E026",

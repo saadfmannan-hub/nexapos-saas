@@ -281,6 +281,92 @@ class EncryptedArtifactResult:
     plaintext_cleanup_incomplete: bool
 
 
+class StoredObjectDurabilityState(StrEnum):
+    STORED = "STORED"
+
+
+class StoredObjectVerificationState(StrEnum):
+    STORED_AND_VERIFIED = "STORED_AND_VERIFIED"
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBackupObjectReference:
+    identifier: uuid.UUID
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBackupObjectRequest:
+    context: "BackupExecutionContext"
+    encrypted_artifact: EncryptedArtifactResult
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBackupObjectResult:
+    reference: StoredBackupObjectReference
+    backend_identifier: str
+    object_schema_identifier: str
+    byte_count: int
+    sha256: str
+    source_encrypted_artifact_sha256: str
+    backup_public_id: uuid.UUID
+    tenant_public_id: uuid.UUID
+    stored_at: datetime
+    provider_identifier: str
+    durability_state: StoredObjectDurabilityState
+    verification_state: StoredObjectVerificationState
+    encrypted_format_identifier: str
+    encryption_algorithm: str
+    kek_provider_identifier: str
+    kek_key_identifier: str
+    kek_version: str
+    encrypted_staging_cleanup_incomplete: bool
+
+
+class DurableBackupStorageProvider(ABC):
+    @abstractmethod
+    def store_encrypted_artifact(
+        self,
+        request: StoredBackupObjectRequest,
+    ) -> StoredBackupObjectResult:
+        """Durably store and independently verify an encrypted artifact."""
+
+    @abstractmethod
+    def validate_stored_object(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        result: StoredBackupObjectResult,
+    ) -> bool:
+        """Validate exact provider-held durable object evidence."""
+
+    @abstractmethod
+    def open_stored_object(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        reference: StoredBackupObjectReference,
+    ):
+        """Open an owned durable object through an opaque reader."""
+
+    @abstractmethod
+    def owns_stored_object_reference(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        reference: StoredBackupObjectReference,
+    ) -> bool:
+        """Return whether the exact context owns the opaque reference."""
+
+    @abstractmethod
+    def delete_stored_object(
+        self,
+        *,
+        context: "BackupExecutionContext",
+        reference: StoredBackupObjectReference,
+    ) -> bool:
+        """Delete only an exactly owned durable object."""
+
+
 @dataclass(frozen=True, slots=True)
 class StorageObjectReference:
     backend_identifier: str

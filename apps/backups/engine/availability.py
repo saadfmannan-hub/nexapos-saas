@@ -7,7 +7,7 @@ from django.conf import settings
 from .exceptions import BackupEngineDisabled
 
 # These code capabilities are internal building blocks. They do not permit a
-# commercial workflow to run until production key management, durable storage,
+# commercial workflow to run until production key management/object storage,
 # retention, restore, and operational orchestration are complete.
 SQLITE_SNAPSHOT_PROVIDER_READY = True
 TENANT_LOGICAL_EXPORT_PROVIDER_READY = True
@@ -16,13 +16,15 @@ CANONICAL_MANIFEST_PROVIDER_READY = True
 DETERMINISTIC_PACKAGE_PROVIDER_READY = True
 INDEPENDENT_PACKAGE_VERIFIER_READY = True
 ENCRYPTED_ARTIFACT_PROVIDER_READY = True
+DURABLE_STORAGE_PROVIDER_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
-    "verification, and local encrypted-artifact support are available "
-    "internally, but production KEK/KMS integration, durable private storage, "
-    "retention, operational orchestration, and restore remain incomplete."
+    "verification, local encrypted-artifact support, and local private durable "
+    "storage are available internally, but production KEK/KMS and object "
+    "storage integration, retention, scheduling, download authorization, "
+    "operational orchestration, and restore remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -38,6 +40,7 @@ class BackupEngineCapability:
     deterministic_package_provider_ready: bool
     independent_package_verifier_ready: bool
     encrypted_artifact_provider_ready: bool
+    durable_storage_provider_ready: bool
     runtime_snapshot_policy_ready: bool | None
     provider_stack_ready: bool
     real_execution_available: bool
@@ -71,6 +74,7 @@ def get_engine_capability() -> BackupEngineCapability:
         deterministic_package_provider_ready=DETERMINISTIC_PACKAGE_PROVIDER_READY,
         independent_package_verifier_ready=INDEPENDENT_PACKAGE_VERIFIER_READY,
         encrypted_artifact_provider_ready=ENCRYPTED_ARTIFACT_PROVIDER_READY,
+        durable_storage_provider_ready=DURABLE_STORAGE_PROVIDER_READY,
         # Runtime readiness depends on the selected database and private
         # workspace. Planning deliberately does not perform that assessment.
         runtime_snapshot_policy_ready=None,

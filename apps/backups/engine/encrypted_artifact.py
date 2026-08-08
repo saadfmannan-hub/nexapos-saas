@@ -1480,6 +1480,131 @@ class EncryptedArtifactProvider:
         )
         return True
 
+    def validate_owned_encrypted_artifact(self, *, context, result):
+        """Validate exact local encrypted evidence without exposing predecessors."""
+
+        if (
+            type(result) is not EncryptedArtifactResult
+            or type(result.reference) is not EncryptedArtifactReference
+        ):
+            raise EncryptedArtifactValidationError()
+        key = self._state_key(
+            context,
+            result.reference,
+            error_type=EncryptedArtifactValidationError,
+        )
+        with self._state_lock:
+            evidence = self._published.get(key)
+        if (
+            evidence is None
+            or evidence.context != context
+            or evidence.result != result
+        ):
+            raise EncryptedArtifactValidationError()
+        self._validate_published(
+            context=context,
+            reference=result.reference,
+            evidence=evidence,
+            error_type=EncryptedArtifactValidationError,
+        )
+        return True
+
+    def validate_external_encrypted_artifact_stream(
+        self,
+        *,
+        context,
+        result,
+        reader,
+    ):
+        """Authenticate expected artifact bytes from an opaque external reader.
+
+        This is the narrow validation bridge used by durable storage. It keeps
+        package/verification evidence and KEK access inside the Phase 2F
+        provider boundary and never accepts a filesystem path.
+        """
+
+        if (
+            type(result) is not EncryptedArtifactResult
+            or type(result.reference) is not EncryptedArtifactReference
+            or not callable(getattr(reader, "read", None))
+            or not callable(getattr(reader, "seek", None))
+        ):
+            raise EncryptedArtifactValidationError()
+        key = self._state_key(
+            context,
+            result.reference,
+            error_type=EncryptedArtifactValidationError,
+        )
+        with self._state_lock:
+            evidence = self._published.get(key) or self._cleaned.get(key)
+        if (
+            evidence is None
+            or evidence.context != context
+            or evidence.result != result
+        ):
+            raise EncryptedArtifactValidationError()
+        deadline = self.monotonic() + self.policy.timeout_seconds
+        digest = hashlib.sha256()
+        byte_count = 0
+        decrypting_reader = None
+        try:
+            reader.seek(0)
+            while True:
+                self._check_deadline(
+                    deadline,
+                    error_type=EncryptedArtifactValidationError,
+                )
+                chunk = reader.read(self.policy.chunk_bytes)
+                if type(chunk) is not bytes or len(chunk) > self.policy.chunk_bytes:
+                    raise EncryptedArtifactValidationError()
+                if not chunk:
+                    break
+                byte_count += len(chunk)
+                if byte_count > self.policy.maximum_artifact_bytes:
+                    raise EncryptedArtifactValidationError()
+                digest.update(chunk)
+            if (
+                byte_count != result.encrypted_byte_count
+                or digest.hexdigest() != result.ciphertext_sha256
+            ):
+                raise EncryptedArtifactValidationError()
+            reader.seek(0)
+            _document, _header, decryptor, ciphertext_count = self._parse_header(
+                reader,
+                file_size=byte_count,
+                context=context,
+                package=evidence.package,
+                verification=evidence.verification,
+                result=result,
+            )
+            decrypting_reader = _DecryptingReader(
+                file_object=reader,
+                decryptor=decryptor,
+                ciphertext_bytes=ciphertext_count,
+                chunk_bytes=self.policy.chunk_bytes,
+                expected_count=evidence.package.byte_count,
+                expected_sha256=evidence.package.plaintext_sha256,
+                deadline_check=lambda: self._check_deadline(
+                    deadline,
+                    error_type=EncryptedArtifactValidationError,
+                ),
+            )
+            while decrypting_reader.read(self.policy.chunk_bytes):
+                pass
+            decrypting_reader.close()
+            decrypting_reader = None
+            return True
+        except EncryptedArtifactValidationError:
+            raise
+        except (OSError, OverflowError, TypeError, ValueError):
+            raise EncryptedArtifactValidationError() from None
+        finally:
+            if decrypting_reader is not None:
+                try:
+                    decrypting_reader.close()
+                except Exception:
+                    pass
+
     def retry_plaintext_package_cleanup(self, request, result):
         context, package, verification = self._validate_request_for_retry(request)
         if (
@@ -1723,7 +1848,7 @@ class EncryptedArtifactProvider:
         )
         with self._state_lock:
             if key in self._cleaned:
-                if self._cleaned[key] != context:
+                if self._cleaned[key].context != context:
                     raise EncryptedArtifactCleanupError()
                 return True
             evidence = self._published.get(key)
@@ -1770,7 +1895,7 @@ class EncryptedArtifactProvider:
                         if self._published.get(key) != evidence:
                             raise EncryptedArtifactCleanupError()
                         self._published.pop(key, None)
-                        self._cleaned[key] = context
+                        self._cleaned[key] = evidence
                     return True
                 if _identity(
                     _directory_state(
@@ -1806,7 +1931,7 @@ class EncryptedArtifactProvider:
                 if self._published.get(key) != evidence:
                     raise EncryptedArtifactCleanupError()
                 self._published.pop(key, None)
-                self._cleaned[key] = context
+                self._cleaned[key] = evidence
             if directory_abort is not None:
                 raise directory_abort.with_traceback(directory_abort_traceback)
             return True

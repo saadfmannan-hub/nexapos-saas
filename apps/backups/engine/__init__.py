@@ -1,4 +1,4 @@
-"""Nexa backup engine foundations through the internal Phase 2F providers.
+"""Nexa backup engine foundations through the internal Phase 2G providers.
 
 The public surface remains deliberately non-operational. It exposes typed
 contracts, immutable planning metadata, and central availability guards.
@@ -7,6 +7,7 @@ contracts, immutable planning metadata, and central availability guards.
 from .availability import (
     CANONICAL_MANIFEST_PROVIDER_READY,
     DETERMINISTIC_PACKAGE_PROVIDER_READY,
+    DURABLE_STORAGE_PROVIDER_READY,
     ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
@@ -19,6 +20,7 @@ from .availability import (
 from .canonical_manifest import CanonicalManifestProvider
 from .context import ActorIdentitySnapshot, BackupExecutionContext
 from .contracts import (
+    DurableBackupStorageProvider,
     EncryptedArtifactReference,
     EncryptedArtifactRequest,
     EncryptedArtifactResult,
@@ -32,10 +34,17 @@ from .contracts import (
     Phase2D2Request,
     Phase2D2Result,
     RestoreReadinessResult,
+    StoredBackupObjectReference,
+    StoredBackupObjectRequest,
+    StoredBackupObjectResult,
+    StoredObjectDurabilityState,
+    StoredObjectVerificationState,
     VerificationIssue,
     VerificationReference,
 )
 from .deterministic_package import DeterministicPackageProvider
+from .durable_storage import LocalPrivateDurableStorageProvider
+from .durable_storage_policy import DurableStoragePolicy
 from .encrypted_artifact import EncryptedArtifactProvider
 from .encryption_policy import EncryptionPolicy
 from .exceptions import BackupEngineDisabled, BackupEngineError
@@ -62,6 +71,9 @@ __all__ = [
     "CanonicalManifestProvider",
     "DETERMINISTIC_PACKAGE_PROVIDER_READY",
     "DeterministicPackageProvider",
+    "DURABLE_STORAGE_PROVIDER_READY",
+    "DurableBackupStorageProvider",
+    "DurableStoragePolicy",
     "ENCRYPTED_ARTIFACT_PROVIDER_READY",
     "EncryptedArtifactProvider",
     "EncryptedArtifactReference",
@@ -72,6 +84,7 @@ __all__ = [
     "IndependentPackageVerifier",
     "LocalFilesystemMediaCaptureProvider",
     "LocalConfiguredKekProvider",
+    "LocalPrivateDurableStorageProvider",
     "KekProvider",
     "MEDIA_CAPTURE_PROVIDER_READY",
     "PackageBuildRequest",
@@ -91,6 +104,11 @@ __all__ = [
     "SQLiteSnapshotProvider",
     "SQLiteLogicalComponentExporter",
     "TENANT_LOGICAL_EXPORT_PROVIDER_READY",
+    "StoredBackupObjectReference",
+    "StoredBackupObjectRequest",
+    "StoredBackupObjectResult",
+    "StoredObjectDurabilityState",
+    "StoredObjectVerificationState",
     "VerificationIssue",
     "VerificationReference",
     "WrappedDek",
