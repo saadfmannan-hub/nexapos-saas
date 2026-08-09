@@ -12,6 +12,26 @@ urlpatterns = [
     path("businesses/new/", views.business_create, name="business_create"),
     path("backups/", backup_views.backup_list, name="backup_list"),
     path(
+        "backups/business/<uuid:business_public_id>/",
+        backup_views.business_overview,
+        name="backup_business",
+    ),
+    path(
+        "backups/business/<uuid:business_public_id>/manual/",
+        backup_views.manual_backup,
+        name="backup_manual",
+    ),
+    path(
+        "backups/business/<uuid:business_public_id>/<uuid:public_id>/preflight/",
+        backup_views.restore_preflight,
+        name="backup_preflight",
+    ),
+    path(
+        "backups/business/<uuid:business_public_id>/<uuid:public_id>/restore/",
+        backup_views.restore_confirmation,
+        name="backup_restore",
+    ),
+    path(
         "backups/operations/",
         backup_views.operation_list,
         name="backup_operations",

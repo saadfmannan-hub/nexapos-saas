@@ -1,0 +1,46 @@
+{% extends "platformadmin/_base.html" %}
+{% load backup_ui humanize %}
+{% block title %}{{ business.name }} backup overview &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="pa-backup-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div><div class="small text-primary text-uppercase fw-bold">Tenant backup overview</div><h1 class="page-title mb-1">{{ business.name }}</h1><code>{{ business.public_id }}</code></div>
+    <div class="d-flex flex-wrap gap-2"><a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_list' %}">All backups</a><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:backup_activity' %}?business={{ business.public_id }}">Tenant activity</a></div>
+  </div>
+
+  <div class="row g-2 mb-3">
+    <div class="col-6 col-lg-3"><div class="kpi-card compact"><div class="kpi-label">Backup entitlement</div><div class="kpi-value kpi-value-sm">{% if backup_summary.has_backup_entitlement %}{% for product in backup_summary.entitled_products %}{{ product }}{% if not forloop.last %} + {% endif %}{% endfor %}{% else %}Not entitled{% endif %}</div></div></div>
+    <div class="col-6 col-lg-3"><div class="kpi-card compact"><div class="kpi-label">Last attempt</div><div class="kpi-value kpi-value-sm">{% if backup_summary.latest_attempt %}{{ backup_summary.latest_attempt.queued_at|date:"Y-m-d H:i" }}{% else %}No attempts{% endif %}</div></div></div>
+    <div class="col-6 col-lg-3"><div class="kpi-card compact"><div class="kpi-label">Last successful</div><div class="kpi-value kpi-value-sm">{% if backup_summary.latest_successful %}{{ backup_summary.latest_successful.completed_at|date:"Y-m-d H:i" }}{% else %}None{% endif %}</div></div></div>
+    <div class="col-6 col-lg-3"><div class="kpi-card compact"><div class="kpi-label">Active backup</div><div class="kpi-value kpi-value-sm">{% if backup_summary.active_backup %}{{ backup_summary.active_backup.status|owner_backup_status }}{% else %}None{% endif %}</div></div></div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-xl-4"><div class="card h-100"><div class="card-header">Manual tenant backup</div><div class="card-body">
+      {% if manual_capability.enabled and can_manage_backups and backup_summary.has_backup_entitlement and not backup_summary.active_backup %}
+      <form method="post" action="{% url 'platformadmin:backup_manual' business.public_id %}">{% csrf_token %}<label class="form-label" for="id_scope">Entitled scope</label>{{ create_form.scope }}<div class="form-text">Only products currently enabled for this tenant are available.</div><button class="btn btn-primary w-100 mt-3" type="submit">Queue manual backup</button></form>
+      {% else %}<div class="capability-disabled"><i class="bi bi-shield-lock"></i><div><strong>Manual backup unavailable</strong><div class="small">{% if backup_summary.active_backup %}A backup is already in progress.{% elif not can_manage_backups %}Your account does not have the operational capability.{% elif not backup_summary.has_backup_entitlement %}This tenant has no eligible backup scope.{% else %}{{ manual_capability.message }}{% endif %}</div></div></div>{% endif %}
+    </div></div></div>
+    <div class="col-xl-4"><div class="card h-100"><div class="card-header">Automatic schedule <span class="badge text-bg-light border float-end">Read only</span></div><div class="card-body"><dl class="definition-grid one-column mb-0">
+      <div><dt>Status</dt><dd>{% if backup_summary.schedule and backup_summary.schedule.enabled %}<span class="text-success fw-semibold">Enabled</span>{% elif backup_summary.schedule %}Disabled{% else %}Not configured{% endif %}</dd></div>
+      <div><dt>Timezone / local time</dt><dd>{% if backup_summary.schedule %}{{ backup_summary.schedule.timezone_name }} &middot; {{ backup_summary.schedule.local_execution_time|time:"H:i" }}{% else %}&mdash;{% endif %}</dd></div>
+      <div><dt>Next scheduled backup</dt><dd>{% if backup_summary.schedule.next_run %}{{ backup_summary.schedule.next_run|date:"Y-m-d H:i T" }}{% else %}&mdash;{% endif %}</dd></div>
+      <div><dt>Last claimed run</dt><dd>{% if backup_summary.schedule.last_claimed_run %}{{ backup_summary.schedule.last_claimed_run|date:"Y-m-d H:i T" }}{% else %}&mdash;{% endif %}</dd></div>
+      <div><dt>Last successful scheduled backup</dt><dd>{% if backup_summary.last_scheduled_success %}{{ backup_summary.last_scheduled_success.completed_at|date:"Y-m-d H:i" }}{% else %}&mdash;{% endif %}</dd></div>
+      <div><dt>Last failed scheduled backup</dt><dd>{% if backup_summary.last_scheduled_failure %}{{ backup_summary.last_scheduled_failure.queued_at|date:"Y-m-d H:i" }}{% else %}&mdash;{% endif %}</dd></div>
+    </dl></div></div></div>
+    <div class="col-xl-4"><div class="card h-100"><div class="card-header">Retention, storage &amp; restore</div><div class="card-body"><dl class="definition-grid one-column mb-0">
+      <div><dt>Keep policy</dt><dd>Latest {{ backup_summary.retention_keep_count }} successful daily full backups</dd></div>
+      <div><dt>Currently retained</dt><dd>{{ backup_summary.retained_count }}</dd></div>
+      <div><dt>Protected safety backups</dt><dd>{{ backup_summary.protected_count }}</dd></div>
+      <div><dt>Retention warnings</dt><dd>{% if backup_summary.retention_warning_count %}<span class="text-warning">{{ backup_summary.retention_warning_count }} recorded</span>{% else %}None recorded{% endif %}</dd></div>
+      <div><dt>Latest size / duration</dt><dd>{% if backup_summary.latest_successful %}{{ backup_summary.latest_successful.backup_size_bytes|filesizeformat }} &middot; {{ backup_summary.latest_successful.duration|duration_display }}{% else %}&mdash;{% endif %}</dd></div>
+      <div><dt>Restore availability</dt><dd>{% if backup_summary.restore_available %}<span class="text-success fw-semibold">Preflight available</span>{% else %}Not currently available{% endif %}</dd></div>
+    </dl></div></div></div>
+  </div>
+
+  <div class="card"><div class="card-header d-flex justify-content-between"><span>Tenant backup history</span><span class="badge text-bg-light border">{{ page_obj.paginator.count }}</span></div><div class="table-responsive backup-table-wrap"><table class="table table-hover align-middle mb-0 platform-backup-table"><thead><tr><th>Date / time</th><th>Status</th><th>Trigger</th><th>Scope</th><th>Size</th><th>Duration</th><th>Integrity</th><th>Restore readiness</th><th class="text-end">Actions</th></tr></thead><tbody>
+    {% for backup in page_obj %}<tr><td data-label="Date / time">{{ backup.queued_at|date:"Y-m-d H:i" }}</td><td data-label="Status">{% include "backups/_status_badge.html" with value=backup.status label=backup.status|owner_backup_status %}</td><td data-label="Trigger">{{ backup.get_trigger_display }}</td><td data-label="Scope">{{ backup.get_scope_display }}</td><td data-label="Size">{% if backup.backup_size_bytes %}{{ backup.backup_size_bytes|filesizeformat }}{% else %}&mdash;{% endif %}</td><td data-label="Duration">{{ backup.duration|duration_display }}</td><td data-label="Integrity">{{ backup.get_integrity_status_display }}</td><td data-label="Restore readiness">{% if backup.platform_restore_eligible %}<span class="badge text-bg-success">Ready</span>{% else %}<span class="badge text-bg-light border">Not ready</span>{% endif %}</td><td data-label="Actions" class="text-end"><a class="btn btn-sm btn-outline-primary" href="{% url 'platformadmin:backup_detail' backup.public_id %}">Inspect</a>{% if backup.platform_restore_eligible and can_approve_restore %} <a class="btn btn-sm btn-primary" href="{% url 'platformadmin:backup_preflight' business.public_id backup.public_id %}">Preflight</a>{% endif %}</td></tr>{% empty %}<tr><td colspan="9"><div class="empty-state py-5">No backup history is available for this tenant.</div></td></tr>{% endfor %}
+  </tbody></table></div><div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
+</div>
+{% endblock %}

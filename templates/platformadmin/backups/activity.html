@@ -1,104 +1,12 @@
 {% extends "platformadmin/_base.html" %}
-{% block title %}Backup activity — {{ PRODUCT_NAME }}{% endblock %}
+{% block title %}Backup activity &mdash; {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
-  <div>
-    <h1 class="page-title mb-1">Backup activity</h1>
-    <div class="small text-secondary">Sanitized append-only evidence across tenants.</div>
-  </div>
-  <div class="btn-group btn-group-sm" role="group" aria-label="Backup administration">
-    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_list' %}"><i class="bi bi-archive me-1"></i> Backups</a>
-    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_operations' %}"><i class="bi bi-arrow-repeat me-1"></i> Operations</a>
-    <a class="btn btn-primary" href="{% url 'platformadmin:backup_activity' %}"><i class="bi bi-activity me-1"></i> Activity</a>
-  </div>
-</div>
-
-<div class="alert alert-light border py-2 small">
-  Raw structured metadata, request IP addresses, user agents, storage identifiers, encryption fields, and token material are not rendered.
-</div>
-
-<div class="card mb-3">
-  <div class="card-body py-2">
-    <form class="row g-2 align-items-end" method="get">
-      <div class="col-md-6">
-        <label class="form-label small" for="activityBusiness">Business UUID</label>
-        <input class="form-control form-control-sm" id="activityBusiness" type="text" name="business" value="{{ request.GET.business }}" placeholder="Exact public UUID">
-      </div>
-      <div class="col-md-3">
-        <label class="form-label small" for="activitySeverity">Severity</label>
-        <select class="form-select form-select-sm" id="activitySeverity" name="severity">
-          <option value="">All severities</option>
-          {% for value, label in severity_choices %}
-          <option value="{{ value }}" {% if request.GET.severity == value %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-md-3">
-        <button class="btn btn-sm btn-primary" type="submit">Apply</button>
-        <a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_activity' %}">Clear</a>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="card">
-  <div class="table-responsive">
-    <table class="table table-hover align-middle mb-0">
-      <thead>
-        <tr>
-          <th>When</th>
-          <th>Business</th>
-          <th>Severity</th>
-          <th>Event</th>
-          <th>Sanitized message</th>
-          <th>Actor</th>
-          <th>Reference</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for item in page_obj %}
-        <tr>
-          <td class="small text-nowrap">{{ item.created_at|date:"Y-m-d H:i:s" }}</td>
-          <td>
-            <div class="fw-semibold">{{ item.business.name }}</div>
-            <code class="small text-secondary">{{ item.business.public_id }}</code>
-          </td>
-          <td>
-            {% if item.severity == "ERROR" or item.severity == "CRITICAL" %}
-              <span class="badge text-bg-danger">{{ item.get_severity_display }}</span>
-            {% elif item.severity == "WARNING" %}
-              <span class="badge text-bg-warning">{{ item.get_severity_display }}</span>
-            {% else %}
-              <span class="badge text-bg-light border">{{ item.get_severity_display }}</span>
-            {% endif %}
-          </td>
-          <td><code class="small">{{ item.event_type }}</code></td>
-          <td class="small">{{ item.sanitized_message|default:"No message recorded." }}</td>
-          <td class="small">
-            {% if item.actor_identity_snapshot.email %}
-              {{ item.actor_identity_snapshot.email }}
-            {% elif item.actor %}
-              {{ item.actor.email }}
-            {% else %}
-              System
-            {% endif %}
-          </td>
-          <td class="small">
-            {% if item.backup %}
-              <a href="{% url 'platformadmin:backup_detail' item.backup.public_id %}">Backup {{ item.backup.public_id }}</a>
-            {% elif item.restore %}
-              Restore <code>{{ item.restore.public_id }}</code>
-            {% else %}
-              —
-            {% endif %}
-          </td>
-        </tr>
-        {% empty %}
-        <tr><td colspan="7"><div class="empty-state py-5">No backup activity matches these filters.</div></td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div class="card-body py-2">{% include "components/pagination.html" %}</div>
+<div class="pa-backup-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3"><div><div class="small text-primary text-uppercase fw-bold">Append-only evidence</div><h1 class="page-title mb-1">Backup &amp; restore activity</h1><div class="small text-secondary">Sanitized operational activity across tenants.</div></div><div class="btn-group btn-group-sm"><a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_list' %}">Backups</a><a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_operations' %}">Operations</a><a class="btn btn-primary" href="{% url 'platformadmin:backup_activity' %}">Activity</a></div></div>
+  <div class="alert alert-info py-2 small">Only safe messages and public references are rendered. Request telemetry and structured internals remain withheld.</div>
+  <div class="card mb-3"><div class="card-body py-3"><form method="get" class="row g-2 align-items-end"><div class="col-md-4"><label class="form-label small" for="id_business">Business name or public UUID</label>{{ filter_form.business }}</div><div class="col-md-3"><label class="form-label small" for="id_event">Event</label>{{ filter_form.event }}</div><div class="col-6 col-md-2"><label class="form-label small" for="id_severity">Severity</label>{{ filter_form.severity }}</div><div class="col-6 col-md-2"><label class="form-label small" for="id_date_from">From</label>{{ filter_form.date_from }}</div><div class="col-6 col-md-2"><label class="form-label small" for="id_date_to">To</label>{{ filter_form.date_to }}</div><div class="col-12 col-md-auto d-flex gap-2"><button class="btn btn-sm btn-primary" type="submit">Apply</button><a class="btn btn-sm btn-outline-secondary" href="{% url 'platformadmin:backup_activity' %}">Clear</a></div>{% if filter_form.errors %}<div class="col-12 small text-danger">Review the filter values and try again.</div>{% endif %}</form></div></div>
+  <div class="card"><div class="table-responsive backup-table-wrap"><table class="table table-hover align-middle mb-0 platform-backup-table"><thead><tr><th>When</th><th>Business</th><th>Severity</th><th>Event</th><th>Sanitized message</th><th>Actor</th><th>Reference</th></tr></thead><tbody>
+    {% for item in page_obj %}<tr><td data-label="When" class="small text-nowrap">{{ item.created_at|date:"Y-m-d H:i:s" }}</td><td data-label="Business"><a class="fw-semibold" href="{% url 'platformadmin:backup_business' item.business.public_id %}">{{ item.business.name }}</a><div><code class="small">{{ item.business.public_id }}</code></div></td><td data-label="Severity">{% if item.severity == "ERROR" or item.severity == "CRITICAL" %}<span class="badge text-bg-danger">{{ item.get_severity_display }}</span>{% elif item.severity == "WARNING" %}<span class="badge text-bg-warning">{{ item.get_severity_display }}</span>{% else %}<span class="badge text-bg-light border">{{ item.get_severity_display }}</span>{% endif %}</td><td data-label="Event"><code class="small text-break">{{ item.event_type }}</code></td><td data-label="Message" class="small">{{ item.sanitized_message|default:"No safe message recorded." }}</td><td data-label="Actor" class="small">{% if item.actor_identity_snapshot.platform_staff %}Platform administrator{% elif item.actor %}{{ item.actor.email }}{% else %}System{% endif %}</td><td data-label="Reference" class="small">{% if item.backup %}<a href="{% url 'platformadmin:backup_detail' item.backup.public_id %}">Backup {{ item.backup.public_id }}</a>{% elif item.restore %}Restore <code>{{ item.restore.public_id }}</code>{% else %}&mdash;{% endif %}</td></tr>{% empty %}<tr><td colspan="7"><div class="empty-state py-5">No activity matches these filters.</div></td></tr>{% endfor %}
+  </tbody></table></div><div class="card-body py-2">{% include "components/pagination.html" %}</div></div>
 </div>
 {% endblock %}

@@ -56,10 +56,17 @@ def platform_backup_capability_required(capability):
     def decorator(view_func):
         @wraps(view_func)
         def wrapper(request, *args, **kwargs):
-            if not request.user.is_authenticated:
+            request_user = getattr(request, "user", None)
+            support_admin = getattr(request, "support_admin", None)
+            if not request_user or not request_user.is_authenticated:
                 return redirect("accounts:login")
-            if not has_platform_backup_capability(request.user, capability):
+            # During support-mode impersonation request.user is deliberately the
+            # tenant owner. Platform controls remain confined to this namespace
+            # and authenticate against the separately retained support admin.
+            platform_actor = support_admin or request_user
+            if not has_platform_backup_capability(platform_actor, capability):
                 raise PermissionDenied
+            request.platform_actor = platform_actor
             return view_func(request, *args, **kwargs)
 
         return wrapper

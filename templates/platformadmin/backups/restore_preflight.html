@@ -1,0 +1,15 @@
+{% extends "platformadmin/_base.html" %}
+{% load backup_ui humanize %}
+{% block title %}Restore preflight &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="pa-backup-shell narrow-shell">
+  <div class="mb-3"><div class="small text-primary text-uppercase fw-bold">Non-mutating safety check</div><h1 class="page-title mb-1">Restore preflight</h1><div class="small text-secondary">Validate this exact tenant and recovery point before any restore request.</div></div>
+  <div class="card mb-3"><div class="card-header">Selected recovery point</div><div class="card-body"><dl class="definition-grid mb-0">
+    <div><dt>Target tenant</dt><dd>{{ business.name }}<br><code>{{ business.public_id }}</code></dd></div><div><dt>Backup public UUID</dt><dd><code>{{ backup.public_id }}</code></dd></div><div><dt>Source date</dt><dd>{{ backup.completed_at|date:"Y-m-d H:i:s T" }}</dd></div><div><dt>Size</dt><dd>{{ backup.backup_size_bytes|filesizeformat }}</dd></div><div><dt>Scope</dt><dd>{{ backup.get_scope_display }}</dd></div><div><dt>Compatibility</dt><dd>{{ backup.get_compatibility_status_display }}</dd></div><div><dt>Components</dt><dd>{{ backup.component_count|intcomma }}</dd></div><div><dt>Records / media</dt><dd>{{ backup.total_row_count|intcomma }} / {{ backup.media_count|intcomma }}</dd></div>
+  </dl></div></div>
+  <div class="alert alert-info"><strong>No tenant mutation occurs during preflight.</strong> The process revalidates compatibility, package contents, and durable evidence through the Phase 3A boundary.</div>
+  <div class="card"><div class="card-header">Run readiness checks</div><div class="card-body">
+    {% if eligible %}<form method="post">{% csrf_token %}<label class="form-label" for="id_reason">Administrative reason</label>{{ form.reason }}{% if form.reason.errors %}<div class="text-danger small mt-1">{{ form.reason.errors|striptags }}</div>{% endif %}<div class="d-flex flex-wrap gap-2 mt-3"><button class="btn btn-primary" type="submit">Run restore preflight</button><a class="btn btn-outline-secondary" href="{% url 'platformadmin:backup_detail' backup.public_id %}">Cancel</a></div></form>{% else %}<div class="capability-disabled"><i class="bi bi-shield-x"></i><div><strong>Preflight unavailable</strong><div class="small">This backup is not an eligible verified durable recovery point for the selected tenant.</div></div></div>{% endif %}
+  </div></div>
+</div>
+{% endblock %}
