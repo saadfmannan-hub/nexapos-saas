@@ -34,6 +34,17 @@ class KeyWrapError(Phase2FEngineError):
     default_code = "key_wrap_failed"
 
 
+class KeyProviderUnavailableError(KeyWrapError):
+    default_message = "The key-encryption provider is temporarily unavailable."
+    default_code = "key_provider_unavailable"
+    retryable = True
+
+
+class KeyRewrapError(Phase2FEngineError):
+    default_message = "The artifact data-encryption key could not be rotated safely."
+    default_code = "key_rewrap_failed"
+
+
 class EncryptedArtifactCreationError(Phase2FEngineError):
     default_message = "The encrypted backup artifact could not be created safely."
     default_code = "encrypted_artifact_creation_failed"
@@ -76,6 +87,8 @@ __all__ = [
     "EncryptedArtifactValidationError",
     "EncryptionPolicyError",
     "KeyProviderConfigurationError",
+    "KeyProviderUnavailableError",
+    "KeyRewrapError",
     "KeyWrapError",
     "Phase2FCoordinationError",
     "Phase2FEngineError",

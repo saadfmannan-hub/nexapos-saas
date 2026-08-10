@@ -12,6 +12,7 @@ from .availability import (
     ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
+    PRODUCTION_KEY_PROVIDER_READY,
     RESTORE_ASYNC_EXECUTION_BOUNDARY_READY,
     RETENTION_ENGINE_READY,
     RUNTIME_COMPOSITION_READY,
@@ -55,10 +56,18 @@ from .contracts import (
 from .deterministic_package import DeterministicPackageProvider
 from .durable_storage import LocalPrivateDurableStorageProvider
 from .durable_storage_policy import DurableStoragePolicy
-from .encrypted_artifact import EncryptedArtifactProvider
+from .encrypted_artifact import EncryptedArtifactProvider, RewrappedArtifactKeyResult
 from .encryption_policy import EncryptionPolicy
 from .exceptions import BackupEngineDisabled, BackupEngineError
-from .key_management import KekProvider, LocalConfiguredKekProvider, WrappedDek
+from .key_management import (
+    AwsKmsKeyEncryptionProvider,
+    KekProvider,
+    KeyEncryptionProvider,
+    KeyEncryptionProviderRegistry,
+    LocalConfiguredKekProvider,
+    WrappedDek,
+)
+from .key_rotation import publish_rewrapped_key_metadata
 from .logical_export import (
     SQLiteLogicalComponentExporter,
     export_snapshot_components,
@@ -105,6 +114,7 @@ __all__ = [
     "BackupExecutionRequest",
     "BackupExecutionResult",
     "BackupRetentionClass",
+    "AwsKmsKeyEncryptionProvider",
     "CANONICAL_MANIFEST_PROVIDER_READY",
     "CanonicalManifestProvider",
     "DETERMINISTIC_PACKAGE_PROVIDER_READY",
@@ -124,7 +134,10 @@ __all__ = [
     "LocalConfiguredKekProvider",
     "LocalPrivateDurableStorageProvider",
     "KekProvider",
+    "KeyEncryptionProvider",
+    "KeyEncryptionProviderRegistry",
     "MEDIA_CAPTURE_PROVIDER_READY",
+    "PRODUCTION_KEY_PROVIDER_READY",
     "PackageBuildRequest",
     "PackageBuildResult",
     "PackageCompatibilityStatus",
@@ -138,6 +151,7 @@ __all__ = [
     "Phase2D2Result",
     "PipelineStage",
     "RestoreReadinessResult",
+    "RewrappedArtifactKeyResult",
     "RETENTION_ENGINE_READY",
     "RUNTIME_COMPOSITION_READY",
     "RetentionAuditEvent",
@@ -172,6 +186,7 @@ __all__ = [
     "get_engine_capability",
     "build_runtime_provider_stack",
     "prepare_backup_execution",
+    "publish_rewrapped_key_metadata",
     "real_execution_available",
     "restore_async_configuration_ready",
     "restore_execution_available",

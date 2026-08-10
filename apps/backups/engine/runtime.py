@@ -60,7 +60,11 @@ from .events import (
     RETENTION_PARTIAL,
 )
 from .exceptions import BackupEngineError, BackupTenantMismatch
-from .key_management import LocalConfiguredKekProvider
+from .key_management import (
+    KeyEncryptionProvider,
+    build_key_provider_registry_from_settings,
+    key_metadata_identifier,
+)
 from .logical_export import (
     SQLiteLogicalComponentExporter,
     export_snapshot_components,
@@ -182,7 +186,7 @@ class RuntimeProviderStack:
     package_provider: DeterministicPackageProvider
     phase2d2_coordinator: Phase2D2Coordinator
     verification_provider: IndependentPackageVerifier
-    kek_provider: LocalConfiguredKekProvider
+    kek_provider: KeyEncryptionProvider
     encrypted_artifact_provider: EncryptedArtifactProvider
     durable_storage_provider: LocalPrivateDurableStorageProvider
     retention_engine: RetentionEngine
@@ -199,7 +203,7 @@ class RuntimeProviderStack:
             or type(self.package_provider) is not DeterministicPackageProvider
             or type(self.phase2d2_coordinator) is not Phase2D2Coordinator
             or type(self.verification_provider) is not IndependentPackageVerifier
-            or type(self.kek_provider) is not LocalConfiguredKekProvider
+            or not isinstance(self.kek_provider, KeyEncryptionProvider)
             or type(self.encrypted_artifact_provider) is not EncryptedArtifactProvider
             or type(self.durable_storage_provider)
             is not LocalPrivateDurableStorageProvider
@@ -268,11 +272,13 @@ def build_runtime_provider_stack() -> RuntimeProviderStack:
             package_provider=package_provider,
             workspace_manager=workspace_manager,
         )
-        kek_provider = LocalConfiguredKekProvider.from_settings()
+        key_provider_registry = build_key_provider_registry_from_settings()
+        kek_provider = key_provider_registry.active_provider
         encrypted_artifact_provider = EncryptedArtifactProvider(
             package_provider=package_provider,
             verification_provider=verification_provider,
             kek_provider=kek_provider,
+            key_provider_registry=key_provider_registry,
             workspace_manager=workspace_manager,
         )
         durable_storage_provider = LocalPrivateDurableStorageProvider(
@@ -483,10 +489,11 @@ class BackupExecutionCoordinator:
         if existing_key and existing_key != object_key:
             raise RuntimePersistenceError(durable_object_preserved=True)
         manifest = phase2d1_result.manifest
-        key_identifier = (
-            f"{stored.kek_provider_identifier}:"
-            f"{stored.kek_key_identifier}:{stored.kek_version}"
-        )[:255]
+        key_identifier = key_metadata_identifier(
+            stored.kek_provider_identifier,
+            stored.kek_key_identifier,
+            stored.kek_version,
+        )
         try:
             with transaction.atomic():
                 changed = (

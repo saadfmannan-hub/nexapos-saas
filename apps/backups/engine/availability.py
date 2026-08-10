@@ -16,6 +16,7 @@ CANONICAL_MANIFEST_PROVIDER_READY = True
 DETERMINISTIC_PACKAGE_PROVIDER_READY = True
 INDEPENDENT_PACKAGE_VERIFIER_READY = True
 ENCRYPTED_ARTIFACT_PROVIDER_READY = True
+PRODUCTION_KEY_PROVIDER_READY = True
 DURABLE_STORAGE_PROVIDER_READY = True
 RETENTION_ENGINE_READY = True
 # Phase 3A can re-attest historical Phase 2G objects for non-mutating preflight.
@@ -31,13 +32,13 @@ OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
-    "verification, local encrypted-artifact support, and local private durable "
+    "verification, production-capable key-provider support, and local private durable "
     "storage, immutable daily-full retention, and operational coordination are "
     "available internally. Guarded restore preflight and tenant restore mutation "
     "with a mandatory protected safety backup and a restart-safe dedicated restore "
     "worker are also code-complete, but restore mutation remains disabled by "
-    "default. Production KEK/KMS and object storage "
-    "integration, destructive historical retention, production worker/beat "
+    "default. Production object storage integration, destructive historical "
+    "retention, production worker/beat "
     "activation, and download authorization remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
@@ -116,6 +117,17 @@ def restore_preflight_configuration_ready() -> bool:
     return True
 
 
+def production_key_provider_configuration_ready() -> bool:
+    """Require a structurally valid non-development provider for activation."""
+
+    try:
+        from .key_management import validate_key_provider_settings
+
+        return validate_key_provider_settings() != "local"
+    except Exception:
+        return False
+
+
 def restore_async_configuration_ready() -> bool:
     """Require a broker, non-eager delivery, and the exact restore queue."""
 
@@ -172,6 +184,7 @@ def restore_execution_available() -> bool:
 
     return bool(
         restore_mutation_setting_enabled()
+        and production_key_provider_configuration_ready()
         and RESTORE_MUTATION_ENGINE_READY
         and RESTORE_ASYNC_EXECUTION_BOUNDARY_READY
         and restore_async_configuration_ready()
@@ -250,6 +263,7 @@ def runtime_configuration_ready() -> bool:
             checks.check_media_storage_configuration,
             checks.check_encryption_policy_settings,
             checks.check_local_kek_configuration,
+            checks.check_production_key_provider_selection,
             checks.check_durable_storage_policy_settings,
             checks.check_durable_storage_root,
             checks.check_retention_policy_settings,

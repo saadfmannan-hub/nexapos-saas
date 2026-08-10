@@ -724,6 +724,7 @@ class RestorePreflightCoordinator:
                     encrypted_byte_count=reattested.byte_count,
                     ciphertext_sha256=reattested.sha256,
                     encryption_key_identifier=backup.encryption_key_identifier,
+                    encrypted_data_key_envelope=backup.encrypted_data_key_envelope,
                 ) as (plaintext_reader, plaintext_evidence):
                     package = (
                         self.provider_stack.restored_package_provider.publish_plaintext(

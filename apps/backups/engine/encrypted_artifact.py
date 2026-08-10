@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -16,7 +17,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 
 from cryptography.exceptions import InvalidTag
@@ -44,6 +45,7 @@ from .encryption_exceptions import (
     EncryptedArtifactValidationError,
     EncryptionPolicyError,
     KeyProviderConfigurationError,
+    KeyRewrapError,
     KeyWrapError,
     Phase2FCoordinationError,
     Phase2FEngineError,
@@ -51,9 +53,13 @@ from .encryption_exceptions import (
 )
 from .encryption_policy import EncryptionPolicy
 from .key_management import (
-    KEY_WRAP_ALGORITHM,
-    LocalConfiguredKekProvider,
-    WrappedDek,
+    KeyEncryptionProvider,
+    KeyEncryptionProviderRegistry,
+    deserialize_wrapped_dek,
+    serialize_wrapped_dek,
+    wrapped_dek_document,
+    wrapped_dek_from_document,
+    wrapped_dek_key_identifier,
 )
 from .logical_serialization import encode_canonical_document
 from .package_exceptions import PackageCleanupError, PackageNotFound, PackageValidationError
@@ -124,6 +130,16 @@ class _PublishedArtifact:
     result: EncryptedArtifactResult
     directory_identity: tuple[int, int]
     file_identity: tuple[int, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class RewrappedArtifactKeyResult:
+    previous_key_identifier: str
+    new_key_identifier: str
+    previous_envelope: str = field(repr=False)
+    new_envelope: str = field(repr=False)
+    encrypted_byte_count: int
+    artifact_sha256: str
 
 
 class _OpaqueArtifactReader:
@@ -450,6 +466,7 @@ class EncryptedArtifactProvider:
         package_provider,
         verification_provider,
         kek_provider,
+        key_provider_registry=None,
         workspace_manager=None,
         policy=None,
         reference_factory=None,
@@ -463,7 +480,14 @@ class EncryptedArtifactProvider:
             type(package_provider) is not DeterministicPackageProvider
             or type(verification_provider) is not IndependentPackageVerifier
             or verification_provider.package_provider is not package_provider
-            or type(kek_provider) is not LocalConfiguredKekProvider
+            or not isinstance(kek_provider, KeyEncryptionProvider)
+            or (
+                key_provider_registry is not None
+                and (
+                    type(key_provider_registry) is not KeyEncryptionProviderRegistry
+                    or key_provider_registry.active_provider is not kek_provider
+                )
+            )
         ):
             raise Phase2FCoordinationError()
         manager = workspace_manager or package_provider.workspace_manager
@@ -480,6 +504,7 @@ class EncryptedArtifactProvider:
         self.package_provider = package_provider
         self.verification_provider = verification_provider
         self.kek_provider = kek_provider
+        self.key_provider_registry = key_provider_registry
         self.workspace_manager = manager
         self.reference_factory = reference_factory or (
             lambda: EncryptedArtifactReference(uuid.uuid4())
@@ -495,6 +520,23 @@ class EncryptedArtifactProvider:
         self._used_wrap_nonces = set()
         self._used_dek_digests = set()
         self._state_lock = threading.RLock()
+
+    def _provider_for_wrapped_dek(self, wrapped):
+        try:
+            if self.key_provider_registry is not None:
+                return self.key_provider_registry.resolve(wrapped)
+            if not self.kek_provider.can_unwrap(wrapped):
+                raise KeyProviderConfigurationError()
+            return self.kek_provider
+        except (KeyProviderConfigurationError, KeyWrapError):
+            raise EncryptedArtifactValidationError() from None
+
+    @staticmethod
+    def _wrapped_dek_from_header(document):
+        try:
+            return wrapped_dek_from_document(document)
+        except KeyWrapError:
+            raise EncryptedArtifactValidationError() from None
 
     def _run_hook(self, stage):
         if self.failure_hook is not None:
@@ -758,15 +800,7 @@ class EncryptedArtifactProvider:
             "format_version": ENCRYPTED_ARTIFACT_FORMAT_VERSION,
             "encryption_algorithm": ENCRYPTION_ALGORITHM,
             "nonce_b64": _b64(data_nonce),
-            "wrapped_dek": {
-                "kek_provider_identifier": wrapped.provider_identifier,
-                "kek_key_identifier": wrapped.key_identifier,
-                "kek_version": wrapped.key_version,
-                "wrapping_algorithm": wrapped.algorithm,
-                "nonce_b64": _b64(wrapped.nonce),
-                "wrapped_key_b64": _b64(wrapped.wrapped_key),
-                "tag_b64": _b64(wrapped.tag),
-            },
+            "wrapped_dek": wrapped_dek_document(wrapped),
             "plaintext_byte_count": package.byte_count,
             "plaintext_sha256": package.plaintext_sha256,
             "ciphertext_byte_count": package.byte_count,
@@ -837,27 +871,7 @@ class EncryptedArtifactProvider:
                 expected_bytes=_NONCE_BYTES,
                 error_type=EncryptedArtifactValidationError,
             )
-            wrapped = WrappedDek(
-                provider_identifier=wrapped_document["kek_provider_identifier"],
-                key_identifier=wrapped_document["kek_key_identifier"],
-                key_version=wrapped_document["kek_version"],
-                algorithm=wrapped_document["wrapping_algorithm"],
-                nonce=_strict_b64(
-                    wrapped_document["nonce_b64"],
-                    expected_bytes=_NONCE_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-                wrapped_key=_strict_b64(
-                    wrapped_document["wrapped_key_b64"],
-                    expected_bytes=_KEY_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-                tag=_strict_b64(
-                    wrapped_document["tag_b64"],
-                    expected_bytes=_TAG_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-            )
+            wrapped = self._wrapped_dek_from_header(wrapped_document)
             plaintext_count = _count(
                 document["plaintext_byte_count"],
                 maximum=self.policy.maximum_plaintext_bytes,
@@ -895,7 +909,6 @@ class EncryptedArtifactProvider:
                 or wrapped.provider_identifier != result.kek_provider_identifier
                 or wrapped.key_identifier != result.kek_key_identifier
                 or wrapped.key_version != result.kek_version
-                or wrapped.algorithm != KEY_WRAP_ALGORITHM
                 or hashlib.sha256(header_bytes).hexdigest() != result.header_sha256
             ):
                 raise EncryptedArtifactValidationError()
@@ -903,7 +916,7 @@ class EncryptedArtifactProvider:
             if file_size != expected_size or file_size != result.encrypted_byte_count:
                 raise EncryptedArtifactValidationError()
             try:
-                dek = self.kek_provider.unwrap_dek(wrapped)
+                dek = self._provider_for_wrapped_dek(wrapped).unwrap_dek(wrapped)
             except (KeyProviderConfigurationError, KeyWrapError):
                 raise EncryptedArtifactValidationError() from None
             ciphertext_offset = _PREFIX.size + header_size
@@ -933,6 +946,7 @@ class EncryptedArtifactProvider:
         file_size,
         context,
         expected_key_identifier,
+        encrypted_data_key_envelope,
     ):
         """Parse historical framing inside the authoritative Phase 2F boundary."""
 
@@ -943,6 +957,7 @@ class EncryptedArtifactProvider:
                 or type(expected_key_identifier) is not str
                 or not expected_key_identifier
                 or len(expected_key_identifier) > 255
+                or type(encrypted_data_key_envelope) is not str
             ):
                 raise EncryptedArtifactValidationError()
             file_object.seek(0)
@@ -977,27 +992,15 @@ class EncryptedArtifactProvider:
                 expected_bytes=_NONCE_BYTES,
                 error_type=EncryptedArtifactValidationError,
             )
-            wrapped = WrappedDek(
-                provider_identifier=wrapped_document["kek_provider_identifier"],
-                key_identifier=wrapped_document["kek_key_identifier"],
-                key_version=wrapped_document["kek_version"],
-                algorithm=wrapped_document["wrapping_algorithm"],
-                nonce=_strict_b64(
-                    wrapped_document["nonce_b64"],
-                    expected_bytes=_NONCE_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-                wrapped_key=_strict_b64(
-                    wrapped_document["wrapped_key_b64"],
-                    expected_bytes=_KEY_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-                tag=_strict_b64(
-                    wrapped_document["tag_b64"],
-                    expected_bytes=_TAG_BYTES,
-                    error_type=EncryptedArtifactValidationError,
-                ),
-            )
+            embedded_wrapped = self._wrapped_dek_from_header(wrapped_document)
+            try:
+                wrapped = (
+                    deserialize_wrapped_dek(encrypted_data_key_envelope)
+                    if encrypted_data_key_envelope
+                    else embedded_wrapped
+                )
+            except KeyWrapError:
+                raise EncryptedArtifactValidationError() from None
             plaintext_count = _count(
                 document["plaintext_byte_count"],
                 maximum=self.policy.maximum_plaintext_bytes,
@@ -1018,10 +1021,10 @@ class EncryptedArtifactProvider:
                 document["created_timestamp"],
                 error_type=EncryptedArtifactValidationError,
             )
-            persisted_key_identifier = (
-                f"{wrapped.provider_identifier}:"
-                f"{wrapped.key_identifier}:{wrapped.key_version}"
-            )[:255]
+            try:
+                persisted_key_identifier = wrapped_dek_key_identifier(wrapped)
+            except (KeyProviderConfigurationError, KeyWrapError):
+                raise EncryptedArtifactValidationError() from None
             if (
                 document["schema"] != ENCRYPTED_ARTIFACT_FORMAT_IDENTIFIER
                 or document["format_version"] != ENCRYPTED_ARTIFACT_FORMAT_VERSION
@@ -1034,7 +1037,6 @@ class EncryptedArtifactProvider:
                 or document["verification_version"] != VERIFICATION_VERSION
                 or document["verification_provider"]
                 != INDEPENDENT_PACKAGE_VERIFIER_IDENTIFIER
-                or wrapped.algorithm != KEY_WRAP_ALGORITHM
                 or persisted_key_identifier != expected_key_identifier
             ):
                 raise EncryptedArtifactValidationError()
@@ -1042,7 +1044,7 @@ class EncryptedArtifactProvider:
             if file_size != expected_size:
                 raise EncryptedArtifactValidationError()
             try:
-                dek = self.kek_provider.unwrap_dek(wrapped)
+                dek = self._provider_for_wrapped_dek(wrapped).unwrap_dek(wrapped)
             except (KeyProviderConfigurationError, KeyWrapError):
                 raise EncryptedArtifactValidationError() from None
             ciphertext_offset = _PREFIX.size + header_size
@@ -1485,9 +1487,9 @@ class EncryptedArtifactProvider:
                 header_sha256=hashlib.sha256(header_bytes).hexdigest(),
                 format_identifier=ENCRYPTED_ARTIFACT_FORMAT_IDENTIFIER,
                 encryption_algorithm=ENCRYPTION_ALGORITHM,
-                kek_provider_identifier=self.kek_provider.provider_identifier,
-                kek_key_identifier=self.kek_provider.key_identifier,
-                kek_version=self.kek_provider.key_version,
+                kek_provider_identifier=wrapped.provider_identifier,
+                kek_key_identifier=wrapped.key_identifier,
+                kek_version=wrapped.key_version,
                 created_at=created_at,
                 provider_identifier=ENCRYPTED_ARTIFACT_PROVIDER_IDENTIFIER,
                 plaintext_cleanup_incomplete=True,
@@ -1781,6 +1783,141 @@ class EncryptedArtifactProvider:
                 except Exception:
                     pass
 
+    def rewrap_encrypted_artifact_key(
+        self,
+        *,
+        context,
+        reader,
+        encrypted_byte_count,
+        ciphertext_sha256,
+        encryption_key_identifier,
+        encrypted_data_key_envelope,
+        target_provider,
+        publish_metadata,
+    ):
+        """Verify and publish a new DEK wrapper without changing artifact bytes."""
+
+        if (
+            type(context) is not BackupExecutionContext
+            or type(context.workspace_reference) is not WorkspaceReference
+            or not callable(getattr(reader, "read", None))
+            or not callable(getattr(reader, "seek", None))
+            or type(encrypted_byte_count) is not int
+            or not 1 <= encrypted_byte_count <= self.policy.maximum_artifact_bytes
+            or type(encryption_key_identifier) is not str
+            or not encryption_key_identifier
+            or type(encrypted_data_key_envelope) is not str
+            or not isinstance(target_provider, KeyEncryptionProvider)
+            or not callable(publish_metadata)
+            or (
+                self.key_provider_registry is not None
+                and target_provider is not self.key_provider_registry.active_provider
+            )
+        ):
+            raise KeyRewrapError()
+        _sha256(ciphertext_sha256, error_type=KeyRewrapError)
+        deadline = self.monotonic() + self.policy.timeout_seconds
+        digest = hashlib.sha256()
+        byte_count = 0
+        current_dek = None
+        verified_dek = None
+        try:
+            reader.seek(0)
+            while True:
+                self._check_deadline(deadline, error_type=KeyRewrapError)
+                chunk = reader.read(self.policy.chunk_bytes)
+                if type(chunk) is not bytes or len(chunk) > self.policy.chunk_bytes:
+                    raise KeyRewrapError()
+                if not chunk:
+                    break
+                byte_count += len(chunk)
+                if byte_count > self.policy.maximum_artifact_bytes:
+                    raise KeyRewrapError()
+                digest.update(chunk)
+            if (
+                byte_count != encrypted_byte_count
+                or digest.hexdigest() != ciphertext_sha256
+            ):
+                raise KeyRewrapError()
+
+            reader.seek(0)
+            prefix = reader.read(_PREFIX.size)
+            if type(prefix) is not bytes or len(prefix) != _PREFIX.size:
+                raise KeyRewrapError()
+            magic, header_size = _PREFIX.unpack(prefix)
+            if (
+                magic != ARTIFACT_MAGIC
+                or not 0 < header_size <= self.policy.maximum_header_bytes
+            ):
+                raise KeyRewrapError()
+            header_bytes = reader.read(header_size)
+            document = _strict_header(
+                header_bytes,
+                maximum_bytes=self.policy.maximum_header_bytes,
+            )
+            _exact_keys(document, _HEADER_KEYS, error_type=KeyRewrapError)
+            embedded = wrapped_dek_from_document(
+                _exact_keys(
+                    document["wrapped_dek"],
+                    _WRAPPED_KEYS,
+                    error_type=KeyRewrapError,
+                )
+            )
+            ciphertext_count = _count(
+                document["ciphertext_byte_count"],
+                maximum=self.policy.maximum_plaintext_bytes,
+                positive=True,
+                error_type=KeyRewrapError,
+            )
+            if (
+                document["schema"] != ENCRYPTED_ARTIFACT_FORMAT_IDENTIFIER
+                or document["format_version"] != ENCRYPTED_ARTIFACT_FORMAT_VERSION
+                or document["encryption_algorithm"] != ENCRYPTION_ALGORITHM
+                or document["backup_public_id"] != str(context.backup_public_id)
+                or document["tenant_public_id"] != str(context.business_public_id)
+                or _PREFIX.size + header_size + ciphertext_count + _TAG_BYTES
+                != encrypted_byte_count
+            ):
+                raise KeyRewrapError()
+            current_wrapped = (
+                deserialize_wrapped_dek(encrypted_data_key_envelope)
+                if encrypted_data_key_envelope
+                else embedded
+            )
+            if wrapped_dek_key_identifier(current_wrapped) != encryption_key_identifier:
+                raise KeyRewrapError()
+
+            source_provider = self._provider_for_wrapped_dek(current_wrapped)
+            current_dek = source_provider.unwrap_dek(current_wrapped)
+            wrap_nonce = self.random_bytes(_NONCE_BYTES)
+            if type(wrap_nonce) is not bytes or len(wrap_nonce) != _NONCE_BYTES:
+                raise KeyRewrapError()
+            new_wrapped = target_provider.wrap_dek(current_dek, nonce=wrap_nonce)
+            if not target_provider.can_unwrap(new_wrapped):
+                raise KeyRewrapError()
+            verified_dek = target_provider.unwrap_dek(new_wrapped)
+            if not hmac.compare_digest(current_dek, verified_dek):
+                raise KeyRewrapError()
+            result = RewrappedArtifactKeyResult(
+                previous_key_identifier=encryption_key_identifier,
+                new_key_identifier=wrapped_dek_key_identifier(new_wrapped),
+                previous_envelope=encrypted_data_key_envelope,
+                new_envelope=serialize_wrapped_dek(new_wrapped),
+                encrypted_byte_count=encrypted_byte_count,
+                artifact_sha256=ciphertext_sha256,
+            )
+            publish_metadata(result)
+            return result
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except KeyRewrapError:
+            raise
+        except Exception:
+            raise KeyRewrapError() from None
+        finally:
+            current_dek = None
+            verified_dek = None
+
     @contextmanager
     def open_restored_plaintext(
         self,
@@ -1790,6 +1927,7 @@ class EncryptedArtifactProvider:
         encrypted_byte_count,
         ciphertext_sha256,
         encryption_key_identifier,
+        encrypted_data_key_envelope="",
     ):
         """Authenticate and decrypt a restart-retrieved durable object.
 
@@ -1842,6 +1980,7 @@ class EncryptedArtifactProvider:
                 file_size=byte_count,
                 context=context,
                 expected_key_identifier=encryption_key_identifier,
+                encrypted_data_key_envelope=encrypted_data_key_envelope,
             )
             evidence = replace(evidence, ciphertext_sha256=ciphertext_sha256)
             decrypting_reader = _DecryptingReader(
@@ -2214,4 +2353,5 @@ __all__ = [
     "ENCRYPTED_ARTIFACT_PROVIDER_IDENTIFIER",
     "ENCRYPTION_ALGORITHM",
     "EncryptedArtifactProvider",
+    "RewrappedArtifactKeyResult",
 ]

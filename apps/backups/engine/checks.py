@@ -30,7 +30,10 @@ from .exceptions import (
     SQLiteSnapshotPolicyError,
     UnsafeWorkspacePath,
 )
-from .key_management import LocalConfiguredKekProvider
+from .key_management import (
+    selected_key_provider_name,
+    validate_key_provider_settings,
+)
 from .logical_export_policy import LogicalExportPolicy
 from .logical_export_registry import get_logical_export_registry
 from .media_capture_policy import MediaCapturePolicy
@@ -268,16 +271,35 @@ def check_local_kek_configuration(app_configs, **kwargs):
     if not availability.provider_environment_checks_required():
         return []
     try:
-        LocalConfiguredKekProvider.from_settings()
+        validate_key_provider_settings()
     except KeyProviderConfigurationError as exc:
         return [
             Error(
                 exc.sanitized_message,
                 hint=(
-                    "Configure an exact Base64-encoded 32-byte local KEK plus "
-                    "safe key identifier and version for internal development use."
+                    "Select local with an exact Base64-encoded 32-byte development "
+                    "KEK, or select aws_kms with a safe key reference and region."
                 ),
                 id="backups.E028",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_production_key_provider_selection(app_configs, **kwargs):
+    if not availability.provider_environment_checks_required():
+        return []
+    try:
+        selected = selected_key_provider_name()
+    except KeyProviderConfigurationError:
+        return []  # E028 owns malformed provider configuration.
+    if selected == "local":
+        return [
+            Error(
+                "The development-only local backup key provider cannot be activated.",
+                hint="Configure BACKUP_KEY_PROVIDER=aws_kms before operational activation.",
+                id="backups.E047",
             )
         ]
     return []
@@ -367,7 +389,7 @@ def check_runtime_provider_stack_configuration(app_configs, **kwargs):
             Error(
                 "The backup runtime provider stack cannot be composed safely.",
                 hint=(
-                    "Validate the private roots, policies, local development KEK, "
+                    "Validate the private roots, policies, selected key provider, "
                     "and exact provider composition before enabling execution."
                 ),
                 id="backups.E033",
@@ -397,7 +419,7 @@ def check_restore_preflight_configuration(app_configs, **kwargs):
         )
         if encryption_policy.maximum_artifact_bytes > durable_policy.maximum_object_bytes:
             raise ValueError
-        LocalConfiguredKekProvider.from_settings()
+        validate_key_provider_settings()
     except Exception:
         return [
             Error(
@@ -423,6 +445,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.DETERMINISTIC_PACKAGE_PROVIDER_READY is True
         and availability.INDEPENDENT_PACKAGE_VERIFIER_READY is True
         and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
+        and availability.PRODUCTION_KEY_PROVIDER_READY is True
         and availability.DURABLE_STORAGE_PROVIDER_READY is True
         and availability.RETENTION_ENGINE_READY is True
         and availability.RUNTIME_ORCHESTRATOR_READY is True

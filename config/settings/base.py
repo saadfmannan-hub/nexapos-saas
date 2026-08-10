@@ -448,9 +448,12 @@ BACKUP_ENCRYPTION_MAX_HEADER_BYTES = env.int(
 )
 # Development/test-only local KEK provider. Empty defaults are deliberately
 # invalid and are accepted only while the provider is not configured for use.
+BACKUP_KEY_PROVIDER = env("BACKUP_KEY_PROVIDER", default="local")
 BACKUP_LOCAL_KEK_B64 = env("BACKUP_LOCAL_KEK_B64", default="")
 BACKUP_LOCAL_KEK_ID = env("BACKUP_LOCAL_KEK_ID", default="")
 BACKUP_LOCAL_KEK_VERSION = env("BACKUP_LOCAL_KEK_VERSION", default="")
+BACKUP_AWS_KMS_KEY_ID = env("BACKUP_AWS_KMS_KEY_ID", default="")
+BACKUP_AWS_REGION = env("BACKUP_AWS_REGION", default="")
 BACKUP_DURABLE_STORAGE_ROOT = Path(
     env(
         "BACKUP_DURABLE_STORAGE_ROOT",

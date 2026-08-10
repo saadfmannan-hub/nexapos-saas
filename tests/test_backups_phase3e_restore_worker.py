@@ -162,6 +162,9 @@ class BackupPhase3ERestoreWorkerTests(BackupPhase1TestCase):
     def _safe_settings(self):
         return override_settings(
             BACKUP_RESTORE_MUTATION_ENABLED=True,
+            BACKUP_KEY_PROVIDER="aws_kms",
+            BACKUP_AWS_KMS_KEY_ID="alias/nexa-backups",
+            BACKUP_AWS_REGION="us-east-1",
             CELERY_BROKER_URL="redis://broker.example/1",
             CELERY_TASK_ALWAYS_EAGER=False,
             BACKUP_RESTORE_QUEUE_NAME=RESTORE_QUEUE_NAME,
