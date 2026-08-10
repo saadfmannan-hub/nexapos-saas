@@ -1,4 +1,4 @@
-"""Platform Admin Backup & Restore control center for Phase 3D."""
+"""Platform Admin Backup & Restore control center through Phase 3E."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from .platform_permissions import (
     has_platform_backup_capability,
     platform_backup_capability_required,
 )
+from .restore_execution import restore_progress, restore_progress_steps
 
 PREFLIGHT_SESSION_KEY = "backups_platform_preflight"
 
@@ -48,6 +49,7 @@ def _platform_actor(request):
 def _capability_context(request):
     actor = _platform_actor(request)
     engine = get_engine_capability()
+    restore_capability = platform_services.restore_mutation_capability()
     return {
         "platform_actor": actor,
         "can_manage_backups": has_platform_backup_capability(
@@ -57,16 +59,17 @@ def _capability_context(request):
             actor, PlatformBackupCapability.APPROVE_RESTORE
         ),
         "manual_capability": platform_services.manual_backup_capability(),
-        "restore_mutation_capability": platform_services.restore_mutation_capability(),
+        "restore_mutation_capability": restore_capability,
         "system_capabilities": {
             "backup_execution": (
                 "Available" if engine.real_execution_available else "Unavailable"
             ),
             "restore_mutation": (
-                "Enabled"
-                if engine.restore_mutation_setting_enabled
-                and engine.restore_mutation_engine_ready
+                "Available"
+                if restore_capability.enabled
                 else "Disabled"
+                if not engine.restore_mutation_setting_enabled
+                else "Unavailable"
             ),
             "scheduler": (
                 "Configured" if engine.async_configuration_ready else "Not active"
@@ -332,6 +335,14 @@ def restore_confirmation(request, business_public_id, public_id):
             except platform_services.PlatformBackupActionUnavailable as exc:
                 messages.warning(request, str(exc))
                 response_status = 503
+            else:
+                request.session.pop(PREFLIGHT_SESSION_KEY, None)
+                messages.success(request, "The tenant restore request was queued.")
+                return redirect(
+                    "platformadmin:backup_restore_status",
+                    business_public_id=business.public_id,
+                    restore_public_id=restore.public_id,
+                )
 
     response = render(
         request,
@@ -348,6 +359,30 @@ def restore_confirmation(request, business_public_id, public_id):
     )
     response.status_code = response_status
     return response
+
+
+@platform_backup_capability_required(PlatformBackupCapability.VIEW_METADATA)
+@require_GET
+def restore_status(request, business_public_id, restore_public_id):
+    business = platform_selectors.get_platform_business(business_public_id)
+    restore = platform_selectors.get_platform_restore(
+        restore_public_id,
+        business=business,
+    )
+    progress = restore_progress(restore)
+    return render(
+        request,
+        "platformadmin/backups/restore_status.html",
+        {
+            "pa_nav": "backups",
+            **_capability_context(request),
+            "business": business,
+            "restore": restore,
+            "backup": restore.source_backup,
+            "progress": progress,
+            "progress_steps": restore_progress_steps(restore),
+        },
+    )
 
 
 @platform_backup_capability_required(PlatformBackupCapability.VIEW_METADATA)

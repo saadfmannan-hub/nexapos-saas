@@ -1,4 +1,4 @@
-"""Owner-facing orchestration boundaries for Backup & Restore Phase 3C."""
+"""Owner-facing Backup & Restore orchestration through Phase 3E."""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ from django.utils import timezone
 from apps.tenants.models import Business
 
 from . import selectors, services
-from .engine.availability import get_engine_capability
+from .engine.availability import get_engine_capability, restore_execution_available
 from .engine.context import ActorIdentitySnapshot
+from .engine.events import RESTORE_QUEUED
 from .engine.restore_exceptions import RestoreEngineError
 from .engine.restore_preflight import (
     RestorePreflightCleanupRequest,
@@ -20,7 +21,8 @@ from .engine.restore_preflight import (
     RestorePreflightRequest,
     build_restore_preflight_provider_stack,
 )
-from .enums import BackupScope, BackupStatus, BackupTrigger
+from .enums import BackupScope, BackupStatus, BackupTrigger, RestoreStatus
+from .models import BackupActivity, RestoreOperation
 
 MANUAL_BACKUP_REQUESTED = "backup.manual_requested"
 RESTORE_PREFLIGHT_REQUESTED = "restore.preflight_requested"
@@ -269,9 +271,107 @@ def restore_mutation_capability():
             False,
             "Restore is currently disabled by the system administrator.",
         )
-    # Phase 3A evidence is process-local and Phase 3B has no Celery restore
-    # handoff. Never imply that toggling the mutation flag alone is sufficient.
+    if restore_execution_available():
+        return OwnerActionCapability(
+            True,
+            "Secure restore execution is available.",
+        )
     return OwnerActionCapability(
         False,
-        "Restore is waiting for its dedicated secure restore worker.",
+        "Restore is unavailable until its dedicated secure restore worker is configured.",
     )
+
+
+def _enqueue_restore(*, restore_public_id, business_public_id):
+    from .tasks import RESTORE_QUEUE_NAME, execute_restore
+
+    execute_restore.apply_async(
+        kwargs={
+            "restore_public_id": str(restore_public_id),
+            "business_public_id": str(business_public_id),
+        },
+        queue=RESTORE_QUEUE_NAME,
+        retry=True,
+        retry_policy={
+            "max_retries": 3,
+            "interval_start": 0,
+            "interval_step": 1,
+            "interval_max": 5,
+        },
+    )
+
+
+def request_restore(*, business, backup, restore, actor, request=None):
+    """Persist the queue handoff and enqueue public identifiers only."""
+
+    capability = restore_mutation_capability()
+    if not capability.enabled:
+        raise OwnerBackupActionUnavailable(capability.message)
+    if (
+        backup.business_id != business.pk
+        or restore.business_id != business.pk
+        or restore.source_backup_id != backup.pk
+        or restore.requested_by_id != actor.pk
+    ):
+        raise ValidationError("The restore preflight does not match this request.")
+
+    should_enqueue = False
+    with transaction.atomic():
+        current = (
+            RestoreOperation.objects.select_for_update()
+            .select_related("source_backup", "requested_by")
+            .get(pk=restore.pk, business=business)
+        )
+        already_queued = BackupActivity.objects.filter(
+            restore=current,
+            event_type=RESTORE_QUEUED,
+        ).exists()
+        if already_queued and current.failure_code == "pre_mutation_async_enqueue_unavailable":
+            raise OwnerBackupActionUnavailable(
+                "This restore request was not delivered to the worker. Run restore readiness again before retrying."
+            )
+        if not already_queued:
+            if current.status != RestoreStatus.QUEUED:
+                raise OwnerBackupActionUnavailable(
+                    "This restore request cannot be queued from its current state."
+                )
+            services.create_backup_activity(
+                business=business,
+                backup=backup,
+                restore=current,
+                actor=actor,
+                request=request,
+                event_type=RESTORE_QUEUED,
+                reason=current.reason,
+                sanitized_message="The restore request was queued for the dedicated worker.",
+                structured_metadata={
+                    "scope": str(current.requested_scope),
+                    "queued": True,
+                },
+            )
+            should_enqueue = True
+
+    if should_enqueue:
+        try:
+            _enqueue_restore(
+                restore_public_id=current.public_id,
+                business_public_id=business.public_id,
+            )
+        except Exception as exc:
+            if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
+                raise
+            current.refresh_from_db()
+            if current.status == RestoreStatus.QUEUED:
+                services.transition_restore(
+                    current,
+                    RestoreStatus.FAILED,
+                    failure_code="pre_mutation_async_enqueue_unavailable",
+                    failure_summary=(
+                        "Restore could not be queued. No restore work was started."
+                    ),
+                )
+            raise OwnerBackupActionUnavailable(
+                "Restore could not be queued safely. Please try again later."
+            ) from None
+    current.refresh_from_db()
+    return current

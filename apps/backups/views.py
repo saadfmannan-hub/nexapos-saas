@@ -1,4 +1,4 @@
-"""Tenant-owner Backup & Restore UI for Phase 3C."""
+"""Tenant-owner Backup & Restore UI through Phase 3E."""
 
 from urllib.parse import urlencode
 
@@ -17,6 +17,7 @@ from .forms import (
     RestoreConfirmationForm,
     RestorePreflightForm,
 )
+from .restore_execution import restore_progress, restore_progress_steps
 
 PREFLIGHT_SESSION_KEY = "backups_owner_preflight"
 
@@ -227,20 +228,20 @@ def restore_preflight(request, public_id):
 def _session_preflight(request, backup):
     value = request.session.get(PREFLIGHT_SESSION_KEY)
     if not isinstance(value, dict):
-        return None
+        return None, None
     if (
         value.get("business_public_id") != str(request.business.public_id)
         or value.get("backup_public_id") != str(backup.public_id)
     ):
-        return None
+        return None, None
     restore = selectors.restores_for_business(request.business).filter(
         public_id=value.get("restore_public_id"),
         source_backup=backup,
         requested_by=request.user,
     ).first()
     if restore is None:
-        return None
-    return value
+        return None, None
+    return value, restore
 
 
 @require_permission("backups.view")
@@ -248,7 +249,7 @@ def _session_preflight(request, backup):
 @require_http_methods(["GET", "POST"])
 def restore_confirmation(request, public_id):
     backup = selectors.get_backup_for_business(request.business, public_id)
-    preflight = _session_preflight(request, backup)
+    preflight, restore = _session_preflight(request, backup)
     if preflight is None:
         messages.warning(request, "Check restore readiness before continuing.")
         return redirect("backups:restore_preflight", public_id=backup.public_id)
@@ -267,9 +268,25 @@ def restore_confirmation(request, public_id):
         elif not mutation_capability.enabled:
             messages.warning(request, mutation_capability.message)
             response_status = 503
-        else:  # Defensive future boundary: mutation must never be added inline here.
-            messages.warning(request, "Restore could not be queued safely.")
-            response_status = 503
+        else:
+            try:
+                restore = owner_services.request_restore(
+                    business=request.business,
+                    backup=backup,
+                    restore=restore,
+                    actor=request.user,
+                    request=request,
+                )
+            except owner_services.OwnerBackupActionUnavailable as exc:
+                messages.warning(request, str(exc))
+                response_status = 503
+            else:
+                request.session.pop(PREFLIGHT_SESSION_KEY, None)
+                messages.success(request, "Your secure restore has been queued.")
+                return redirect(
+                    "backups:restore_status",
+                    restore_public_id=restore.public_id,
+                )
 
     response = render(
         request,
@@ -285,6 +302,28 @@ def restore_confirmation(request, public_id):
     if response_status != 200:
         response.status_code = response_status
     return response
+
+
+@require_permission("backups.view")
+@require_permission("backups.restore")
+@require_GET
+def restore_status(request, restore_public_id):
+    restore = selectors.get_restore_for_business(
+        request.business,
+        restore_public_id,
+    )
+    progress = restore_progress(restore)
+    return render(
+        request,
+        "backups/restore_status.html",
+        {
+            "active_nav": "backups",
+            "restore": restore,
+            "backup": restore.source_backup,
+            "progress": progress,
+            "progress_steps": restore_progress_steps(restore),
+        },
+    )
 
 
 # Compatibility name retained for callers of the earlier read-only review.

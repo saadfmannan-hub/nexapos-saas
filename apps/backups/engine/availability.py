@@ -26,6 +26,7 @@ SCHEDULE_DISPATCHER_READY = True
 RUNTIME_COMPOSITION_READY = True
 RESTORE_PREFLIGHT_ENGINE_READY = True
 RESTORE_MUTATION_ENGINE_READY = True
+RESTORE_ASYNC_EXECUTION_BOUNDARY_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
@@ -33,8 +34,9 @@ INCOMPLETE_PROVIDER_STACK_REASON = (
     "verification, local encrypted-artifact support, and local private durable "
     "storage, immutable daily-full retention, and operational coordination are "
     "available internally. Guarded restore preflight and tenant restore mutation "
-    "with a mandatory protected safety backup are also code-complete, but restore "
-    "mutation remains disabled by default. Production KEK/KMS and object storage "
+    "with a mandatory protected safety backup and a restart-safe dedicated restore "
+    "worker are also code-complete, but restore mutation remains disabled by "
+    "default. Production KEK/KMS and object storage "
     "integration, destructive historical retention, production worker/beat "
     "activation, and download authorization remain incomplete."
 )
@@ -82,6 +84,69 @@ def restore_mutation_setting_enabled() -> bool:
     """Return true only for an explicit boolean restore-mutation opt-in."""
 
     return getattr(settings, "BACKUP_RESTORE_MUTATION_ENABLED", False) is True
+
+
+def restore_async_configuration_ready() -> bool:
+    """Require a broker, non-eager delivery, and the exact restore queue."""
+
+    routes = getattr(settings, "CELERY_TASK_ROUTES", {})
+    route = (
+        routes.get("apps.backups.tasks.execute_restore")
+        if isinstance(routes, dict)
+        else None
+    )
+    soft_limit = getattr(
+        settings,
+        "BACKUP_RESTORE_TASK_SOFT_TIME_LIMIT_SECONDS",
+        None,
+    )
+    hard_limit = getattr(settings, "BACKUP_RESTORE_TASK_TIME_LIMIT_SECONDS", None)
+    provider_hard_limit = getattr(
+        settings,
+        "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS",
+        None,
+    )
+    return bool(
+        getattr(settings, "CELERY_BROKER_URL", "")
+        and getattr(settings, "CELERY_TASK_ALWAYS_EAGER", True) is False
+        and getattr(settings, "BACKUP_RESTORE_QUEUE_NAME", "") == "nexa.restores"
+        and isinstance(route, dict)
+        and route.get("queue") == "nexa.restores"
+        and type(soft_limit) is int
+        and type(hard_limit) is int
+        and type(provider_hard_limit) is int
+        and provider_hard_limit < soft_limit < hard_limit <= 90_000
+    )
+
+
+def restore_runtime_configuration_ready() -> bool:
+    """Compose and validate restore providers without performing a restore."""
+
+    if not (
+        RESTORE_PREFLIGHT_ENGINE_READY
+        and RESTORE_MUTATION_ENGINE_READY
+        and RESTORE_ASYNC_EXECUTION_BOUNDARY_READY
+    ):
+        return False
+    try:
+        from .restore_mutation import build_restore_runtime_stack
+
+        build_restore_runtime_stack().validated()
+    except Exception:
+        return False
+    return True
+
+
+def restore_execution_available() -> bool:
+    """Return whether the worker-only destructive boundary is fully safe."""
+
+    return bool(
+        restore_mutation_setting_enabled()
+        and RESTORE_MUTATION_ENGINE_READY
+        and RESTORE_ASYNC_EXECUTION_BOUNDARY_READY
+        and restore_async_configuration_ready()
+        and restore_runtime_configuration_ready()
+    )
 
 
 def async_configuration_ready() -> bool:

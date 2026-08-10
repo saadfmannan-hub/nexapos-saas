@@ -43,6 +43,8 @@ from apps.backups.tasks import (
     BACKUP_EXECUTION_TASK_NAME,
     BACKUP_QUEUE_NAME,
     BACKUP_SCHEDULER_QUEUE_NAME,
+    RESTORE_EXECUTION_TASK_NAME,
+    RESTORE_QUEUE_NAME,
     SCHEDULE_DISPATCH_TASK_NAME,
     assert_safe_async_execution_configuration,
     check_backup_async_execution_configuration,
@@ -55,6 +57,7 @@ from apps.tenants.services import provision_business
 
 SAFE_ROUTES = {
     BACKUP_EXECUTION_TASK_NAME: {"queue": BACKUP_QUEUE_NAME},
+    RESTORE_EXECUTION_TASK_NAME: {"queue": RESTORE_QUEUE_NAME},
     SCHEDULE_DISPATCH_TASK_NAME: {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
 }
 

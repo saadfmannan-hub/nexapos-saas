@@ -192,6 +192,19 @@ def get_platform_backup(public_id, *, business=None):
     return get_object_or_404(queryset, public_id=public_id)
 
 
+def get_platform_restore(public_id, *, business):
+    return get_object_or_404(
+        RestoreOperation.objects.select_related(
+            "business",
+            "source_backup",
+            "safety_backup",
+            "requested_by",
+        ).filter(_currently_entitled_q("source_backup__")),
+        public_id=public_id,
+        business=business,
+    )
+
+
 def safe_storage_label(backup):
     if not is_durable_verified(backup):
         return "Not verified"

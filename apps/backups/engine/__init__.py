@@ -12,6 +12,7 @@ from .availability import (
     ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
+    RESTORE_ASYNC_EXECUTION_BOUNDARY_READY,
     RETENTION_ENGINE_READY,
     RUNTIME_COMPOSITION_READY,
     RUNTIME_ORCHESTRATOR_READY,
@@ -22,6 +23,9 @@ from .availability import (
     async_configuration_ready,
     get_engine_capability,
     real_execution_available,
+    restore_async_configuration_ready,
+    restore_execution_available,
+    restore_runtime_configuration_ready,
 )
 from .canonical_manifest import CanonicalManifestProvider
 from .context import ActorIdentitySnapshot, BackupExecutionContext
@@ -147,6 +151,7 @@ __all__ = [
     "RetentionPolicy",
     "RetentionSkipReason",
     "RUNTIME_ORCHESTRATOR_READY",
+    "RESTORE_ASYNC_EXECUTION_BOUNDARY_READY",
     "SCHEDULE_DISPATCHER_READY",
     "RuntimeProviderStack",
     "RuntimeRetentionOutcome",
@@ -168,6 +173,9 @@ __all__ = [
     "build_runtime_provider_stack",
     "prepare_backup_execution",
     "real_execution_available",
+    "restore_async_configuration_ready",
+    "restore_execution_available",
+    "restore_runtime_configuration_ready",
     "request_backup_execution",
     "export_snapshot_components",
     "FinalStoredObjectEvidence",

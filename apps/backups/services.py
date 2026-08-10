@@ -809,6 +809,7 @@ def transition_restore(
         updates["started_at"] = now
     if target in {
         RestoreStatus.SUCCEEDED,
+        RestoreStatus.FAILED,
         RestoreStatus.ROLLED_BACK,
         RestoreStatus.INDETERMINATE,
     }:

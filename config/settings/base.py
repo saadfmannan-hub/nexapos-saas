@@ -280,6 +280,10 @@ BACKUP_SCHEDULER_QUEUE_NAME = env(
     "BACKUP_SCHEDULER_QUEUE_NAME",
     default="nexa.backup_scheduling",
 )
+BACKUP_RESTORE_QUEUE_NAME = env(
+    "BACKUP_RESTORE_QUEUE_NAME",
+    default="nexa.restores",
+)
 BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS = env.int(
     "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS",
     default=300,
@@ -292,8 +296,17 @@ BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS = env.int(
     "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS",
     default=21_900,
 )
+BACKUP_RESTORE_TASK_SOFT_TIME_LIMIT_SECONDS = env.int(
+    "BACKUP_RESTORE_TASK_SOFT_TIME_LIMIT_SECONDS",
+    default=43_200,
+)
+BACKUP_RESTORE_TASK_TIME_LIMIT_SECONDS = env.int(
+    "BACKUP_RESTORE_TASK_TIME_LIMIT_SECONDS",
+    default=43_500,
+)
 CELERY_TASK_ROUTES = {
     "apps.backups.tasks.execute_backup": {"queue": BACKUP_EXECUTION_QUEUE_NAME},
+    "apps.backups.tasks.execute_restore": {"queue": BACKUP_RESTORE_QUEUE_NAME},
     "apps.backups.tasks.dispatch_due_backup_schedules": {
         "queue": BACKUP_SCHEDULER_QUEUE_NAME,
     },

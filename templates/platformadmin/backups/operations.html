@@ -82,7 +82,7 @@
         {% for operation in page_obj %}
         <tr>
           <td class="fw-semibold">{{ operation.business.name }}</td>
-          <td><code class="small">{{ operation.public_id }}</code></td>
+          <td><a href="{% url 'platformadmin:backup_restore_status' operation.business.public_id operation.public_id %}"><code class="small">{{ operation.public_id }}</code></a></td>
           <td><a href="{% url 'platformadmin:backup_detail' operation.source_backup.public_id %}"><code class="small">{{ operation.source_backup.public_id }}</code></a></td>
           <td>{{ operation.get_requested_scope_display }}</td>
           <td>

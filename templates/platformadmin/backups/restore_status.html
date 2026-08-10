@@ -1,0 +1,26 @@
+{% extends "platformadmin/_base.html" %}
+{% block title %}Restore status — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="pa-backup-shell narrow-shell">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+    <div><div class="small text-uppercase fw-bold text-secondary">Tenant restore</div><h1 class="page-title mb-1">{{ progress.label }}</h1><div class="small text-secondary">{{ business.name }} · {{ restore.public_id }}</div></div>
+    <a class="btn btn-outline-secondary" href="{% url 'platformadmin:backup_operations' %}">All operations</a>
+  </div>
+
+  <div class="card mb-3"><div class="card-body p-4">
+    <h2 class="h5 mb-1">{{ progress.label }}</h2>
+    <p class="text-secondary mb-0">{{ progress.detail }}</p>
+    {% if progress.safety_backup_created %}<div class="alert alert-success py-2 mt-3 mb-0"><i class="bi bi-shield-check me-1"></i> Safety backup created</div>{% endif %}
+    {% if restore.status == "INDETERMINATE" %}<div class="alert alert-danger mt-3 mb-0"><strong>Recovery required.</strong> Restore requires administrator recovery. Automatic retry is blocked.</div>{% elif restore.sanitized_failure_summary %}<div class="alert alert-warning mt-3 mb-0"><strong>Failed safely.</strong> {{ restore.sanitized_failure_summary }}{% if restore.failure_code %}<div class="small mt-1">Operational code: {{ restore.failure_code }}</div>{% endif %}</div>{% endif %}
+  </div></div>
+
+  <div class="card mb-3"><div class="card-header">Restore progress</div><div class="card-body">
+    <div class="row g-2">
+      {% for step in progress_steps %}<div class="col-md-6"><div class="border rounded p-2 h-100 {% if step.state == 'current' %}border-primary bg-primary-subtle fw-semibold{% elif step.state == 'complete' %}border-success-subtle bg-success-subtle{% else %}text-secondary{% endif %}"><i class="bi {% if step.state == 'complete' %}bi-check-circle text-success{% elif step.state == 'current' %}bi-arrow-repeat text-primary{% else %}bi-circle{% endif %} me-1"></i>{{ step.label }}</div></div>{% endfor %}
+    </div>
+  </div></div>
+
+  <div class="card"><div class="card-body"><dl class="definition-grid mb-0"><div><dt>Requested by</dt><dd>{% if restore.requested_by %}{{ restore.requested_by.email }}{% else %}Recorded actor{% endif %}</dd></div><div><dt>Requested</dt><dd>{{ restore.created_at|date:"Y-m-d H:i:s" }}</dd></div><div><dt>Scope</dt><dd>{{ restore.get_requested_scope_display }}</dd></div><div><dt>State</dt><dd>{{ restore.get_status_display }}</dd></div></dl><div class="small text-secondary mt-3">{% if progress.terminal %}No automatic replay is scheduled for this terminal operation.{% else %}This page refreshes periodically. The GET request performs no restore work.{% endif %}</div></div></div>
+</div>
+{% endblock %}
+{% block extra_js %}{% if not progress.terminal %}<script>window.setTimeout(function(){ window.location.reload(); }, 10000);</script>{% endif %}{% endblock %}

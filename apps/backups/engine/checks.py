@@ -439,6 +439,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.RUNTIME_COMPOSITION_READY is True
         and availability.RESTORE_PREFLIGHT_ENGINE_READY is True
         and availability.RESTORE_MUTATION_ENGINE_READY is True
+        and availability.RESTORE_ASYNC_EXECUTION_BOUNDARY_READY is True
         and availability.OPERATIONAL_PROVIDER_STACK_READY is False
         and capability.snapshot_provider_ready
         is availability.SQLITE_SNAPSHOT_PROVIDER_READY
@@ -478,6 +479,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         is availability.OPERATIONAL_PROVIDER_STACK_READY
         and capability.real_execution_available is False
         and availability.real_execution_available() is False
+        and availability.restore_execution_available() is False
     )
     if not consistent:
         return [
