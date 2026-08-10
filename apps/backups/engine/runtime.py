@@ -31,6 +31,7 @@ from apps.tenants.models import Business
 from .canonical_manifest import CanonicalManifestProvider
 from .context import ActorIdentitySnapshot
 from .contracts import (
+    DurableBackupStorageProvider,
     EncryptedArtifactRequest,
     PackageVerificationRequest,
     Phase2D1Request,
@@ -40,7 +41,6 @@ from .contracts import (
     StoredBackupObjectResult,
 )
 from .deterministic_package import DeterministicPackageProvider
-from .durable_storage import LocalPrivateDurableStorageProvider
 from .encrypted_artifact import EncryptedArtifactProvider
 from .events import (
     BACKUP_COMPLETED,
@@ -95,6 +95,11 @@ from .runtime_exceptions import (
     RuntimeVerificationError,
 )
 from .sqlite_snapshot import SQLiteSnapshotProvider
+from .storage_registry import (
+    DurableStorageProviderRegistry,
+    build_storage_provider_registry,
+    stored_reference_from_metadata,
+)
 from .workspace import (
     BackupWorkspaceManager,
     WorkspaceArea,
@@ -155,11 +160,13 @@ class InheritedTenantOperationLease:
 
 @dataclass(frozen=True, slots=True)
 class FinalStoredObjectEvidence:
-    reference_identifier: uuid.UUID
+    reference_identifier: uuid.UUID | str
     backend_identifier: str
     byte_count: int
     sha256: str
     provider_identifier: str
+    bucket_identifier: str = ""
+    version_identifier: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,8 +195,9 @@ class RuntimeProviderStack:
     verification_provider: IndependentPackageVerifier
     kek_provider: KeyEncryptionProvider
     encrypted_artifact_provider: EncryptedArtifactProvider
-    durable_storage_provider: LocalPrivateDurableStorageProvider
+    durable_storage_provider: DurableBackupStorageProvider
     retention_engine: RetentionEngine
+    durable_storage_registry: DurableStorageProviderRegistry | None = None
 
     def validated(self):
         if (
@@ -205,8 +213,7 @@ class RuntimeProviderStack:
             or type(self.verification_provider) is not IndependentPackageVerifier
             or not isinstance(self.kek_provider, KeyEncryptionProvider)
             or type(self.encrypted_artifact_provider) is not EncryptedArtifactProvider
-            or type(self.durable_storage_provider)
-            is not LocalPrivateDurableStorageProvider
+            or not isinstance(self.durable_storage_provider, DurableBackupStorageProvider)
             or type(self.retention_engine) is not RetentionEngine
             or self.snapshot_provider.workspace_manager is not self.workspace_manager
             or self.component_exporter.snapshot_provider is not self.snapshot_provider
@@ -227,6 +234,15 @@ class RuntimeProviderStack:
             is not self.encrypted_artifact_provider
             or self.retention_engine.durable_provider
             is not self.durable_storage_provider
+            or (
+                self.durable_storage_registry is not None
+                and (
+                    type(self.durable_storage_registry)
+                    is not DurableStorageProviderRegistry
+                    or self.durable_storage_registry.active_provider
+                    is not self.durable_storage_provider
+                )
+            )
         ):
             raise RuntimeProviderStackError()
         return self
@@ -281,9 +297,10 @@ def build_runtime_provider_stack() -> RuntimeProviderStack:
             key_provider_registry=key_provider_registry,
             workspace_manager=workspace_manager,
         )
-        durable_storage_provider = LocalPrivateDurableStorageProvider(
+        durable_storage_registry = build_storage_provider_registry(
             encrypted_artifact_provider=encrypted_artifact_provider,
         )
+        durable_storage_provider = durable_storage_registry.active_provider
         retention_engine = RetentionEngine(
             durable_provider=durable_storage_provider,
         )
@@ -301,6 +318,7 @@ def build_runtime_provider_stack() -> RuntimeProviderStack:
             encrypted_artifact_provider=encrypted_artifact_provider,
             durable_storage_provider=durable_storage_provider,
             retention_engine=retention_engine,
+            durable_storage_registry=durable_storage_registry,
         ).validated()
     except RuntimeEngineError:
         raise
@@ -485,8 +503,29 @@ class BackupExecutionCoordinator:
         if type(stored) is not StoredBackupObjectResult:
             raise RuntimePersistenceError()
         object_key = str(stored.reference.identifier)
+        bucket_identifier = str(stored.reference.bucket_identifier)
+        version_identifier = str(stored.reference.version_identifier)
+        try:
+            stored_reference_from_metadata(
+                backend_identifier=stored.backend_identifier,
+                opaque_object_key=object_key,
+                bucket_identifier=bucket_identifier,
+                version_identifier=version_identifier,
+            )
+        except Exception:
+            raise RuntimePersistenceError(durable_object_preserved=True) from None
         existing_key = backup.opaque_object_key
-        if existing_key and existing_key != object_key:
+        if (
+            (existing_key and existing_key != object_key)
+            or (
+                backup.storage_bucket_identifier
+                and backup.storage_bucket_identifier != bucket_identifier
+            )
+            or (
+                backup.storage_object_version_identifier
+                and backup.storage_object_version_identifier != version_identifier
+            )
+        ):
             raise RuntimePersistenceError(durable_object_preserved=True)
         manifest = phase2d1_result.manifest
         key_identifier = key_metadata_identifier(
@@ -502,9 +541,19 @@ class BackupExecutionCoordinator:
                         status__in=self._TRANSITIONAL_STATUSES,
                     )
                     .filter(Q(opaque_object_key="") | Q(opaque_object_key=object_key))
+                    .filter(
+                        Q(storage_bucket_identifier="")
+                        | Q(storage_bucket_identifier=bucket_identifier)
+                    )
+                    .filter(
+                        Q(storage_object_version_identifier="")
+                        | Q(storage_object_version_identifier=version_identifier)
+                    )
                     .update(
                         storage_backend_identifier=stored.backend_identifier[:80],
                         opaque_object_key=object_key,
+                        storage_bucket_identifier=bucket_identifier,
+                        storage_object_version_identifier=version_identifier,
                         encryption_key_identifier=key_identifier,
                         whole_artifact_hash=stored.sha256,
                         backup_size_bytes=stored.byte_count,
@@ -1231,6 +1280,8 @@ class BackupExecutionCoordinator:
                 byte_count=stored.byte_count,
                 sha256=stored.sha256,
                 provider_identifier=stored.provider_identifier,
+                bucket_identifier=stored.reference.bucket_identifier,
+                version_identifier=stored.reference.version_identifier,
             ),
             total_duration_ms=duration_ms,
             completed_at=backup.completed_at,

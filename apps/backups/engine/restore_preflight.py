@@ -35,17 +35,12 @@ from apps.tenants.models import Business
 
 from .context import ActorIdentitySnapshot, BackupExecutionContext
 from .contracts import (
+    DurableBackupStorageProvider,
     PackageBuildResult,
     PackageCompatibilityStatus,
     PackageVerificationRequest,
     PackageVerificationResult,
     PersistedStoredObjectDescriptor,
-    StoredBackupObjectReference,
-)
-from .durable_storage import (
-    LOCAL_DURABLE_STORAGE_BACKEND_IDENTIFIER,
-    LOCAL_DURABLE_STORAGE_PROVIDER_IDENTIFIER,
-    LocalPrivateDurableStorageProvider,
 )
 from .durable_storage_exceptions import (
     DurableObjectNotFound,
@@ -77,6 +72,10 @@ from .restore_workspace import (
     RestoredPackageProvider,
 )
 from .runtime import RuntimeProviderStack, build_runtime_provider_stack
+from .storage_registry import (
+    DurableStorageProviderRegistry,
+    stored_reference_from_metadata,
+)
 from .verification_exceptions import (
     Phase2EEngineError,
 )
@@ -159,16 +158,16 @@ class RestorePreflightResult:
 class RestorePreflightProviderStack:
     workspace_manager: BackupWorkspaceManager
     encrypted_artifact_provider: EncryptedArtifactProvider
-    durable_storage_provider: LocalPrivateDurableStorageProvider
+    durable_storage_provider: DurableBackupStorageProvider
     restored_package_provider: RestoredPackageProvider
     verification_provider: IndependentPackageVerifier
+    durable_storage_registry: DurableStorageProviderRegistry | None = None
 
     def validated(self):
         if (
             type(self.workspace_manager) is not BackupWorkspaceManager
             or type(self.encrypted_artifact_provider) is not EncryptedArtifactProvider
-            or type(self.durable_storage_provider)
-            is not LocalPrivateDurableStorageProvider
+            or not isinstance(self.durable_storage_provider, DurableBackupStorageProvider)
             or type(self.restored_package_provider) is not RestoredPackageProvider
             or type(self.verification_provider) is not IndependentPackageVerifier
             or self.encrypted_artifact_provider.workspace_manager
@@ -181,6 +180,15 @@ class RestorePreflightProviderStack:
             is not self.restored_package_provider
             or self.verification_provider.workspace_manager
             is not self.workspace_manager
+            or (
+                self.durable_storage_registry is not None
+                and (
+                    type(self.durable_storage_registry)
+                    is not DurableStorageProviderRegistry
+                    or self.durable_storage_registry.active_provider
+                    is not self.durable_storage_provider
+                )
+            )
             or type(self.verification_provider.compatibility_policy)
             is not PackageCompatibilityPolicy
             or not _SHA256_PATTERN.fullmatch(
@@ -192,6 +200,19 @@ class RestorePreflightProviderStack:
         ):
             raise Phase3ACoordinationError()
         return self
+
+    def resolve_durable_provider(self, backend_identifier):
+        if self.durable_storage_registry is not None:
+            return self.durable_storage_registry.resolve(backend_identifier)
+        try:
+            active_backend = DurableStorageProviderRegistry.backend_identifier_for(
+                self.durable_storage_provider
+            )
+        except Exception:
+            raise Phase3ACoordinationError() from None
+        if backend_identifier != active_backend:
+            raise Phase3ACoordinationError()
+        return self.durable_storage_provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +263,7 @@ def build_restore_preflight_provider_stack(*, runtime_stack=None):
             durable_storage_provider=runtime_stack.durable_storage_provider,
             restored_package_provider=restored_package_provider,
             verification_provider=verification_provider,
+            durable_storage_registry=runtime_stack.durable_storage_registry,
         ).validated()
     except RestoreEngineError:
         raise
@@ -316,8 +338,13 @@ class RestorePreflightCoordinator:
         if backup is None:
             raise RestoreTenantMismatch(issue_code="restore_selection_unavailable")
         try:
-            reference_uuid = uuid.UUID(str(backup.opaque_object_key))
-        except (AttributeError, TypeError, ValueError):
+            stored_reference = stored_reference_from_metadata(
+                backend_identifier=backup.storage_backend_identifier,
+                opaque_object_key=backup.opaque_object_key,
+                bucket_identifier=backup.storage_bucket_identifier,
+                version_identifier=backup.storage_object_version_identifier,
+            )
+        except Exception:
             raise RestoreSelectionError(issue_code="durable_reference_invalid") from None
         if (
             backup.business_id != business.pk
@@ -325,9 +352,6 @@ class RestorePreflightCoordinator:
             or backup.status != BackupStatus.SUCCEEDED
             or backup.integrity_status != IntegrityStatus.VERIFIED
             or backup.deleted_at is not None
-            or backup.storage_backend_identifier
-            != LOCAL_DURABLE_STORAGE_BACKEND_IDENTIFIER
-            or str(reference_uuid) != backup.opaque_object_key
             or type(backup.backup_size_bytes) is not int
             or backup.backup_size_bytes <= 0
             or type(backup.whole_artifact_hash) is not str
@@ -345,7 +369,7 @@ class RestorePreflightCoordinator:
             )
         ):
             raise RestoreSelectionError(issue_code="backup_not_restore_selectable")
-        return backup, StoredBackupObjectReference(reference_uuid)
+        return backup, stored_reference
 
     @staticmethod
     def _build_context(*, business, backup, request, workspace_reference):
@@ -498,6 +522,7 @@ class RestorePreflightCoordinator:
         document=None,
         component_plan=(),
         ready,
+        durable_provider_identifier="durable-storage",
     ):
         completed_at = self.clock()
         if (
@@ -547,7 +572,7 @@ class RestorePreflightCoordinator:
             plaintext_package_bytes=package.byte_count,
             verified_at=verification.verified_at,
             preflight_completed_at=completed_at,
-            durable_provider_identifier=LOCAL_DURABLE_STORAGE_PROVIDER_IDENTIFIER,
+            durable_provider_identifier=durable_provider_identifier,
             encryption_provider_identifier=ENCRYPTED_ARTIFACT_PROVIDER_IDENTIFIER,
             verification_provider_identifier=verification.provider_identifier,
             package_provider_identifier=RESTORED_PACKAGE_PROVIDER_IDENTIFIER,
@@ -672,6 +697,7 @@ class RestorePreflightCoordinator:
         package = None
         verification = None
         reattested = None
+        durable_provider = None
         result = None
         retain_workspace = False
         safe_error = None
@@ -692,6 +718,9 @@ class RestorePreflightCoordinator:
                 business=business,
                 request=request,
             )
+            durable_provider = self.provider_stack.resolve_durable_provider(
+                backup.storage_backend_identifier
+            )
             workspace = self.provider_stack.workspace_manager.create(
                 WorkspaceReference(request.operation_public_id)
             )
@@ -708,13 +737,15 @@ class RestorePreflightCoordinator:
                 sha256=backup.whole_artifact_hash,
                 backup_public_id=backup.public_id,
                 tenant_public_id=business.public_id,
+                bucket_identifier=backup.storage_bucket_identifier,
+                version_identifier=backup.storage_object_version_identifier,
             )
-            reattested = self.provider_stack.durable_storage_provider.reattest_stored_object(
+            reattested = durable_provider.reattest_stored_object(
                 context=context,
                 descriptor=descriptor,
             )
             self._heartbeat(lock)
-            with self.provider_stack.durable_storage_provider.open_reattested_object(
+            with durable_provider.open_reattested_object(
                 context=context,
                 result=reattested,
             ) as encrypted_reader:
@@ -760,6 +791,7 @@ class RestorePreflightCoordinator:
                     verification=verification,
                     package=package,
                     ready=False,
+                    durable_provider_identifier=reattested.provider_identifier,
                 )
             else:
                 document = (
@@ -782,6 +814,7 @@ class RestorePreflightCoordinator:
                     document=document,
                     component_plan=component_plan,
                     ready=True,
+                    durable_provider_identifier=reattested.provider_identifier,
                 )
                 self.provider_stack.restored_package_provider.publish_preflight_evidence(
                     context=context,
@@ -796,9 +829,9 @@ class RestorePreflightCoordinator:
             else:
                 safe_error = self._safe_exception(exc)
         finally:
-            if reattested is not None and context is not None:
+            if reattested is not None and context is not None and durable_provider is not None:
                 try:
-                    self.provider_stack.durable_storage_provider.release_reattested_object(
+                    durable_provider.release_reattested_object(
                         context=context,
                         result=reattested,
                     )
@@ -923,6 +956,9 @@ class RestorePreflightCoordinator:
             business=business,
             request=completed.request,
         )
+        durable_provider = self.provider_stack.resolve_durable_provider(
+            backup.storage_backend_identifier
+        )
         policy = self.provider_stack.verification_provider.compatibility_policy
         if (
             policy.current_schema_fingerprint != schema_migration_fingerprint()
@@ -952,18 +988,20 @@ class RestorePreflightCoordinator:
                 sha256=backup.whole_artifact_hash,
                 backup_public_id=backup.public_id,
                 tenant_public_id=business.public_id,
+                bucket_identifier=backup.storage_bucket_identifier,
+                version_identifier=backup.storage_object_version_identifier,
             )
-            reattested = self.provider_stack.durable_storage_provider.reattest_stored_object(
+            reattested = durable_provider.reattest_stored_object(
                 context=completed.context,
                 descriptor=descriptor,
             )
             try:
-                self.provider_stack.durable_storage_provider.validate_reattested_object(
+                durable_provider.validate_reattested_object(
                     context=completed.context,
                     result=reattested,
                 )
             finally:
-                self.provider_stack.durable_storage_provider.release_reattested_object(
+                durable_provider.release_reattested_object(
                     context=completed.context,
                     result=reattested,
                 )

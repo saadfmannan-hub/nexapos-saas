@@ -409,8 +409,12 @@ class RestoreExecutionCoordinator:
             or not safety.opaque_object_key
             or not safety.whole_artifact_hash
             or safety.backup_size_bytes <= 0
-            or result.stored_object.reference_identifier
-            != uuid.UUID(str(safety.opaque_object_key))
+            or str(result.stored_object.reference_identifier)
+            != safety.opaque_object_key
+            or result.stored_object.bucket_identifier
+            != safety.storage_bucket_identifier
+            or result.stored_object.version_identifier
+            != safety.storage_object_version_identifier
             or result.stored_object.sha256 != safety.whole_artifact_hash
             or result.stored_object.byte_count != safety.backup_size_bytes
         ):

@@ -105,9 +105,11 @@ class BackupRecord(TimeStampedModel):
     )
     restore_compatibility_reason = models.CharField(max_length=500, blank=True)
 
-    # Reserved Phase 2 fields.  They remain blank until a real engine owns them.
+    # Restart-persistent durable-object and envelope-encryption evidence.
     storage_backend_identifier = models.CharField(max_length=80, blank=True)
     opaque_object_key = models.CharField(max_length=500, blank=True)
+    storage_bucket_identifier = models.CharField(max_length=255, blank=True)
+    storage_object_version_identifier = models.CharField(max_length=1024, blank=True)
     encryption_key_identifier = models.CharField(max_length=255, blank=True)
     encrypted_data_key_envelope = models.TextField(blank=True)
     whole_artifact_hash = models.CharField(max_length=128, blank=True)

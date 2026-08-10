@@ -209,7 +209,9 @@ def safe_storage_label(backup):
     if not is_durable_verified(backup):
         return "Not verified"
     if backup.storage_backend_identifier == "local-private-filesystem":
-        return "Private durable storage"
+        return "Local development storage"
+    if backup.storage_backend_identifier == "s3-compatible":
+        return "S3-compatible storage"
     return "Configured durable storage"
 
 

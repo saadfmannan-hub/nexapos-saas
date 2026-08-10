@@ -41,6 +41,17 @@ class DurableStorageTimeout(DurableStorageEngineError):
     default_code = "durable_storage_timeout"
 
 
+class DurableStorageUnavailable(DurableStorageEngineError):
+    default_message = "The durable backup storage provider is temporarily unavailable."
+    default_code = "durable_storage_unavailable"
+    retryable = True
+
+
+class DurableStorageAuthorizationError(DurableStorageEngineError):
+    default_message = "The durable backup storage provider rejected the operation."
+    default_code = "durable_storage_authorization_failed"
+
+
 class DurableObjectCreationError(DurableStorageEngineError):
     default_message = "The durable encrypted backup object could not be created safely."
     default_code = "durable_object_creation_failed"
@@ -83,6 +94,8 @@ __all__ = [
     "DurableStorageEngineError",
     "DurableStoragePolicyError",
     "DurableStorageTimeout",
+    "DurableStorageUnavailable",
+    "DurableStorageAuthorizationError",
     "EncryptedStagingCleanupError",
     "InsufficientDurableStorageCapacity",
     "Phase2GCoordinationError",

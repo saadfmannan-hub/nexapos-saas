@@ -41,6 +41,10 @@ from .retention_exceptions import RetentionPolicyError
 from .retention_policy import RetentionPolicy
 from .runtime_exceptions import RuntimeProviderStackError
 from .snapshot_policy import SQLiteSnapshotPolicy
+from .storage_registry import (
+    selected_storage_provider_name,
+    validate_storage_provider_settings,
+)
 from .workspace import path_has_link_like_component, validate_staging_root
 
 
@@ -321,10 +325,51 @@ def check_durable_storage_policy_settings(app_configs, **kwargs):
 
 
 @register(Tags.security)
+def check_storage_provider_configuration(app_configs, **kwargs):
+    if not availability.provider_environment_checks_required():
+        return []
+    try:
+        validate_storage_provider_settings()
+    except DurableStoragePolicyError as exc:
+        return [
+            Error(
+                exc.sanitized_message,
+                hint=(
+                    "Select local for development or configure a private S3 bucket, "
+                    "region, HTTPS endpoint, safe prefix, and bounded transfer policy."
+                ),
+                id="backups.E048",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
+def check_production_storage_provider_selection(app_configs, **kwargs):
+    if not availability.provider_environment_checks_required():
+        return []
+    try:
+        selected = selected_storage_provider_name()
+    except DurableStoragePolicyError:
+        return []  # E048 owns malformed provider selection.
+    if selected == "local":
+        return [
+            Error(
+                "The development-only local durable storage provider cannot be activated.",
+                hint="Configure BACKUP_STORAGE_PROVIDER=s3 before operational activation.",
+                id="backups.E049",
+            )
+        ]
+    return []
+
+
+@register(Tags.security)
 def check_durable_storage_root(app_configs, **kwargs):
     if not availability.provider_environment_checks_required():
         return []
     try:
+        if selected_storage_provider_name() != "local":
+            return []
         policy = DurableStoragePolicy.from_settings()
         validate_durable_storage_root(
             policy.root,
@@ -410,13 +455,15 @@ def check_restore_preflight_configuration(app_configs, **kwargs):
         )
         encryption_policy = EncryptionPolicy.from_settings()
         durable_policy = DurableStoragePolicy.from_settings()
-        validate_durable_storage_root(
-            durable_policy.root,
-            staging_root=staging_root,
-            media_root=getattr(settings, "MEDIA_ROOT", None),
-            static_root=getattr(settings, "STATIC_ROOT", None),
-            require_local=durable_policy.require_local,
-        )
+        storage_provider = validate_storage_provider_settings()
+        if storage_provider == "local":
+            validate_durable_storage_root(
+                durable_policy.root,
+                staging_root=staging_root,
+                media_root=getattr(settings, "MEDIA_ROOT", None),
+                static_root=getattr(settings, "STATIC_ROOT", None),
+                require_local=durable_policy.require_local,
+            )
         if encryption_policy.maximum_artifact_bytes > durable_policy.maximum_object_bytes:
             raise ValueError
         validate_key_provider_settings()
@@ -447,6 +494,7 @@ def check_backup_capability_consistency(app_configs, **kwargs):
         and availability.ENCRYPTED_ARTIFACT_PROVIDER_READY is True
         and availability.PRODUCTION_KEY_PROVIDER_READY is True
         and availability.DURABLE_STORAGE_PROVIDER_READY is True
+        and availability.PRODUCTION_DURABLE_STORAGE_PROVIDER_READY is True
         and availability.RETENTION_ENGINE_READY is True
         and availability.RUNTIME_ORCHESTRATOR_READY is True
         and availability.ASYNC_EXECUTION_BOUNDARY_READY is True

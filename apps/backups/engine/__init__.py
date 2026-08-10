@@ -12,6 +12,7 @@ from .availability import (
     ENCRYPTED_ARTIFACT_PROVIDER_READY,
     INDEPENDENT_PACKAGE_VERIFIER_READY,
     MEDIA_CAPTURE_PROVIDER_READY,
+    PRODUCTION_DURABLE_STORAGE_PROVIDER_READY,
     PRODUCTION_KEY_PROVIDER_READY,
     RESTORE_ASYNC_EXECUTION_BOUNDARY_READY,
     RETENTION_ENGINE_READY,
@@ -101,7 +102,17 @@ from .runtime import (
     build_runtime_provider_stack,
     request_backup_execution,
 )
+from .s3_storage import (
+    S3_DURABLE_STORAGE_BACKEND_IDENTIFIER,
+    S3_DURABLE_STORAGE_PROVIDER_IDENTIFIER,
+    S3CompatibleDurableStorageProvider,
+    S3StorageConfiguration,
+)
 from .sqlite_snapshot import SQLiteSnapshotProvider
+from .storage_registry import (
+    DurableStorageProviderRegistry,
+    build_storage_provider_registry,
+)
 
 __all__ = [
     "ActorIdentitySnapshot",
@@ -137,6 +148,7 @@ __all__ = [
     "KeyEncryptionProvider",
     "KeyEncryptionProviderRegistry",
     "MEDIA_CAPTURE_PROVIDER_READY",
+    "PRODUCTION_DURABLE_STORAGE_PROVIDER_READY",
     "PRODUCTION_KEY_PROVIDER_READY",
     "PackageBuildRequest",
     "PackageBuildResult",
@@ -172,6 +184,10 @@ __all__ = [
     "SQLITE_SNAPSHOT_PROVIDER_READY",
     "SQLiteSnapshotProvider",
     "SQLiteLogicalComponentExporter",
+    "S3CompatibleDurableStorageProvider",
+    "S3StorageConfiguration",
+    "S3_DURABLE_STORAGE_BACKEND_IDENTIFIER",
+    "S3_DURABLE_STORAGE_PROVIDER_IDENTIFIER",
     "TENANT_LOGICAL_EXPORT_PROVIDER_READY",
     "StoredBackupObjectReference",
     "StoredBackupObjectRequest",
@@ -185,6 +201,7 @@ __all__ = [
     "async_configuration_ready",
     "get_engine_capability",
     "build_runtime_provider_stack",
+    "build_storage_provider_registry",
     "prepare_backup_execution",
     "publish_rewrapped_key_metadata",
     "real_execution_available",
@@ -194,4 +211,5 @@ __all__ = [
     "request_backup_execution",
     "export_snapshot_components",
     "FinalStoredObjectEvidence",
+    "DurableStorageProviderRegistry",
 ]

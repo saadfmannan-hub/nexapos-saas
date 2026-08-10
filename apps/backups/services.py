@@ -52,6 +52,8 @@ _SENSITIVE_METADATA_TERMS = (
     "encryption_key",
     "data_key",
     "object_key",
+    "object_version",
+    "storage_bucket",
     "storage_key",
     "private_key",
 )

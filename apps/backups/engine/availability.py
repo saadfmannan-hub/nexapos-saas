@@ -18,6 +18,7 @@ INDEPENDENT_PACKAGE_VERIFIER_READY = True
 ENCRYPTED_ARTIFACT_PROVIDER_READY = True
 PRODUCTION_KEY_PROVIDER_READY = True
 DURABLE_STORAGE_PROVIDER_READY = True
+PRODUCTION_DURABLE_STORAGE_PROVIDER_READY = True
 RETENTION_ENGINE_READY = True
 # Phase 3A can re-attest historical Phase 2G objects for non-mutating preflight.
 # Destructive operational retention and restore mutation remain unavailable.
@@ -32,14 +33,13 @@ OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
     "manifest, deterministic plaintext package, independent package "
-    "verification, production-capable key-provider support, and local private durable "
+    "verification, production-capable key management and S3-compatible durable "
     "storage, immutable daily-full retention, and operational coordination are "
     "available internally. Guarded restore preflight and tenant restore mutation "
     "with a mandatory protected safety backup and a restart-safe dedicated restore "
     "worker are also code-complete, but restore mutation remains disabled by "
-    "default. Production object storage integration, destructive historical "
-    "retention, production worker/beat "
-    "activation, and download authorization remain incomplete."
+    "default. Production activation, reconciliation, worker/beat monitoring, "
+    "and download authorization remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -128,6 +128,17 @@ def production_key_provider_configuration_ready() -> bool:
         return False
 
 
+def production_durable_storage_configuration_ready() -> bool:
+    """Require structurally valid S3-compatible storage for activation."""
+
+    try:
+        from .storage_registry import validate_storage_provider_settings
+
+        return validate_storage_provider_settings() == "s3"
+    except Exception:
+        return False
+
+
 def restore_async_configuration_ready() -> bool:
     """Require a broker, non-eager delivery, and the exact restore queue."""
 
@@ -185,6 +196,7 @@ def restore_execution_available() -> bool:
     return bool(
         restore_mutation_setting_enabled()
         and production_key_provider_configuration_ready()
+        and production_durable_storage_configuration_ready()
         and RESTORE_MUTATION_ENGINE_READY
         and RESTORE_ASYNC_EXECUTION_BOUNDARY_READY
         and restore_async_configuration_ready()
@@ -265,6 +277,8 @@ def runtime_configuration_ready() -> bool:
             checks.check_local_kek_configuration,
             checks.check_production_key_provider_selection,
             checks.check_durable_storage_policy_settings,
+            checks.check_storage_provider_configuration,
+            checks.check_production_storage_provider_selection,
             checks.check_durable_storage_root,
             checks.check_retention_policy_settings,
             checks.check_runtime_execution_settings,
@@ -286,6 +300,7 @@ def get_engine_capability() -> BackupEngineCapability:
         and ASYNC_EXECUTION_BOUNDARY_READY
         and SCHEDULE_DISPATCHER_READY
         and RUNTIME_COMPOSITION_READY
+        and production_durable_storage_configuration_ready()
         and async_ready
         and runtime_ready
     )

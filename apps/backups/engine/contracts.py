@@ -291,7 +291,9 @@ class StoredObjectVerificationState(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class StoredBackupObjectReference:
-    identifier: uuid.UUID
+    identifier: uuid.UUID | str
+    bucket_identifier: str = ""
+    version_identifier: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,6 +334,8 @@ class PersistedStoredObjectDescriptor:
     sha256: str
     backup_public_id: uuid.UUID
     tenant_public_id: uuid.UUID
+    bucket_identifier: str = ""
+    version_identifier: str = ""
 
 
 @dataclass(frozen=True, slots=True)

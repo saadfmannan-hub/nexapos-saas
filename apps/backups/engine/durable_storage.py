@@ -269,6 +269,9 @@ def _fsync_directory(path, *, error_type):
 class LocalPrivateDurableStorageProvider(DurableBackupStorageProvider):
     """Durably retain ciphertext in a private engine-owned local root."""
 
+    development_only = True
+    display_label = "Local development storage"
+
     def __init__(
         self,
         *,
