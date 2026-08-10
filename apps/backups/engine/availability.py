@@ -86,6 +86,36 @@ def restore_mutation_setting_enabled() -> bool:
     return getattr(settings, "BACKUP_RESTORE_MUTATION_ENABLED", False) is True
 
 
+def provider_environment_checks_required() -> bool:
+    """Require concrete provider infrastructure only for an operational path."""
+
+    return bool(
+        engine_setting_enabled()
+        or restore_mutation_setting_enabled()
+        or OPERATIONAL_PROVIDER_STACK_READY
+    )
+
+
+def restore_provider_checks_required() -> bool:
+    """Require restore composition only when restore can be operational."""
+
+    return bool(restore_mutation_setting_enabled() or OPERATIONAL_PROVIDER_STACK_READY)
+
+
+def restore_preflight_configuration_ready() -> bool:
+    """Validate preflight composition without retrieving or mutating backup data."""
+
+    if not RESTORE_PREFLIGHT_ENGINE_READY:
+        return False
+    try:
+        from .restore_preflight import build_restore_preflight_provider_stack
+
+        build_restore_preflight_provider_stack().validated()
+    except Exception:
+        return False
+    return True
+
+
 def restore_async_configuration_ready() -> bool:
     """Require a broker, non-eager delivery, and the exact restore queue."""
 

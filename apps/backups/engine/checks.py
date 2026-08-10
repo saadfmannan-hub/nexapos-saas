@@ -229,6 +229,8 @@ def check_media_capture_policy_settings(app_configs, **kwargs):
 
 @register(Tags.security)
 def check_media_storage_configuration(app_configs, **kwargs):
+    if not availability.provider_environment_checks_required():
+        return []
     try:
         media_root = _validated_media_root()
         _configured_default_storage_location(media_root)
@@ -263,15 +265,7 @@ def check_encryption_policy_settings(app_configs, **kwargs):
 
 @register(Tags.security)
 def check_local_kek_configuration(app_configs, **kwargs):
-    configured_values = (
-        getattr(settings, "BACKUP_LOCAL_KEK_B64", ""),
-        getattr(settings, "BACKUP_LOCAL_KEK_ID", ""),
-        getattr(settings, "BACKUP_LOCAL_KEK_VERSION", ""),
-    )
-    encryption_configured_for_use = bool(
-        availability.engine_setting_enabled() or any(configured_values)
-    )
-    if not encryption_configured_for_use:
+    if not availability.provider_environment_checks_required():
         return []
     try:
         LocalConfiguredKekProvider.from_settings()
@@ -306,6 +300,8 @@ def check_durable_storage_policy_settings(app_configs, **kwargs):
 
 @register(Tags.security)
 def check_durable_storage_root(app_configs, **kwargs):
+    if not availability.provider_environment_checks_required():
+        return []
     try:
         policy = DurableStoragePolicy.from_settings()
         validate_durable_storage_root(
@@ -384,6 +380,8 @@ def check_runtime_provider_stack_configuration(app_configs, **kwargs):
 def check_restore_preflight_configuration(app_configs, **kwargs):
     """Validate restore prerequisites without retrieving or decrypting an object."""
 
+    if not availability.restore_provider_checks_required():
+        return []
     try:
         staging_root = validate_staging_root(
             getattr(settings, "BACKUP_STAGING_ROOT", "")
@@ -399,13 +397,7 @@ def check_restore_preflight_configuration(app_configs, **kwargs):
         )
         if encryption_policy.maximum_artifact_bytes > durable_policy.maximum_object_bytes:
             raise ValueError
-        configured_key_values = (
-            getattr(settings, "BACKUP_LOCAL_KEK_B64", ""),
-            getattr(settings, "BACKUP_LOCAL_KEK_ID", ""),
-            getattr(settings, "BACKUP_LOCAL_KEK_VERSION", ""),
-        )
-        if availability.engine_setting_enabled() or any(configured_key_values):
-            LocalConfiguredKekProvider.from_settings()
+        LocalConfiguredKekProvider.from_settings()
     except Exception:
         return [
             Error(

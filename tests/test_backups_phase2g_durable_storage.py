@@ -418,6 +418,7 @@ class DurableStorageProviderTests(phase2f_tests.EncryptedArtifactProviderTests):
             errors = check_durable_storage_policy_settings(None)
             self.assertEqual([error.id for error in errors], ["backups.E029"])
         with override_settings(
+            BACKUP_EXECUTION_ENGINE_ENABLED=True,
             BACKUP_DURABLE_STORAGE_ROOT=self.staging_root / "inside",
             BACKUP_DURABLE_STORAGE_REQUIRE_LOCAL=False,
             BACKUP_STAGING_ROOT=self.staging_root,

@@ -734,6 +734,7 @@ class EncryptedArtifactProviderTests(phase2e_tests.IndependentPackageVerifierTes
             errors = check_local_kek_configuration(None)
             self.assertEqual([error.id for error in errors], ["backups.E028"])
         with override_settings(
+            BACKUP_EXECUTION_ENGINE_ENABLED=True,
             BACKUP_LOCAL_KEK_B64="invalid",
             BACKUP_LOCAL_KEK_ID="test",
             BACKUP_LOCAL_KEK_VERSION="v1",

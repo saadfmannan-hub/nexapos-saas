@@ -3902,7 +3902,10 @@ class CapabilityAndCheckGuardTests(SimpleTestCase):
             )
             for configuration in unsafe_configurations:
                 with self.subTest(configuration=configuration):
-                    with self.settings(**configuration):
+                    with self.settings(
+                        BACKUP_EXECUTION_ENGINE_ENABLED=True,
+                        **configuration,
+                    ):
                         self.assertEqual(
                             [
                                 error.id

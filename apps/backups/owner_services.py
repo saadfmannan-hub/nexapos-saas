@@ -11,7 +11,11 @@ from django.utils import timezone
 from apps.tenants.models import Business
 
 from . import selectors, services
-from .engine.availability import get_engine_capability, restore_execution_available
+from .engine.availability import (
+    get_engine_capability,
+    restore_execution_available,
+    restore_preflight_configuration_ready,
+)
 from .engine.context import ActorIdentitySnapshot
 from .engine.events import RESTORE_QUEUED
 from .engine.restore_exceptions import RestoreEngineError
@@ -179,6 +183,11 @@ def run_restore_preflight(*, business, backup, actor, reason, request=None):
     if selectors.active_backup_exists(business):
         raise OwnerBackupActionUnavailable(
             "A backup is currently in progress. Wait for it to finish before checking restore readiness."
+        )
+    if not restore_preflight_configuration_ready():
+        raise OwnerBackupActionUnavailable(
+            "Restore readiness is unavailable because secure backup providers are not configured. "
+            "No business data was changed."
         )
 
     restore = services.create_restore_request(
