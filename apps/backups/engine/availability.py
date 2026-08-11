@@ -7,8 +7,8 @@ from django.conf import settings
 from .exceptions import BackupEngineDisabled
 
 # These code capabilities are internal building blocks. They do not permit a
-# commercial workflow to run until production key management/object storage,
-# restore, restart-safe attestation, and operational activation are complete.
+# commercial workflow to run until production infrastructure is attested and a
+# separately approved operational activation opens the final kill switch.
 SQLITE_SNAPSHOT_PROVIDER_READY = True
 TENANT_LOGICAL_EXPORT_PROVIDER_READY = True
 MEDIA_CAPTURE_PROVIDER_READY = True
@@ -39,9 +39,9 @@ INCOMPLETE_PROVIDER_STACK_REASON = (
     "available internally. Guarded restore preflight and tenant restore mutation "
     "with a mandatory protected safety backup and a restart-safe dedicated restore "
     "worker are also code-complete, but restore mutation remains disabled by "
-    "default. Dispatch reconciliation is code-ready, but live provider/worker "
-    "attestation, production process activation, and download authorization "
-    "remain incomplete."
+    "default. Dispatch reconciliation is code-ready. Live provider and process "
+    "evidence has not been approved, so the operational activation kill switch "
+    "remains closed. Backup download is intentionally deferred from v1."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON

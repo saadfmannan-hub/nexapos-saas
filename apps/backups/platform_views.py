@@ -13,6 +13,7 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from apps.tenants.models import Business
 
 from . import platform_selectors, platform_services, selectors
+from .activation_readiness import assess_production_activation_readiness
 from .engine import availability
 from .engine.availability import get_engine_capability
 from .enums import ProductOwner, RestoreStatus
@@ -434,6 +435,7 @@ def operations_health(request):
 
     health = operations_health_snapshot()
     readiness = assess_operational_readiness(attest_providers=False)
+    activation = assess_production_activation_readiness(attest_providers=False)
     engine = get_engine_capability()
     return render(
         request,
@@ -443,6 +445,7 @@ def operations_health(request):
             **_capability_context(request),
             "health": health,
             "readiness": readiness,
+            "activation": activation,
             "backup_engine_state": (
                 "Active"
                 if engine.real_execution_available
