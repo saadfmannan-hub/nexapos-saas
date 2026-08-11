@@ -43,6 +43,7 @@ from apps.backups.tasks import (
     BACKUP_EXECUTION_TASK_NAME,
     BACKUP_QUEUE_NAME,
     BACKUP_SCHEDULER_QUEUE_NAME,
+    RECONCILIATION_TASK_NAME,
     RESTORE_EXECUTION_TASK_NAME,
     RESTORE_QUEUE_NAME,
     SCHEDULE_DISPATCH_TASK_NAME,
@@ -51,6 +52,7 @@ from apps.backups.tasks import (
     check_backup_task_and_schedule_configuration,
     dispatch_due_backup_schedules,
     execute_backup,
+    reconcile_backup_control_plane,
 )
 from apps.subscriptions.models import Plan, Subscription
 from apps.tenants.services import provision_business
@@ -59,6 +61,7 @@ SAFE_ROUTES = {
     BACKUP_EXECUTION_TASK_NAME: {"queue": BACKUP_QUEUE_NAME},
     RESTORE_EXECUTION_TASK_NAME: {"queue": RESTORE_QUEUE_NAME},
     SCHEDULE_DISPATCH_TASK_NAME: {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
+    RECONCILIATION_TASK_NAME: {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
 }
 
 
@@ -157,6 +160,10 @@ class BackupSchedulingTests(TestCase):
         self.assertFalse(execute_backup.acks_late)
         self.assertFalse(execute_backup.reject_on_worker_lost)
         self.assertEqual(execute_backup.max_retries, 3)
+        self.assertEqual(
+            current_app.tasks[RECONCILIATION_TASK_NAME],
+            reconcile_backup_control_plane,
+        )
         self.assertEqual(settings.CELERY_TASK_ROUTES, SAFE_ROUTES)
         self.assertEqual(
             settings.CELERY_BEAT_SCHEDULE["dispatch-due-backup-schedules"]["schedule"],

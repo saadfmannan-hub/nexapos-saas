@@ -16,6 +16,8 @@ from .engine.availability import (
     RESTORE_MUTATION_ENGINE_READY,
     assert_real_execution_available,
     engine_setting_enabled,
+    real_execution_available,
+    restore_execution_available,
     restore_mutation_setting_enabled,
     restore_runtime_configuration_ready,
 )
@@ -28,6 +30,7 @@ VERIFICATION_QUEUE_NAME = "nexa.backup_verification"
 BACKUP_EXECUTION_TASK_NAME = "apps.backups.tasks.execute_backup"
 RESTORE_EXECUTION_TASK_NAME = "apps.backups.tasks.execute_restore"
 SCHEDULE_DISPATCH_TASK_NAME = "apps.backups.tasks.dispatch_due_backup_schedules"
+RECONCILIATION_TASK_NAME = "apps.backups.tasks.reconcile_backup_control_plane"
 
 
 def _configured_route(task_name):
@@ -119,6 +122,9 @@ def check_backup_task_and_schedule_configuration(app_configs, **kwargs):
 
     errors = []
     cadence = getattr(settings, "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS", None)
+    reconciliation_cadence = getattr(
+        settings, "BACKUP_RECONCILIATION_INTERVAL_SECONDS", None
+    )
     soft_limit = getattr(settings, "BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS", None)
     hard_limit = getattr(settings, "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS", None)
     if type(cadence) is not int or not 60 <= cadence <= 3_600:
@@ -127,6 +133,17 @@ def check_backup_task_and_schedule_configuration(app_configs, **kwargs):
                 "The backup schedule dispatcher cadence is invalid.",
                 hint="Use a bounded 60 to 3600 second dispatcher interval.",
                 id="backups.E037",
+            )
+        )
+    if (
+        type(reconciliation_cadence) is not int
+        or not 300 <= reconciliation_cadence <= 900
+    ):
+        errors.append(
+            Error(
+                "The backup reconciliation cadence is invalid.",
+                hint="Use a bounded 300 to 900 second reconciliation interval.",
+                id="backups.E047",
             )
         )
     if (
@@ -155,6 +172,28 @@ def check_backup_task_and_schedule_configuration(app_configs, **kwargs):
             Error(
                 "The fixed backup Beat dispatcher entry is not configured safely.",
                 id="backups.E039",
+            )
+        )
+    reconciliation_entry = (
+        beat.get("reconcile-backup-control-plane") if isinstance(beat, dict) else None
+    )
+    expected_reconciliation_cadence = (
+        float(reconciliation_cadence)
+        if type(reconciliation_cadence) is int
+        else None
+    )
+    if (
+        not isinstance(reconciliation_entry, dict)
+        or reconciliation_entry.get("task") != RECONCILIATION_TASK_NAME
+        or reconciliation_entry.get("schedule") != expected_reconciliation_cadence
+        or not isinstance(reconciliation_entry.get("options"), dict)
+        or reconciliation_entry["options"].get("queue")
+        != BACKUP_SCHEDULER_QUEUE_NAME
+    ):
+        errors.append(
+            Error(
+                "The fixed backup reconciliation Beat entry is not configured safely.",
+                id="backups.E048",
             )
         )
     return errors
@@ -854,13 +893,18 @@ def _enqueue_scheduled_backup(*, backup_public_id, business_public_id):
             "business_public_id": business_public_id,
         },
         queue=BACKUP_QUEUE_NAME,
-        retry=True,
-        retry_policy={
-            "max_retries": 3,
-            "interval_start": 0,
-            "interval_step": 1,
-            "interval_max": 5,
+        retry=False,
+    )
+
+
+def _enqueue_reconciled_restore(*, restore_public_id, business_public_id):
+    execute_restore.apply_async(
+        kwargs={
+            "restore_public_id": str(restore_public_id),
+            "business_public_id": str(business_public_id),
         },
+        queue=RESTORE_QUEUE_NAME,
+        retry=False,
     )
 
 
@@ -889,12 +933,103 @@ def dispatch_due_backup_schedules(self):
     return dispatch_due_schedules(enqueue=_enqueue_scheduled_backup).as_dict()
 
 
+@shared_task(
+    bind=True,
+    name=RECONCILIATION_TASK_NAME,
+    queue=BACKUP_SCHEDULER_QUEUE_NAME,
+    acks_late=False,
+    reject_on_worker_lost=False,
+    soft_time_limit=240,
+    time_limit=270,
+)
+def reconcile_backup_control_plane(self):
+    """Republish eligible queue intents and classify stale rows; execute nothing."""
+
+    if not engine_setting_enabled() and not restore_mutation_setting_enabled():
+        return {"state": "DISABLED"}
+    assert_worker_execution_context(
+        self.request,
+        expected_queue=BACKUP_SCHEDULER_QUEUE_NAME,
+    )
+    from apps.backups import services
+    from apps.backups.engine import events
+    from apps.backups.enums import ActivitySeverity
+    from apps.backups.models import BackupActivity, BackupRecord, RestoreOperation
+    from apps.backups.reconciliation import (
+        reconcile_queued_backup_dispatches,
+        reconcile_queued_restore_dispatches,
+        reconcile_stale_backup_operations,
+    )
+    from apps.backups.restore_execution import reconcile_stale_restore_operations
+
+    backup_dispatch = None
+    if real_execution_available():
+        backup_dispatch = reconcile_queued_backup_dispatches(
+            publisher=_enqueue_scheduled_backup
+        )
+    restore_dispatch = None
+    if restore_execution_available():
+        restore_dispatch = reconcile_queued_restore_dispatches(
+            publisher=_enqueue_reconciled_restore
+        )
+
+    stale_backups = reconcile_stale_backup_operations()
+    for classification in stale_backups:
+        backup = BackupRecord.objects.select_related("business", "created_by").get(
+            public_id=classification.backup_public_id
+        )
+        if not BackupActivity.objects.filter(
+            backup=backup,
+            event_type=events.BACKUP_STALE_DETECTED,
+            structured_metadata__category=classification.category.value,
+        ).exists():
+            services.create_backup_activity(
+                business=backup.business,
+                backup=backup,
+                actor=backup.created_by,
+                event_type=events.BACKUP_STALE_DETECTED,
+                severity=ActivitySeverity.WARNING,
+                sanitized_message="A stale backup operation requires classification review.",
+                structured_metadata={"category": classification.category.value},
+            )
+
+    stale_restores = reconcile_stale_restore_operations()
+    for classification in stale_restores:
+        restore = RestoreOperation.objects.select_related(
+            "business", "source_backup", "requested_by"
+        ).get(public_id=classification.restore_public_id)
+        if not BackupActivity.objects.filter(
+            restore=restore,
+            event_type=events.RESTORE_STALE_DETECTED,
+            structured_metadata__category=classification.category.value,
+        ).exists():
+            services.create_backup_activity(
+                business=restore.business,
+                backup=restore.source_backup,
+                restore=restore,
+                actor=restore.requested_by,
+                event_type=events.RESTORE_STALE_DETECTED,
+                severity=ActivitySeverity.WARNING,
+                sanitized_message="A stale restore operation requires operator review.",
+                structured_metadata={"category": classification.category.value},
+            )
+
+    return {
+        "state": "COMPLETED",
+        "backup_dispatch": backup_dispatch.as_dict() if backup_dispatch else None,
+        "restore_dispatch": restore_dispatch.as_dict() if restore_dispatch else None,
+        "stale_backup_count": len(stale_backups),
+        "stale_restore_count": len(stale_restores),
+    }
+
+
 __all__ = [
     "BACKUP_EXECUTION_TASK_NAME",
     "BACKUP_QUEUE_NAME",
     "BACKUP_SCHEDULER_QUEUE_NAME",
     "RESTORE_EXECUTION_TASK_NAME",
     "RESTORE_QUEUE_NAME",
+    "RECONCILIATION_TASK_NAME",
     "SCHEDULE_DISPATCH_TASK_NAME",
     "assert_safe_async_execution_configuration",
     "assert_safe_restore_async_execution_configuration",
@@ -903,4 +1038,5 @@ __all__ = [
     "dispatch_due_backup_schedules",
     "execute_backup",
     "execute_restore",
+    "reconcile_backup_control_plane",
 ]

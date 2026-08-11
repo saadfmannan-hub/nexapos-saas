@@ -10,7 +10,9 @@ from django.utils import timezone
 
 from apps.tenants.models import Business
 
+from . import dispatch as dispatching
 from . import selectors, services
+from .engine import events
 from .engine.availability import (
     get_engine_capability,
     restore_execution_available,
@@ -85,13 +87,7 @@ def _enqueue_backup(*, backup_public_id, business_public_id):
             "business_public_id": str(business_public_id),
         },
         queue=BACKUP_QUEUE_NAME,
-        retry=True,
-        retry_policy={
-            "max_retries": 3,
-            "interval_start": 0,
-            "interval_step": 1,
-            "interval_max": 5,
-        },
+        retry=False,
     )
 
 
@@ -139,25 +135,13 @@ def request_manual_backup(*, business, actor, scope, request=None):
             sanitized_message="A manual backup was requested by the business owner.",
             structured_metadata={"scope": str(backup.scope)},
         )
+        dispatching.record_backup_dispatch_intent(backup)
 
-    try:
-        _enqueue_backup(
-            backup_public_id=backup.public_id,
-            business_public_id=business.public_id,
-        )
-    except Exception as exc:
-        if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
-            raise
-        if backup.status == BackupStatus.QUEUED:
-            services.transition_backup(
-                backup,
-                BackupStatus.FAILED,
-                failure_code="async_enqueue_unavailable",
-                failure_summary="Backup could not be queued. No backup work was started.",
-            )
+    outcome = dispatching.dispatch_backup(backup=backup, publisher=_enqueue_backup)
+    if not outcome.confirmed:
         raise OwnerBackupActionUnavailable(
-            "Manual backup could not be queued safely. Please try again later."
-        ) from None
+            "Manual backup delivery is delayed. The request remains safely queued for reconciliation."
+        )
     return backup
 
 
@@ -300,13 +284,7 @@ def _enqueue_restore(*, restore_public_id, business_public_id):
             "business_public_id": str(business_public_id),
         },
         queue=RESTORE_QUEUE_NAME,
-        retry=True,
-        retry_policy={
-            "max_retries": 3,
-            "interval_start": 0,
-            "interval_step": 1,
-            "interval_max": 5,
-        },
+        retry=False,
     )
 
 
@@ -335,9 +313,16 @@ def request_restore(*, business, backup, restore, actor, request=None):
             restore=current,
             event_type=RESTORE_QUEUED,
         ).exists()
-        if already_queued and current.failure_code == "pre_mutation_async_enqueue_unavailable":
+        delivery_failed = BackupActivity.objects.filter(
+            restore=current,
+            event_type=events.RESTORE_DISPATCH_FAILED,
+        ).exists() and not BackupActivity.objects.filter(
+            restore=current,
+            event_type=events.RESTORE_DISPATCH_CONFIRMED,
+        ).exists()
+        if already_queued and delivery_failed:
             raise OwnerBackupActionUnavailable(
-                "This restore request was not delivered to the worker. Run restore readiness again before retrying."
+                "Restore delivery is delayed. The safe queued request is awaiting reconciliation."
             )
         if not already_queued:
             if current.status != RestoreStatus.QUEUED:
@@ -361,26 +346,10 @@ def request_restore(*, business, backup, restore, actor, request=None):
             should_enqueue = True
 
     if should_enqueue:
-        try:
-            _enqueue_restore(
-                restore_public_id=current.public_id,
-                business_public_id=business.public_id,
-            )
-        except Exception as exc:
-            if isinstance(exc, (KeyboardInterrupt, SystemExit, GeneratorExit)):
-                raise
-            current.refresh_from_db()
-            if current.status == RestoreStatus.QUEUED:
-                services.transition_restore(
-                    current,
-                    RestoreStatus.FAILED,
-                    failure_code="pre_mutation_async_enqueue_unavailable",
-                    failure_summary=(
-                        "Restore could not be queued. No restore work was started."
-                    ),
-                )
+        outcome = dispatching.dispatch_restore(restore=current, publisher=_enqueue_restore)
+        if not outcome.confirmed:
             raise OwnerBackupActionUnavailable(
-                "Restore could not be queued safely. Please try again later."
-            ) from None
+                "Restore delivery is delayed. The request remains safely queued for reconciliation."
+            )
     current.refresh_from_db()
     return current

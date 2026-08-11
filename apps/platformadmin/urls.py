@@ -37,6 +37,11 @@ urlpatterns = [
         name="backup_operations",
     ),
     path(
+        "backups/health/",
+        backup_views.operations_health,
+        name="backup_health",
+    ),
+    path(
         "backups/business/<uuid:business_public_id>/restores/"
         "<uuid:restore_public_id>/",
         backup_views.restore_status,

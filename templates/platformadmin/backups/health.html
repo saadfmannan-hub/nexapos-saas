@@ -1,0 +1,51 @@
+{% extends "platformadmin/_base.html" %}
+{% block title %}Backup operations health &mdash; {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+  <div>
+    <div class="small text-primary text-uppercase fw-bold">Control-plane observability</div>
+    <h1 class="page-title mb-1">Backup operations health</h1>
+    <div class="small text-secondary">Database-derived queue, stale-operation, lease, and configuration signals. No provider call is made by this page.</div>
+  </div>
+  <div class="btn-group btn-group-sm" role="group" aria-label="Backup administration">
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_list' %}">Backups</a>
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_operations' %}">Operations</a>
+    <a class="btn btn-outline-primary" href="{% url 'platformadmin:backup_activity' %}">Activity</a>
+    <a class="btn btn-primary" href="{% url 'platformadmin:backup_health' %}">Health</a>
+  </div>
+</div>
+
+{% if health.recovery_required_restores %}
+<div class="alert alert-danger" role="alert"><strong>RECOVERY_REQUIRED:</strong> {{ health.recovery_required_restores }} restore operation{{ health.recovery_required_restores|pluralize }} require immediate operator review. Automatic replay is blocked.</div>
+{% endif %}
+{% for alert in health.alerts %}<div class="alert alert-warning py-2 small">{{ alert }}</div>{% endfor %}
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-xl-3"><div class="kpi-card compact"><div class="kpi-label">Backup engine</div><div class="kpi-value kpi-value-sm">{{ backup_engine_state }}</div></div></div>
+  <div class="col-6 col-xl-3"><div class="kpi-card compact"><div class="kpi-label">Restore</div><div class="kpi-value kpi-value-sm">{{ restore_engine_state }}</div></div></div>
+  <div class="col-6 col-xl-3"><div class="kpi-card compact"><div class="kpi-label">KMS</div><div class="kpi-value kpi-value-sm">{% if kms_configured %}Configured{% else %}Not configured{% endif %}</div></div></div>
+  <div class="col-6 col-xl-3"><div class="kpi-card compact"><div class="kpi-label">Durable storage</div><div class="kpi-value kpi-value-sm">{% if storage_configured %}Configured{% else %}Not configured{% endif %}</div></div></div>
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Queued backups</div><div class="kpi-value">{{ health.queued_backups }}</div><div class="small text-secondary">Oldest {{ health.oldest_queued_backup_age_seconds }}s</div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Active backups</div><div class="kpi-value">{{ health.active_backups }}</div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Failed backups</div><div class="kpi-value text-danger">{{ health.failed_backups }}</div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Stale backups</div><div class="kpi-value text-warning">{{ health.stale_backups }}</div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Queued restores</div><div class="kpi-value">{{ health.queued_restores }}</div><div class="small text-secondary">Oldest {{ health.oldest_queued_restore_age_seconds }}s</div></div></div>
+  <div class="col-6 col-xl-2"><div class="kpi-card compact"><div class="kpi-label">Stale restores</div><div class="kpi-value text-warning">{{ health.stale_restores }}</div></div></div>
+</div>
+
+<div class="card mb-3">
+  <div class="card-header">Production readiness</div>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+    <thead><tr><th>Category</th><th>State</th><th>Summary</th></tr></thead>
+    <tbody>{% for check in readiness.checks %}<tr><td>{{ check.category }}</td><td><span class="badge {% if check.state == 'READY' %}text-bg-success{% elif check.state == 'WARNING' %}text-bg-warning{% else %}text-bg-danger{% endif %}">{{ check.state }}</span></td><td class="small">{{ check.summary }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Scheduler evidence</div><div class="card-body small"><div><strong>Last claimed occurrence:</strong> {{ health.last_scheduler_claim|default:"None recorded" }}</div><div><strong>Last successful scheduled backup:</strong> {{ health.last_successful_scheduled_backup|default:"None recorded" }}</div><div class="mt-2 text-secondary">Run exactly one Celery Beat instance. Scheduler and reconciliation tasks share the control queue.</div></div></div></div>
+  <div class="col-lg-6"><div class="card h-100"><div class="card-header">Tenant operation leases</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Kind</th><th>State</th><th>Age</th><th>Operation UUID</th></tr></thead><tbody>{% for lease in health.leases %}<tr><td>{{ lease.operation_kind }}</td><td>{{ lease.state }}</td><td>{{ lease.age_seconds }}s</td><td><code class="small">{{ lease.operation_public_id }}</code></td></tr>{% empty %}<tr><td colspan="4" class="small text-secondary">No active-marked tenant leases.</td></tr>{% endfor %}</tbody></table></div></div></div>
+</div>
+{% endblock %}

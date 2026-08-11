@@ -469,8 +469,14 @@ class BackupPhase3COwnerUITests(BackupPhase1TestCase):
                 scope=BackupScope.POS,
             )
         backup = BackupRecord.objects.for_business(self.business_a).latest("created_at")
-        self.assertEqual(backup.status, BackupStatus.FAILED)
-        self.assertEqual(backup.failure_code, "async_enqueue_unavailable")
+        self.assertEqual(backup.status, BackupStatus.QUEUED)
+        self.assertEqual(backup.failure_code, "")
+        self.assertTrue(
+            BackupActivity.objects.filter(
+                backup=backup,
+                event_type="backup.dispatch_failed",
+            ).exists()
+        )
 
 
 def load_tests(loader, standard_tests, pattern):

@@ -13,10 +13,13 @@ from django.views.decorators.http import require_GET, require_http_methods, requ
 from apps.tenants.models import Business
 
 from . import platform_selectors, platform_services, selectors
+from .engine import availability
 from .engine.availability import get_engine_capability
 from .enums import ProductOwner, RestoreStatus
 from .forms import CreateBackupForm, RestoreConfirmationForm, RestorePreflightForm
 from .models import BackupActivity, RestoreOperation, TenantOperationLock
+from .operational_health import operations_health_snapshot
+from .operational_readiness import assess_operational_readiness
 from .platform_forms import PlatformActivityFilterForm, PlatformBackupFilterForm
 from .platform_permissions import (
     PlatformBackupCapability,
@@ -420,6 +423,44 @@ def operation_list(request):
             "active_locks": active_locks,
             "status_choices": RestoreStatus.choices,
             "querystring": _querystring_without_page(request.GET),
+        },
+    )
+
+
+@platform_backup_capability_required(PlatformBackupCapability.VIEW_METADATA)
+@require_GET
+def operations_health(request):
+    """Render DB-derived health and configuration readiness without provider calls."""
+
+    health = operations_health_snapshot()
+    readiness = assess_operational_readiness(attest_providers=False)
+    engine = get_engine_capability()
+    return render(
+        request,
+        "platformadmin/backups/health.html",
+        {
+            "pa_nav": "backups",
+            **_capability_context(request),
+            "health": health,
+            "readiness": readiness,
+            "backup_engine_state": (
+                "Active"
+                if engine.real_execution_available
+                else "Disabled"
+                if not availability.engine_setting_enabled()
+                else "Ready"
+            ),
+            "restore_engine_state": (
+                "Active"
+                if availability.restore_execution_available()
+                else "Disabled"
+                if not availability.restore_mutation_setting_enabled()
+                else "Ready"
+            ),
+            "kms_configured": availability.production_key_provider_configuration_ready(),
+            "storage_configured": (
+                availability.production_durable_storage_configuration_ready()
+            ),
         },
     )
 

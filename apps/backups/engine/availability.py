@@ -29,6 +29,7 @@ RUNTIME_COMPOSITION_READY = True
 RESTORE_PREFLIGHT_ENGINE_READY = True
 RESTORE_MUTATION_ENGINE_READY = True
 RESTORE_ASYNC_EXECUTION_BOUNDARY_READY = True
+RECONCILIATION_READY = True
 OPERATIONAL_PROVIDER_STACK_READY = False
 INCOMPLETE_PROVIDER_STACK_REASON = (
     "SQLite snapshot, tenant logical export, local media capture, canonical "
@@ -38,8 +39,9 @@ INCOMPLETE_PROVIDER_STACK_REASON = (
     "available internally. Guarded restore preflight and tenant restore mutation "
     "with a mandatory protected safety backup and a restart-safe dedicated restore "
     "worker are also code-complete, but restore mutation remains disabled by "
-    "default. Production activation, reconciliation, worker/beat monitoring, "
-    "and download authorization remain incomplete."
+    "default. Dispatch reconciliation is code-ready, but live provider/worker "
+    "attestation, production process activation, and download authorization "
+    "remain incomplete."
 )
 # Backward-compatible import retained for Phase 2A callers and tests.
 PHASE_2A_DISABLED_REASON = INCOMPLETE_PROVIDER_STACK_REASON
@@ -60,6 +62,7 @@ class BackupEngineCapability:
     runtime_orchestrator_ready: bool
     async_execution_boundary_ready: bool
     schedule_dispatcher_ready: bool
+    reconciliation_ready: bool
     runtime_composition_ready: bool
     restore_preflight_engine_ready: bool
     restore_mutation_engine_ready: bool
@@ -218,6 +221,11 @@ def async_configuration_ready() -> bool:
         if isinstance(routes, dict)
         else None
     )
+    reconciliation_route = (
+        routes.get("apps.backups.tasks.reconcile_backup_control_plane")
+        if isinstance(routes, dict)
+        else None
+    )
     cadence = getattr(settings, "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS", None)
     soft_limit = getattr(settings, "BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS", None)
     hard_limit = getattr(settings, "BACKUP_EXECUTION_TASK_TIME_LIMIT_SECONDS", None)
@@ -226,6 +234,14 @@ def async_configuration_ready() -> bool:
         beat.get("dispatch-due-backup-schedules")
         if isinstance(beat, dict)
         else None
+    )
+    reconciliation_entry = (
+        beat.get("reconcile-backup-control-plane")
+        if isinstance(beat, dict)
+        else None
+    )
+    reconciliation_cadence = getattr(
+        settings, "BACKUP_RECONCILIATION_INTERVAL_SECONDS", None
     )
     return bool(
         getattr(settings, "CELERY_BROKER_URL", "")
@@ -237,6 +253,8 @@ def async_configuration_ready() -> bool:
         and execution_route.get("queue") == "nexa.backups"
         and isinstance(dispatch_route, dict)
         and dispatch_route.get("queue") == "nexa.backup_scheduling"
+        and isinstance(reconciliation_route, dict)
+        and reconciliation_route.get("queue") == "nexa.backup_scheduling"
         and type(cadence) is int
         and 60 <= cadence <= 3_600
         and type(soft_limit) is int
@@ -248,6 +266,15 @@ def async_configuration_ready() -> bool:
         and beat_entry.get("schedule") == float(cadence)
         and isinstance(beat_entry.get("options"), dict)
         and beat_entry["options"].get("queue") == "nexa.backup_scheduling"
+        and type(reconciliation_cadence) is int
+        and 300 <= reconciliation_cadence <= 900
+        and isinstance(reconciliation_entry, dict)
+        and reconciliation_entry.get("task")
+        == "apps.backups.tasks.reconcile_backup_control_plane"
+        and reconciliation_entry.get("schedule") == float(reconciliation_cadence)
+        and isinstance(reconciliation_entry.get("options"), dict)
+        and reconciliation_entry["options"].get("queue")
+        == "nexa.backup_scheduling"
     )
 
 
@@ -328,6 +355,7 @@ def get_engine_capability() -> BackupEngineCapability:
         runtime_orchestrator_ready=RUNTIME_ORCHESTRATOR_READY,
         async_execution_boundary_ready=ASYNC_EXECUTION_BOUNDARY_READY,
         schedule_dispatcher_ready=SCHEDULE_DISPATCHER_READY,
+        reconciliation_ready=RECONCILIATION_READY,
         runtime_composition_ready=RUNTIME_COMPOSITION_READY,
         restore_preflight_engine_ready=RESTORE_PREFLIGHT_ENGINE_READY,
         restore_mutation_engine_ready=RESTORE_MUTATION_ENGINE_READY,

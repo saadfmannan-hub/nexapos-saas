@@ -12,6 +12,7 @@ from django.utils import timezone
 
 from apps.subscriptions.models import Subscription
 
+from . import dispatch as dispatching
 from . import services
 from .engine.events import BACKUP_SCHEDULE_DISPATCHED
 from .enums import BackupScope, BackupStatus, BackupTrigger
@@ -250,34 +251,35 @@ def _claim_due_schedule(*, schedule_id, now, enqueue):
             business_public_id=str(schedule.business.public_id),
         )
 
-    backup_public_id = str(backup.public_id)
-    business_public_id = str(schedule.business.public_id)
+    dispatching.record_backup_dispatch_intent(backup)
 
     def publish():
-        try:
-            enqueue(
-                backup_public_id=backup_public_id,
-                business_public_id=business_public_id,
-            )
-        except Exception:
-            raise ScheduleDispatchError() from None
+        def publish_public_ids(**identifiers):
+            enqueue(**{key: str(value) for key, value in identifiers.items()})
+
+        outcome = dispatching.dispatch_backup(
+            backup=backup,
+            publisher=publish_public_ids,
+        )
+        if not outcome.confirmed:
+            return
+        services.create_backup_activity(
+            business=schedule.business,
+            backup=backup,
+            event_type=BACKUP_SCHEDULE_DISPATCHED,
+            sanitized_message="A due daily backup occurrence was accepted by its broker.",
+            structured_metadata={
+                "scheduled_local_date": local_date.isoformat(),
+                "trigger": BackupTrigger.SCHEDULED,
+                "system_actor": True,
+            },
+        )
 
     transaction.on_commit(publish)
-    services.create_backup_activity(
-        business=schedule.business,
-        backup=backup,
-        event_type=BACKUP_SCHEDULE_DISPATCHED,
-        sanitized_message="A due daily backup occurrence was queued for its worker.",
-        structured_metadata={
-            "scheduled_local_date": local_date.isoformat(),
-            "trigger": BackupTrigger.SCHEDULED,
-            "system_actor": True,
-        },
-    )
     return ScheduleClaimResult(
         ScheduleClaimState.DISPATCHED,
-        backup_public_id=backup_public_id,
-        business_public_id=business_public_id,
+        backup_public_id=str(backup.public_id),
+        business_public_id=str(schedule.business.public_id),
     )
 
 

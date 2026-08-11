@@ -288,6 +288,38 @@ BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS = env.int(
     "BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS",
     default=300,
 )
+BACKUP_RECONCILIATION_INTERVAL_SECONDS = env.int(
+    "BACKUP_RECONCILIATION_INTERVAL_SECONDS",
+    default=600,
+)
+BACKUP_DISPATCH_RECONCILE_AFTER_SECONDS = env.int(
+    "BACKUP_DISPATCH_RECONCILE_AFTER_SECONDS",
+    default=300,
+)
+BACKUP_DISPATCH_MAX_IMMEDIATE_ATTEMPTS = env.int(
+    "BACKUP_DISPATCH_MAX_IMMEDIATE_ATTEMPTS",
+    default=3,
+)
+BACKUP_DISPATCH_MAX_TOTAL_ATTEMPTS = env.int(
+    "BACKUP_DISPATCH_MAX_TOTAL_ATTEMPTS",
+    default=12,
+)
+BACKUP_QUEUED_AGE_WARNING_SECONDS = env.int(
+    "BACKUP_QUEUED_AGE_WARNING_SECONDS",
+    default=900,
+)
+BACKUP_RESTORE_QUEUED_AGE_WARNING_SECONDS = env.int(
+    "BACKUP_RESTORE_QUEUED_AGE_WARNING_SECONDS",
+    default=900,
+)
+BACKUP_FAILED_COUNT_WARNING = env.int(
+    "BACKUP_FAILED_COUNT_WARNING",
+    default=1,
+)
+BACKUP_STALE_OPERATION_SECONDS = env.int(
+    "BACKUP_STALE_OPERATION_SECONDS",
+    default=21_600,
+)
 BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS = env.int(
     "BACKUP_EXECUTION_TASK_SOFT_TIME_LIMIT_SECONDS",
     default=21_600,
@@ -310,11 +342,19 @@ CELERY_TASK_ROUTES = {
     "apps.backups.tasks.dispatch_due_backup_schedules": {
         "queue": BACKUP_SCHEDULER_QUEUE_NAME,
     },
+    "apps.backups.tasks.reconcile_backup_control_plane": {
+        "queue": BACKUP_SCHEDULER_QUEUE_NAME,
+    },
 }
 CELERY_BEAT_SCHEDULE = {
     "dispatch-due-backup-schedules": {
         "task": "apps.backups.tasks.dispatch_due_backup_schedules",
         "schedule": float(BACKUP_SCHEDULE_DISPATCH_INTERVAL_SECONDS),
+        "options": {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
+    },
+    "reconcile-backup-control-plane": {
+        "task": "apps.backups.tasks.reconcile_backup_control_plane",
+        "schedule": float(BACKUP_RECONCILIATION_INTERVAL_SECONDS),
         "options": {"queue": BACKUP_SCHEDULER_QUEUE_NAME},
     },
 }
