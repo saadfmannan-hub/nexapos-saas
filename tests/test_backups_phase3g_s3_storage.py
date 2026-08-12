@@ -78,6 +78,8 @@ _S3_SETTINGS = {
     "BACKUP_S3_BUCKET": "nexa-backups-test",
     "BACKUP_S3_REGION": "nyc3",
     "BACKUP_S3_ENDPOINT_URL": "https://nyc3.digitaloceanspaces.com",
+    "BACKUP_S3_ACCESS_KEY_ID": "spaces-test-access-id",
+    "BACKUP_S3_SECRET_ACCESS_KEY": "spaces-test-secret-key",
     "BACKUP_S3_PREFIX": "nexa/backups",
     "BACKUP_S3_ADDRESSING_STYLE": "virtual",
     "BACKUP_S3_MULTIPART_THRESHOLD_BYTES": 8 * 1024**2,
@@ -253,6 +255,8 @@ class Phase3GS3StorageTests(SimpleTestCase):
             bucket="nexa-backups-test",
             region="nyc3",
             endpoint_url="https://nyc3.digitaloceanspaces.com",
+            access_key_id="spaces-test-access-id",
+            secret_access_key="spaces-test-secret-key",
             prefix="nexa/backups",
             addressing_style="virtual",
             multipart_threshold_bytes=8 * 1024**2,
@@ -353,7 +357,7 @@ class Phase3GS3StorageTests(SimpleTestCase):
             with self.subTest(change=change), self.assertRaises(DurableStoragePolicyError):
                 replace(self.configuration, **change).validated()
 
-    def test_client_is_lazy_and_uses_bounded_sdk_configuration_without_credentials(self):
+    def test_client_is_lazy_and_uses_dedicated_credentials_with_bounded_sdk_config(self):
         with mock.patch("apps.backups.engine.s3_storage.boto3.client") as factory:
             factory.return_value = self.client
             provider = S3CompatibleDurableStorageProvider(
@@ -363,8 +367,8 @@ class Phase3GS3StorageTests(SimpleTestCase):
             self.assertFalse(provider.client_created)
             provider.health_attestation()
         kwargs = factory.call_args.kwargs
-        self.assertNotIn("aws_access_key_id", kwargs)
-        self.assertNotIn("aws_secret_access_key", kwargs)
+        self.assertEqual(kwargs["aws_access_key_id"], "spaces-test-access-id")
+        self.assertEqual(kwargs["aws_secret_access_key"], "spaces-test-secret-key")
         self.assertEqual(kwargs["config"].retries["total_max_attempts"], S3_MAX_ATTEMPTS)
         self.assertEqual(kwargs["config"].s3["addressing_style"], "virtual")
 
@@ -744,6 +748,8 @@ class Phase3GS3StorageTests(SimpleTestCase):
         BACKUP_S3_BUCKET="",
         BACKUP_S3_REGION="",
         BACKUP_S3_ENDPOINT_URL="",
+        BACKUP_S3_ACCESS_KEY_ID="",
+        BACKUP_S3_SECRET_ACCESS_KEY="",
     )
     def test_disabled_engine_with_missing_s3_configuration_is_deployment_safe(self):
         self.assertEqual(check_storage_provider_configuration(None), [])
@@ -760,6 +766,8 @@ class Phase3GS3StorageTests(SimpleTestCase):
         BACKUP_S3_BUCKET="",
         BACKUP_S3_REGION="",
         BACKUP_S3_ENDPOINT_URL="",
+        BACKUP_S3_ACCESS_KEY_ID="",
+        BACKUP_S3_SECRET_ACCESS_KEY="",
     )
     def test_enabled_engine_with_unsafe_s3_configuration_fails_strict_check(self):
         self.assertEqual(

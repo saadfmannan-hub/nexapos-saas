@@ -169,6 +169,8 @@ class BackupPhase3ERestoreWorkerTests(BackupPhase1TestCase):
             BACKUP_S3_BUCKET="nexa-backups-test",
             BACKUP_S3_REGION="us-east-1",
             BACKUP_S3_ENDPOINT_URL="https://us-east-1.digitaloceanspaces.com",
+            BACKUP_S3_ACCESS_KEY_ID="spaces-test-access-id",
+            BACKUP_S3_SECRET_ACCESS_KEY="spaces-test-secret-key",
             BACKUP_S3_PREFIX="nexa/backups",
             BACKUP_S3_ADDRESSING_STYLE="virtual",
             CELERY_BROKER_URL="redis://broker.example/1",

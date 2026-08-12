@@ -336,7 +336,8 @@ def check_storage_provider_configuration(app_configs, **kwargs):
                 exc.sanitized_message,
                 hint=(
                     "Select local for development or configure a private S3 bucket, "
-                    "region, HTTPS endpoint, safe prefix, and bounded transfer policy."
+                    "region, HTTPS endpoint, dedicated credentials, safe prefix, "
+                    "and bounded transfer policy."
                 ),
                 id="backups.E048",
             )

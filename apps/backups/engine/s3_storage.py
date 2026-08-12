@@ -6,7 +6,7 @@ import hashlib
 import re
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
@@ -131,11 +131,25 @@ def _endpoint(value):
     return candidate.rstrip("/")
 
 
+def _credential(value, *, maximum):
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > maximum
+        or value != value.strip()
+        or any(character.isspace() or character == "\x00" for character in value)
+    ):
+        raise DurableStoragePolicyError()
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class S3StorageConfiguration:
     bucket: str
     region: str
     endpoint_url: str
+    access_key_id: str = field(repr=False)
+    secret_access_key: str = field(repr=False)
     prefix: str
     addressing_style: str
     multipart_threshold_bytes: int
@@ -152,6 +166,8 @@ class S3StorageConfiguration:
                 bucket=settings.BACKUP_S3_BUCKET,
                 region=settings.BACKUP_S3_REGION,
                 endpoint_url=settings.BACKUP_S3_ENDPOINT_URL,
+                access_key_id=settings.BACKUP_S3_ACCESS_KEY_ID,
+                secret_access_key=settings.BACKUP_S3_SECRET_ACCESS_KEY,
                 prefix=settings.BACKUP_S3_PREFIX,
                 addressing_style=settings.BACKUP_S3_ADDRESSING_STYLE,
                 multipart_threshold_bytes=settings.BACKUP_S3_MULTIPART_THRESHOLD_BYTES,
@@ -177,6 +193,8 @@ class S3StorageConfiguration:
         ):
             raise DurableStoragePolicyError()
         endpoint_url = _endpoint(self.endpoint_url)
+        access_key_id = _credential(self.access_key_id, maximum=255)
+        secret_access_key = _credential(self.secret_access_key, maximum=1024)
         prefix = normalize_s3_prefix(self.prefix)
         if self.addressing_style not in {"auto", "path", "virtual"}:
             raise DurableStoragePolicyError()
@@ -205,6 +223,8 @@ class S3StorageConfiguration:
             bucket=bucket,
             region=region,
             endpoint_url=endpoint_url,
+            access_key_id=access_key_id,
+            secret_access_key=secret_access_key,
             prefix=prefix,
             addressing_style=self.addressing_style,
             multipart_threshold_bytes=self.multipart_threshold_bytes,
@@ -341,6 +361,8 @@ class S3CompatibleDurableStorageProvider(DurableBackupStorageProvider):
             "s3",
             region_name=config.region,
             endpoint_url=config.endpoint_url,
+            aws_access_key_id=config.access_key_id,
+            aws_secret_access_key=config.secret_access_key,
             config=Config(
                 connect_timeout=config.connect_timeout_seconds,
                 read_timeout=config.read_timeout_seconds,

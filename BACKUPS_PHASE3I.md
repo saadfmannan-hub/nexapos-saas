@@ -95,10 +95,19 @@ These are operational blockers, not missing schema. No migration is required.
 ## 3. Canonical production environment contract
 
 Never commit real secrets. Store them in `/etc/nexapos/nexapos.env` with owner
-read access only, or in an equivalent managed secret facility. Prefer a workload
-identity/instance role where supported. If access keys are required, inject
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and optional `AWS_SESSION_TOKEN`
-at runtime; never render or log them.
+read access only, or in an equivalent managed secret facility. KMS and Spaces
+use independent credentials and must never share or copy credentials:
+
+```text
+AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / optional AWS_SESSION_TOKEN
+    -> standard AWS/boto3 credential chain -> AWS KMS only
+
+BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY
+    -> explicit S3 client credentials -> DigitalOcean Spaces only
+```
+
+The Spaces client does not fall back to the standard AWS credential chain. Never
+render, log, persist, or include either credential domain in readiness evidence.
 
 ### Django and security
 
@@ -146,6 +155,9 @@ Do not activate backup execution against a PostgreSQL `DATABASE_URL`.
 | `BACKUP_KEY_PROVIDER` | `aws_kms`. |
 | `BACKUP_AWS_KMS_KEY_ID` | Key ARN, key ID, or controlled alias; never a credential. |
 | `BACKUP_AWS_REGION` | Region containing that key. |
+| `AWS_ACCESS_KEY_ID` | AWS IAM access-key ID supplied through the standard boto3 credential chain. |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM secret supplied only through the protected runtime environment. |
+| `AWS_SESSION_TOKEN` | Optional standard AWS session token for temporary IAM credentials. |
 
 The development-only `BACKUP_LOCAL_KEK_B64`, `BACKUP_LOCAL_KEK_ID`, and
 `BACKUP_LOCAL_KEK_VERSION` must not be used for production activation.
@@ -158,6 +170,8 @@ The development-only `BACKUP_LOCAL_KEK_B64`, `BACKUP_LOCAL_KEK_ID`, and
 | `BACKUP_S3_BUCKET` | Dedicated private bucket name. |
 | `BACKUP_S3_REGION` | Spaces region, for example `fra1`; choose the actual bucket region. |
 | `BACKUP_S3_ENDPOINT_URL` | Regional HTTPS endpoint, for example `https://fra1.digitaloceanspaces.com`. |
+| `BACKUP_S3_ACCESS_KEY_ID` | Dedicated DigitalOcean Spaces access-key ID; never an AWS IAM credential. |
+| `BACKUP_S3_SECRET_ACCESS_KEY` | Dedicated DigitalOcean Spaces secret; injected securely and never committed. |
 | `BACKUP_S3_PREFIX` | Dedicated prefix, normally `nexa/backups`. |
 | `BACKUP_S3_ADDRESSING_STYLE` | `auto`, unless provider testing requires `path` or `virtual`. |
 | `BACKUP_S3_MULTIPART_THRESHOLD_BYTES` | `67108864`. |
@@ -374,6 +388,9 @@ hardening against the need to read the SQLite database/media and write staging.
 ## 7. AWS KMS operational prerequisites
 
 - Create a symmetric encrypt/decrypt KMS key in `BACKUP_AWS_REGION`.
+- Supply its AWS IAM runtime identity through the standard boto3/AWS credential
+  chain. Do not place DigitalOcean credentials in `AWS_ACCESS_KEY_ID` or
+  `AWS_SECRET_ACCESS_KEY`, and do not use `BACKUP_S3_*` for KMS.
 - Confirm the key is enabled and not pending deletion or disabled.
 - Grant the runtime identity only `kms:Encrypt`, `kms:Decrypt`, and
   `kms:DescribeKey` for the selected key.
@@ -392,8 +409,10 @@ hardening against the need to read the SQLite database/media and write staging.
 - Use the exact regional HTTPS endpoint and the matching region.
 - Use a least-privilege key/policy permitting the required bucket/object checks,
   get/put/multipart operations, and exact-version deletion for the backup prefix.
-- Store credentials only in the deployment secret system or protected
-  environment file.
+- Store the bucket-scoped credentials only as `BACKUP_S3_ACCESS_KEY_ID` and
+  `BACKUP_S3_SECRET_ACCESS_KEY` in the deployment secret system or protected
+  environment file. These are explicitly passed only to the Spaces S3 client;
+  never copy AWS IAM/KMS credentials into them.
 - Enable bucket versioning before UAT. DigitalOcean currently supports S3
   versioning through its API and exposes status in the control panel. Once
   versioning has been enabled it may be suspended but the bucket does not return
@@ -674,8 +693,8 @@ Before customer-facing backup execution, retain an approved evidence bundle:
 - exact deployed commit and dependency lock;
 - migrations/check output and sanitized readiness JSON;
 - KMS key status/region/policy/identity attestation;
-- private Spaces bucket, versioning, lifecycle, region, endpoint, and access-policy
-  attestation;
+- private Spaces bucket, versioning, lifecycle, region, endpoint, bucket-scoped
+  identity, and proof of credential isolation from AWS IAM/KMS;
 - staging/SQLite path ownership, permissions, mount, WAL/FULL, and capacity evidence;
 - Redis security/persistence/monitoring evidence;
 - systemd status for isolated workers and exactly one Beat owner;

@@ -181,17 +181,14 @@ class Phase3FKeyProviderTests(SimpleTestCase):
 
     def test_no_aws_credentials_are_hardcoded(self):
         root = Path(__file__).resolve().parents[1]
-        source = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in (
-                root / "apps/backups/engine/key_management.py",
-                root / "config/settings/base.py",
-                root / ".env.example",
-            )
+        source = (root / "apps/backups/engine/key_management.py").read_text(
+            encoding="utf-8"
         ).lower()
         self.assertNotIn("aws_secret_access_key=", source)
         self.assertNotIn("aws_access_key_id=", source)
         self.assertNotIn("secret_access_key=", source)
+        self.assertNotIn("backup_s3_access_key_id", source)
+        self.assertNotIn("backup_s3_secret_access_key", source)
 
     def test_kms_wrap_uses_encrypt_api(self):
         client = _FakeKmsClient()

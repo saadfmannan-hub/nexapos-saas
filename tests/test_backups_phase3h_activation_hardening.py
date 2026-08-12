@@ -73,6 +73,8 @@ PRODUCTION_SETTINGS = {
     "BACKUP_S3_BUCKET": "nexa-backups-test",
     "BACKUP_S3_REGION": "nyc3",
     "BACKUP_S3_ENDPOINT_URL": "https://nyc3.digitaloceanspaces.com",
+    "BACKUP_S3_ACCESS_KEY_ID": "spaces-test-access-id",
+    "BACKUP_S3_SECRET_ACCESS_KEY": "spaces-test-secret-key",
     "BACKUP_S3_PREFIX": "nexa/backups",
     "CELERY_BROKER_URL": "redis://broker.example/1",
     "CELERY_TASK_ALWAYS_EAGER": False,

@@ -51,6 +51,8 @@ def _production_settings(staging_root):
         "BACKUP_S3_BUCKET": "nexa-backups-uat",
         "BACKUP_S3_REGION": "fra1",
         "BACKUP_S3_ENDPOINT_URL": "https://fra1.digitaloceanspaces.com",
+        "BACKUP_S3_ACCESS_KEY_ID": "spaces-uat-access-id",
+        "BACKUP_S3_SECRET_ACCESS_KEY": "spaces-uat-secret-key",
         "BACKUP_S3_PREFIX": "nexa/backups",
         "CELERY_BROKER_URL": "rediss://broker.example/1",
         "CELERY_TASK_ALWAYS_EAGER": False,
