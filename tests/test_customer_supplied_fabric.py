@@ -1219,5 +1219,7 @@ class CustomerSuppliedFabricTests(TenantTestCase):
             _job_card_context(sale, request, [item], sale_item=item),
         )
         self.assertIn("Customer Fabric", job_card)
+        self.assertIn("No fabric consumption", job_card)
+        self.assertNotIn("No Shumukh fabric consumption", job_card)
         self.assertNotIn("Legacy Fabric Record", job_card)
         self.assertNotIn("POS-entered fabric consumption", job_card)

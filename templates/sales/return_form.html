@@ -26,7 +26,7 @@
                      name="qty_{{ item.pk }}" class="form-control form-control-sm text-end"></td>
           <td class="text-center">
             {% if item.customer_supplied_fabric %}
-              <span class="small text-secondary" title="Customer-owned fabric is never added to Shumukh inventory">Not applicable</span>
+              <span class="small text-secondary" title="Customer-owned fabric is never added to business inventory">Not applicable</span>
             {% else %}
               <input type="checkbox" name="restock_{{ item.pk }}" class="form-check-input" checked>
             {% endif %}
