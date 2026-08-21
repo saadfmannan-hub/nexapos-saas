@@ -4,6 +4,7 @@ complete_sale() is the single transactional entry point that turns a
 validated cart into an immutable Sale with items, payments, stock
 movements, customer balance changes and an invoice number.
 """
+from copy import deepcopy
 from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
@@ -17,6 +18,7 @@ from apps.core.date_ranges import business_localdate
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
 from apps.inventory import services as inventory
+from apps.inventory.models import StockLevel
 from apps.subscriptions import services as subscriptions
 from apps.subscriptions.access import AccessAction, require_actor_access
 
@@ -64,6 +66,17 @@ class SaleError(Exception):
     def __init__(self, message, *, errors=None):
         super().__init__(message)
         self.errors = errors or {}
+
+
+def _clean_customer_supplied_fabric(value, *, field_prefix):
+    """Accept only a real JSON/Python boolean; missing/null remains False."""
+    if value is None:
+        return False
+    if type(value) is bool:
+        return value
+    field = f"{field_prefix}.customer_supplied_fabric"
+    message = "Customer Fabric must be true or false."
+    raise SaleError(message, errors={field: message})
 
 
 def _require_pos_write(
@@ -398,19 +411,48 @@ def hold_sale(
         raise SaleError("Invalid branch.")
     if not isinstance(cart, dict):
         raise SaleError("Invalid cart.")
-    cart_items = cart.get("items", [])
+    normalized_cart = deepcopy(cart)
+    cart_items = normalized_cart.get("items", [])
+    validation_items = cart_items if isinstance(cart_items, list) else []
     product_ids = {
         line.get("product_id")
-        for line in cart_items
+        for line in validation_items
         if isinstance(line, dict) and line.get("product_id")
     }
-    has_tailoring_product = Product.objects.for_business(business).filter(
-        pk__in=product_ids,
-        is_tailoring_item=True,
-    ).exists()
+    products = {
+        str(product.pk): product
+        for product in Product.objects.for_business(business)
+        .filter(pk__in=product_ids)
+        .select_related("unit")
+    }
+    for index, line in enumerate(validation_items):
+        if not isinstance(line, dict):
+            continue
+        customer_supplied_fabric = _clean_customer_supplied_fabric(
+            line.get("customer_supplied_fabric"),
+            field_prefix=f"items.{index}",
+        )
+        line["customer_supplied_fabric"] = customer_supplied_fabric
+        if customer_supplied_fabric:
+            product = products.get(str(line.get("product_id")))
+            if product is None or not (
+                product.is_meter_tailoring or product.is_legacy_tailoring
+            ):
+                message = (
+                    "Customer Fabric can only be used with a tailoring garment."
+                )
+                raise SaleError(message, errors={f"items.{index}": message})
+            # Held carts are server-side state too. Do not retain a forged or
+            # stale Shumukh-inventory meter for customer-owned material.
+            line["fabric_meter_used"] = None
+    has_tailoring_product = any(
+        product.is_tailoring_item for product in products.values()
+    )
     has_tailoring_metadata = bool(
-        cart.get("delivery_date")
-        or str(cart.get("priority") or Sale.Priority.NORMAL).strip().lower()
+        normalized_cart.get("delivery_date")
+        or str(
+            normalized_cart.get("priority") or Sale.Priority.NORMAL
+        ).strip().lower()
         != Sale.Priority.NORMAL
     )
     if has_tailoring_product or has_tailoring_metadata:
@@ -426,7 +468,7 @@ def hold_sale(
         branch=branch,
         cashier=cashier,
         label=str(label or "")[:120],
-        cart=cart,
+        cart=normalized_cart,
     )
 
 
@@ -890,6 +932,11 @@ def complete_sale(
         .filter(pk__in=variant_ids, business=business)
         .order_by("pk")
     }
+    stock_assigned_product_ids = set(
+        StockLevel.objects.for_business(business)
+        .filter(product_id__in=product_ids)
+        .values_list("product_id", flat=True)
+    )
     if any(product.is_tailoring_item for product in locked_products.values()):
         _require_tailoring_write(
             business=business,
@@ -941,18 +988,37 @@ def complete_sale(
             or not variant.is_active
         ):
             raise SaleError("Invalid variant in cart.")
-        if not catalog_services.product_is_visible_in_branch(
+        field_prefix = f"items.{index}"
+        customer_supplied_fabric = _clean_customer_supplied_fabric(
+            line.get("customer_supplied_fabric"),
+            field_prefix=field_prefix,
+        )
+        meter_key_present = "fabric_meter_used" in line
+        is_meter_tailoring = product.is_meter_tailoring
+        is_legacy_tailoring = bool(
+            product.is_legacy_tailoring
+            and (customer_supplied_fabric or not meter_key_present)
+        )
+        if customer_supplied_fabric and not (
+            is_meter_tailoring or is_legacy_tailoring
+        ):
+            message = "Customer Fabric can only be used with a tailoring garment."
+            raise SaleError(message, errors={field_prefix: message})
+        product_visible = catalog_services.product_is_visible_in_branch(
             business=business,
             product=product,
             variant=variant,
             branch=branch,
-        ):
-            raise SaleError("Invalid product in cart.")
-        is_meter_tailoring = bool(
-            product.is_tailoring_item
-            and product.unit_id is not None
-            and product.unit.is_meter
         )
+        # Customer-owned material may use a completely unassigned tailoring
+        # catalog entry, but it must not turn a product assigned exclusively
+        # to another sales branch into a cross-branch sale item.
+        customer_product_is_unassigned = (
+            customer_supplied_fabric
+            and product.pk not in stock_assigned_product_ids
+        )
+        if not product_visible and not customer_product_is_unassigned:
+            raise SaleError("Invalid product in cart.")
         qty = D(line["quantity"])
         if qty <= 0:
             raise SaleError("Quantity must be positive.")
@@ -969,7 +1035,6 @@ def complete_sale(
         discount = money(line.get("discount_amount", ZERO))
         if discount > 0 and (is_meter_tailoring or not product.allow_discount):
             raise SaleError(f"Discounts are not allowed on {product.name}.")
-        field_prefix = f"items.{index}"
         if product.unit_id is not None and product.unit.business_id != business.id:
             raise SaleError("Invalid product unit in cart.")
         tailoring_details = _clean_tailoring_details(
@@ -983,19 +1048,17 @@ def complete_sale(
         collection_type = str(raw_collection_type or "").strip().lower()
         estimated_fabric = None
         fabric_meter_used = None
-        meter_key_present = "fabric_meter_used" in line
-        is_legacy_tailoring = bool(
-            product.is_tailoring_item
-            and product.unit_id is None
-            and not meter_key_present
-        )
 
         if is_meter_tailoring:
             has_tailoring_items = True
-            if not product.is_stocked:
+            if not customer_supplied_fabric and not product.is_stocked:
                 message = f"{product.name} must track inventory before it can be sold."
                 raise SaleError(message, errors={field_prefix: message})
-            if product.has_variants and variant is None:
+            if (
+                not customer_supplied_fabric
+                and product.has_variants
+                and variant is None
+            ):
                 message = f"Select a fabric color for {product.name}."
                 raise SaleError(
                     message,
@@ -1007,10 +1070,11 @@ def complete_sale(
                     message,
                     errors={f"{field_prefix}.quantity": message},
                 )
-            fabric_meter_used = _clean_fabric_meter(
-                line.get("fabric_meter_used"),
-                field_prefix=field_prefix,
-            )
+            if not customer_supplied_fabric:
+                fabric_meter_used = _clean_fabric_meter(
+                    line.get("fabric_meter_used"),
+                    field_prefix=field_prefix,
+                )
             if classification not in dict(SaleItem.GarmentClassification.choices):
                 message = "Select Adult or Child for every garment."
                 raise SaleError(
@@ -1032,7 +1096,9 @@ def complete_sale(
                     errors={f"{field_prefix}.garment_classification": message},
                 )
             # Calls made before collection types existed omitted the key entirely.
-            if raw_collection_type is None:
+            # The new Customer Fabric workflow has no such legacy compatibility
+            # case and therefore always requires an explicit operational choice.
+            if raw_collection_type is None and not customer_supplied_fabric:
                 collection_type = SaleItem.CollectionType.NORMAL
             if collection_type not in dict(SaleItem.CollectionType.choices):
                 message = "Select Normal or Premium for every garment."
@@ -1040,12 +1106,13 @@ def complete_sale(
                     message,
                     errors={f"{field_prefix}.collection_type": message},
                 )
-            estimated_fabric = _fabric_estimate(
-                product,
-                classification,
-                qty,
-                field_prefix=field_prefix,
-            )
+            if not customer_supplied_fabric:
+                estimated_fabric = _fabric_estimate(
+                    product,
+                    classification,
+                    qty,
+                    field_prefix=field_prefix,
+                )
         elif product.is_tailoring_item and product.unit_id is None and meter_key_present:
             message = f"Select the Meter unit for {product.name} before entering Meter."
             raise SaleError(
@@ -1065,6 +1132,7 @@ def complete_sale(
             "collection_type": collection_type,
             "estimated_fabric": estimated_fabric,
             "fabric_meter_used": fabric_meter_used,
+            "customer_supplied_fabric": customer_supplied_fabric,
             "tailoring_details": tailoring_details,
         })
 
@@ -1228,17 +1296,23 @@ def complete_sale(
     total_cost = ZERO
     for line, parts in totals["lines"]:
         product, variant = line["product"], line.get("variant")
-        stock_warehouse = inventory.stock_warehouse_for_sale_product(
-            business=business,
-            sale_warehouse=warehouse,
-            product=product,
-        )
-        unit_cost = money(_resolve_cost(product, variant))
-        inventory_quantity = (
-            line["fabric_meter_used"]
-            if line.get("fabric_meter_used") is not None
-            else parts["quantity"]
-        )
+        customer_supplied_fabric = line["customer_supplied_fabric"]
+        if customer_supplied_fabric:
+            stock_warehouse = None
+            unit_cost = ZERO
+            inventory_quantity = ZERO
+        else:
+            stock_warehouse = inventory.stock_warehouse_for_sale_product(
+                business=business,
+                sale_warehouse=warehouse,
+                product=product,
+            )
+            unit_cost = money(_resolve_cost(product, variant))
+            inventory_quantity = (
+                line["fabric_meter_used"]
+                if line.get("fabric_meter_used") is not None
+                else parts["quantity"]
+            )
         line_cost = money(unit_cost * inventory_quantity)
         total_cost += line_cost
         SaleItem.objects.create(
@@ -1261,9 +1335,10 @@ def complete_sale(
             collection_type=line.get("collection_type", ""),
             estimated_fabric=line.get("estimated_fabric"),
             fabric_meter_used=line.get("fabric_meter_used"),
+            customer_supplied_fabric=customer_supplied_fabric,
             tailoring_details=line.get("tailoring_details", {}),
         )
-        if product.is_stocked:
+        if product.is_stocked and not customer_supplied_fabric:
             inventory.record_movement(
                 business=business,
                 warehouse=stock_warehouse,
@@ -1588,6 +1663,8 @@ def void_sale(*, sale, user, reason, membership=None, request=None):
         .order_by("pk")
     )
     for item in items:
+        if item.customer_supplied_fabric:
+            continue
         deducted_meter = item.fabric_meter_used is not None
         if deducted_meter or item.product.is_stocked:
             inventory.record_movement(
@@ -1765,8 +1842,19 @@ def process_return(
         # Refund proportionally: line_total includes tax minus discounts
         per_unit = money(item.line_total / item.quantity) if item.quantity else ZERO
         line_refund = money(per_unit * qty)
-        do_restock = restock and entry.get("restock", True)
-        if item.fabric_meter_used is not None:
+        do_restock = bool(
+            not item.customer_supplied_fabric
+            and restock
+            and entry.get("restock", True)
+        )
+        is_meter_garment = bool(
+            item.fabric_meter_used is not None
+            or (
+                item.customer_supplied_fabric
+                and item.product.is_meter_tailoring
+            )
+        )
+        if is_meter_garment:
             if qty != item.quantity:
                 raise SaleError(
                     "A meter tailoring garment must be fully returned to "
@@ -1788,7 +1876,11 @@ def process_return(
         item.save(update_fields=["returned_quantity"])
         refund_total += line_refund
         deducted_meter = item.fabric_meter_used is not None
-        if do_restock and (deducted_meter or item.product.is_stocked):
+        if (
+            not item.customer_supplied_fabric
+            and do_restock
+            and (deducted_meter or item.product.is_stocked)
+        ):
             restore_quantity = item.fabric_meter_used if deducted_meter else qty
             inventory.record_movement(
                 business=business,

@@ -60,6 +60,7 @@
 {% if show_tailoring and item.is_tailoring_line %}
 <div class="xs">G: {{ item.garment_classification_label }}</div>
 <div class="xs">Collection: {{ item.collection_type_label }}</div>
+{% if item.customer_supplied_fabric %}<div class="xs b">Customer Fabric</div>{% endif %}
 {% endif %}
 {% if item.sku %}<div class="xs">SKU {{ item.sku|truncatechars:22 }}</div>{% endif %}
 <table><tr>

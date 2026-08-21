@@ -123,6 +123,7 @@ class CustomerSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
 
 
 class SaleItemSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
+    customer_supplied_fabric = serializers.BooleanField(read_only=True)
     fabric_meter_used = serializers.DecimalField(
         max_digits=14,
         decimal_places=3,
@@ -140,6 +141,7 @@ class SaleItemSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
         "tailoring": (
             "garment_classification",
             "collection_type",
+            "customer_supplied_fabric",
             "fabric_meter_used",
             "estimated_fabric",
             "actual_fabric_used",
@@ -159,6 +161,7 @@ class SaleItemSerializer(ModuleFieldsMixin, serializers.ModelSerializer):
             "line_total",
             "garment_classification",
             "collection_type",
+            "customer_supplied_fabric",
             "fabric_meter_used",
             "estimated_fabric",
             "actual_fabric_used",

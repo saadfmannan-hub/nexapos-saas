@@ -333,6 +333,13 @@ class SaleItem(TenantModel):
         ],
         help_text="Workshop-recorded actual fabric consumption in meters.",
     )
+    customer_supplied_fabric = models.BooleanField(
+        default=False,
+        help_text=(
+            "Immutable indication that the customer supplied the material and "
+            "no business-owned fabric inventory was consumed."
+        ),
+    )
     fabric_meter_used = models.DecimalField(
         "POS Fabric Meter Used",
         max_digits=14,
@@ -381,6 +388,13 @@ class SaleItem(TenantModel):
                 ),
                 name="saleitem_fabric_meter_positive",
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(customer_supplied_fabric=False)
+                    | models.Q(fabric_meter_used__isnull=True)
+                ),
+                name="saleitem_customer_fabric_no_meter",
+            ),
         ]
 
     def __str__(self):
@@ -406,7 +420,8 @@ class SaleItem(TenantModel):
     @property
     def is_tailoring_line(self):
         return bool(
-            self.fabric_meter_used is not None
+            self.customer_supplied_fabric
+            or self.fabric_meter_used is not None
             or self.has_tailoring_details
             or self.estimated_fabric is not None
             or self.actual_fabric_used is not None
@@ -416,6 +431,8 @@ class SaleItem(TenantModel):
     @property
     def inventory_quantity(self):
         """Inventory quantity represented by this completed sale line."""
+        if self.customer_supplied_fabric:
+            return ZERO
         return self.fabric_meter_used if self.fabric_meter_used is not None else self.quantity
 
     @property

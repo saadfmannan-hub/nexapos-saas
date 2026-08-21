@@ -500,6 +500,7 @@ LOGICAL_EXPORT_SPECS_POS = (
             "returned_quantity",
             "garment_classification",
             "collection_type",
+            "customer_supplied_fabric",
             "estimated_fabric",
             "actual_fabric_used",
             "fabric_meter_used",

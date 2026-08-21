@@ -44,7 +44,12 @@
               {% if show_tailoring and item.is_tailoring_line %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
                 <div class="small text-secondary">Collection: <span class="fw-semibold text-body">{{ item.collection_type_label }}</span></div>
-                {% if item.fabric_meter_used is not None %}
+                {% if item.customer_supplied_fabric %}
+                  <div class="small mt-1"><span class="badge text-bg-info">Customer Fabric</span></div>
+                  {% if item.actual_fabric_used is not None %}
+                    <div class="small text-secondary">Workshop actual (customer fabric): <span class="fw-semibold text-body">{{ item.actual_fabric_used|floatformat:"-3" }} m</span></div>
+                  {% endif %}
+                {% elif item.fabric_meter_used is not None %}
                   <div class="small text-secondary">Meter: <span class="fw-semibold text-body">{{ item.fabric_meter_used|floatformat:"-3" }} m</span></div>
                 {% else %}
                   <div class="small text-secondary">

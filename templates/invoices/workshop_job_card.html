@@ -305,13 +305,13 @@
       <table class="garment">
         <tr>
           <td>
-            <div class="label">Product / Fabric</div>
+            <div class="label">{% if job_item.customer_supplied_fabric %}Tailoring Item{% else %}Product / Fabric{% endif %}</div>
             <div class="value">{{ job_item.product_name|default:"-" }}</div>
             {% if job_item.variant %}<div class="muted">{{ job_item.variant.name }}</div>{% endif %}
           </td>
           <td>
             <div class="label">Quantity</div>
-            <div class="value">{{ job_item.quantity|floatformat:"-3" }}{% if job_item.fabric_meter_used is not None %} garment{% else %} {{ job_item.product.unit.abbreviation|default:"pc" }}{% endif %}</div>
+            <div class="value">{{ job_item.quantity|floatformat:"-3" }}{% if job_item.customer_supplied_fabric or job_item.fabric_meter_used is not None %} garment{% else %} {{ job_item.product.unit.abbreviation|default:"pc" }}{% endif %}</div>
           </td>
           <td>
             <div class="label">Design Type</div>
@@ -342,7 +342,22 @@
             <div class="value">{{ job_item.sku|default:"-" }}</div>
           </td>
         </tr>
-        {% if job_item.fabric_meter_used is not None %}
+        {% if job_item.customer_supplied_fabric %}
+        <tr>
+          <td>
+            <div class="label">Fabric Source</div>
+            <div class="value">Customer Fabric</div>
+          </td>
+          <td>
+            <div class="label">Workshop Actual (Customer Fabric)</div>
+            <div class="value">{% if job_item.actual_fabric_used is not None %}{{ job_item.actual_fabric_used|floatformat:"-3" }} m{% else %}Not recorded{% endif %}</div>
+          </td>
+          <td colspan="2">
+            <div class="label">Inventory</div>
+            <div class="value">No Shumukh fabric consumption</div>
+          </td>
+        </tr>
+        {% elif job_item.fabric_meter_used is not None %}
         <tr>
           <td>
             <div class="label">Meter</div>

@@ -16,12 +16,21 @@
       <tbody>
         {% for item in items %}
         <tr>
-          <td>{{ item.product_name }}</td>
+          <td>
+            {{ item.product_name }}
+            {% if item.customer_supplied_fabric %}<span class="badge text-bg-info ms-1">Customer Fabric</span>{% endif %}
+          </td>
           <td class="text-end">{{ item.quantity }}</td>
           <td class="text-end">{{ item.returned_quantity }}</td>
           <td><input type="number" step="any" min="0" max="{{ item.returnable_quantity }}"
                      name="qty_{{ item.pk }}" class="form-control form-control-sm text-end"></td>
-          <td class="text-center"><input type="checkbox" name="restock_{{ item.pk }}" class="form-check-input" checked></td>
+          <td class="text-center">
+            {% if item.customer_supplied_fabric %}
+              <span class="small text-secondary" title="Customer-owned fabric is never added to Shumukh inventory">Not applicable</span>
+            {% else %}
+              <input type="checkbox" name="restock_{{ item.pk }}" class="form-check-input" checked>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

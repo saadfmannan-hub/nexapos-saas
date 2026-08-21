@@ -439,14 +439,25 @@ def sales_detailed(business, f):
         if item.is_tailoring_line:
             key = item.garment_classification or "legacy"
             pieces[key] += quantity
-        estimated_fabric = item.estimated_fabric
-        actual_fabric = item.actual_fabric_used
-        variance = item.fabric_variance
-        pos_meter = item.fabric_meter_used
-        net_pos_meter = _net_pos_meter(
-            item,
-            is_voided=sale.status == Sale.Status.VOIDED,
-        )
+        if item.customer_supplied_fabric:
+            # These report columns and totals describe Shumukh/legacy fabric
+            # consumption. Customer-owned material remains visible on the
+            # sale itself, but must not be counted or labelled as business
+            # fabric here even when workshop actual usage was recorded.
+            estimated_fabric = None
+            actual_fabric = None
+            variance = None
+            pos_meter = None
+            net_pos_meter = None
+        else:
+            estimated_fabric = item.estimated_fabric
+            actual_fabric = item.actual_fabric_used
+            variance = item.fabric_variance
+            pos_meter = item.fabric_meter_used
+            net_pos_meter = _net_pos_meter(
+                item,
+                is_voided=sale.status == Sale.Status.VOIDED,
+            )
         if pos_meter is not None:
             has_pos_meter = True
             net_pos_meter_total += net_pos_meter or ZERO
