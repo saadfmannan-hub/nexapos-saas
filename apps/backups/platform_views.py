@@ -6,6 +6,7 @@ import uuid
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -249,6 +250,12 @@ def restore_preflight(request, business_public_id, public_id):
                 )
             except platform_services.PlatformBackupActionUnavailable as exc:
                 messages.warning(request, str(exc))
+                response_status = 409
+            except ValidationError:
+                messages.warning(
+                    request,
+                    "Restore readiness changed. Refresh the page and try again.",
+                )
                 response_status = 409
             else:
                 request.session[PREFLIGHT_SESSION_KEY] = outcome.as_session_value(

@@ -1,9 +1,9 @@
 """Transactional mutation and provisioning services for the WMS foundation."""
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
-from apps.accounts.models import Membership
+from apps.accounts.models import Membership, User
 from apps.audit import services as audit
 from apps.tenants.models import Business
 
@@ -186,7 +186,20 @@ def save_location(
     location.branch = branch
     location.location_type = location_type
     location.is_active = is_active
-    location.save()
+    try:
+        with transaction.atomic():
+            location.save()
+    except IntegrityError as exc:
+        conflicts = WmsLocation.objects.for_business(business).filter(
+            branch_id=branch.pk
+        )
+        if location.pk is not None:
+            conflicts = conflicts.exclude(pk=location.pk)
+        if conflicts.exists():
+            raise ValidationError(
+                {"branch": "A WMS location already exists for this branch."}
+            ) from exc
+        raise
     if before_active is None:
         action = "wms.location_created"
     elif before_active != is_active:
@@ -275,7 +288,21 @@ def save_role(
     role.permissions = validate_wms_permissions(permissions)
     role.is_active = is_active
     role.is_admin = is_admin
-    role.save()
+    try:
+        with transaction.atomic():
+            role.save()
+    except IntegrityError as exc:
+        business_roles = WmsRole.objects.for_business(business)
+        if role.pk is not None:
+            business_roles = business_roles.exclude(pk=role.pk)
+        errors = {}
+        if business_roles.filter(name__iexact=role.name).exists():
+            errors["name"] = "A WMS role with this name already exists."
+        if business_roles.filter(code=role.code).exists():
+            errors["code"] = "A WMS role with this code already exists."
+        if errors:
+            raise ValidationError(errors) from exc
+        raise
     audit.log(
         "wms.role_changed",
         business=business,
@@ -314,6 +341,14 @@ def _lock_and_check_user_seat(business):
     subscriptions.check_limit(business, "users")
 
 
+def _user_email_exists(email):
+    return User.objects.filter(email__iexact=email).exists()
+
+
+def _user_email_exact_exists(email):
+    return User.objects.filter(email=email).exists()
+
+
 @transaction.atomic
 def create_wms_user(
     *,
@@ -333,22 +368,22 @@ def create_wms_user(
     password hashing, and the established WMS access service.
     """
 
-    from apps.accounts.models import Membership, User
-
     _lock_and_check_user_seat(business)
-    email = User.objects.normalize_email(email)
-    account = User.objects.filter(email__iexact=email).first()
-    account_created = account is None
-    if account_created:
-        account = User.objects.create_user(
-            email=email,
-            password=password,
-            full_name=full_name,
-        )
-    if Membership.objects.filter(business=business, user=account).exists():
-        raise ValidationError(
-            "This email already belongs to a member of this business."
-        )
+    email = User.objects.normalize_email(email).lower()
+    duplicate_email_error = "An account with this email already exists."
+    if _user_email_exists(email):
+        raise ValidationError({"email": duplicate_email_error})
+    try:
+        with transaction.atomic():
+            account = User.objects.create_user(
+                email=email,
+                password=password,
+                full_name=full_name,
+            )
+    except IntegrityError as exc:
+        if _user_email_exact_exists(email):
+            raise ValidationError({"email": duplicate_email_error}) from exc
+        raise
     membership = Membership.objects.create(
         business=business,
         user=account,
@@ -372,8 +407,7 @@ def create_wms_user(
         module="wms",
         obj=account,
         description=(
-            f"WMS staff user {account.email} "
-            f"{'created' if account_created else 'attached'} with WMS role "
+            f"WMS staff user {account.email} created with WMS role "
             f"'{role.name}'."
         ),
     )
@@ -395,12 +429,44 @@ def update_wms_user(
 ):
     """Update a WMS staff member's identity, password, role, and scope."""
 
-    account = access.membership.user
+    actor = _actor(user, request)
+    access = (
+        WmsUserAccess.objects.for_business(business)
+        .select_for_update()
+        .select_related("membership__user")
+        .get(pk=access.pk)
+    )
+    account = User.objects.select_for_update().get(pk=access.membership.user_id)
+    identity_protected = bool(
+        actor is None
+        or (
+            actor.pk != account.pk
+            and (
+                account.pk == business.owner_id
+                or Membership.objects.filter(user=account)
+                .exclude(pk=access.membership_id)
+                .exists()
+            )
+        )
+    )
+    identity_errors = {}
+    protected_message = (
+        "Only the account holder can change identity or password for an owner "
+        "or shared account."
+    )
+    if identity_protected:
+        if full_name is not None and full_name != account.full_name:
+            identity_errors["full_name"] = protected_message
+        if password:
+            identity_errors["password"] = protected_message
+    if identity_errors:
+        raise ValidationError(identity_errors)
+
     identity_changes = []
-    if full_name is not None and full_name != account.full_name:
+    if not identity_protected and full_name is not None and full_name != account.full_name:
         account.full_name = full_name
         identity_changes.append("full name")
-    if password:
+    if not identity_protected and password:
         account.set_password(password)
         identity_changes.append("password")
     if identity_changes:
@@ -408,7 +474,7 @@ def update_wms_user(
         audit.log(
             "wms.user_updated",
             business=business,
-            user=_actor(user, request),
+            user=actor,
             request=request,
             module="wms",
             obj=account,
@@ -448,7 +514,20 @@ def save_user_access(
     access.membership = membership
     access.role = role
     access.is_active = is_active
-    access.save()
+    try:
+        with transaction.atomic():
+            access.save()
+    except IntegrityError as exc:
+        conflicts = WmsUserAccess.objects.for_business(business).filter(
+            membership_id=membership.pk
+        )
+        if access.pk is not None:
+            conflicts = conflicts.exclude(pk=access.pk)
+        if conflicts.exists():
+            raise ValidationError(
+                {"membership": "WMS access already exists for this member."}
+            ) from exc
+        raise
     locations = list(allowed_locations)
     invalid = [location for location in locations if location.business_id != business.pk]
     if invalid:

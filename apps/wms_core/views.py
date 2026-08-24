@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
@@ -17,6 +18,17 @@ from .forms import (
     WmsUserForm,
 )
 from .models import WmsLocation, WmsRole, WmsSettings, WmsUserAccess
+
+
+def _add_form_validation_error(form, exc):
+    if hasattr(exc, "message_dict"):
+        for field_name, errors in exc.message_dict.items():
+            target = field_name if field_name in form.fields else None
+            for error in errors:
+                form.add_error(target, error)
+        return
+    for error in exc.messages:
+        form.add_error(None, error)
 
 
 @wms_permission_required("wms.dashboard.view", action=AccessAction.READ)
@@ -85,15 +97,19 @@ def location_form(request, public_id=None):
         instance=instance,
     )
     if request.method == "POST" and form.is_valid():
-        services.save_location(
-            business=request.business,
-            branch=form.cleaned_data["branch"],
-            location_type=form.cleaned_data["location_type"],
-            is_active=form.cleaned_data["is_active"],
-            instance=instance if instance.pk else None,
-            request=request,
-        )
-        return redirect("wms:settings")
+        try:
+            services.save_location(
+                business=request.business,
+                branch=form.cleaned_data["branch"],
+                location_type=form.cleaned_data["location_type"],
+                is_active=form.cleaned_data["is_active"],
+                instance=instance if instance.pk else None,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            return redirect("wms:settings")
     return render(
         request,
         "wms/settings/location_form.html",
@@ -152,8 +168,11 @@ def user_create(request):
             from apps.subscriptions.helpers import limit_blocked_response
 
             return limit_blocked_response(request, exc, resource="users")
-        messages.success(request, "WMS user added.")
-        return redirect("wms:user_list")
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            messages.success(request, "WMS user added.")
+            return redirect("wms:user_list")
     return render(
         request,
         "wms/users/user_form.html",
@@ -184,31 +203,35 @@ def user_edit(request, public_id):
         acting_access=request.wms_user_access,
     )
     if request.method == "POST" and form.is_valid():
-        if form.target_is_owner:
-            # Disabled fields fall back to their initial values; only the
-            # location scope may change for the owner account.
-            services.save_user_access(
-                business=request.business,
-                membership=access.membership,
-                role=access.role,
-                is_active=access.is_active,
-                allowed_locations=form.cleaned_data["allowed_locations"],
-                instance=access,
-                request=request,
-            )
+        try:
+            if form.target_is_owner:
+                # Disabled fields fall back to their initial values; only the
+                # location scope may change for the owner account.
+                services.save_user_access(
+                    business=request.business,
+                    membership=access.membership,
+                    role=access.role,
+                    is_active=access.is_active,
+                    allowed_locations=form.cleaned_data["allowed_locations"],
+                    instance=access,
+                    request=request,
+                )
+            else:
+                services.update_wms_user(
+                    business=request.business,
+                    access=access,
+                    full_name=form.cleaned_data["full_name"],
+                    password=form.cleaned_data["password"] or None,
+                    role=form.cleaned_data["role"],
+                    allowed_locations=form.cleaned_data["allowed_locations"],
+                    is_active=form.cleaned_data["is_active"],
+                    request=request,
+                )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
         else:
-            services.update_wms_user(
-                business=request.business,
-                access=access,
-                full_name=form.cleaned_data["full_name"],
-                password=form.cleaned_data["password"] or None,
-                role=form.cleaned_data["role"],
-                allowed_locations=form.cleaned_data["allowed_locations"],
-                is_active=form.cleaned_data["is_active"],
-                request=request,
-            )
-        messages.success(request, "WMS user updated.")
-        return redirect("wms:user_list")
+            messages.success(request, "WMS user updated.")
+            return redirect("wms:user_list")
     return render(
         request,
         "wms/users/user_form.html",
@@ -275,18 +298,22 @@ def role_form(request, public_id=None):
         acting_access=request.wms_user_access,
     )
     if request.method == "POST" and form.is_valid():
-        services.save_role(
-            business=request.business,
-            name=form.cleaned_data["name"],
-            code=form.cleaned_data["code"],
-            permissions=form.cleaned_data["permissions"],
-            is_active=form.cleaned_data["is_active"],
-            is_admin=form.cleaned_data["is_admin"],
-            instance=instance if instance.pk else None,
-            request=request,
-        )
-        messages.success(request, "WMS role saved.")
-        return redirect("wms:user_list")
+        try:
+            services.save_role(
+                business=request.business,
+                name=form.cleaned_data["name"],
+                code=form.cleaned_data["code"],
+                permissions=form.cleaned_data["permissions"],
+                is_active=form.cleaned_data["is_active"],
+                is_admin=form.cleaned_data["is_admin"],
+                instance=instance if instance.pk else None,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            messages.success(request, "WMS role saved.")
+            return redirect("wms:user_list")
     return render(
         request,
         "wms/users/role_form.html",
@@ -312,16 +339,20 @@ def user_access_form(request, public_id=None):
         instance=instance,
     )
     if request.method == "POST" and form.is_valid():
-        services.save_user_access(
-            business=request.business,
-            membership=form.cleaned_data["membership"],
-            role=form.cleaned_data["role"],
-            is_active=form.cleaned_data["is_active"],
-            allowed_locations=form.cleaned_data["allowed_locations"],
-            instance=instance if instance.pk else None,
-            request=request,
-        )
-        return redirect("wms:user_list")
+        try:
+            services.save_user_access(
+                business=request.business,
+                membership=form.cleaned_data["membership"],
+                role=form.cleaned_data["role"],
+                is_active=form.cleaned_data["is_active"],
+                allowed_locations=form.cleaned_data["allowed_locations"],
+                instance=instance if instance.pk else None,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            return redirect("wms:user_list")
     return render(
         request,
         "wms/users/form.html",

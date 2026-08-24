@@ -4,7 +4,7 @@ from django.db.models import Q
 
 from apps.core.permissions import PERMISSIONS
 
-from .models import Membership, Role, User
+from .models import Role, User
 
 INPUT = {"class": "form-control"}
 SELECT = {"class": "form-select"}
@@ -73,9 +73,19 @@ class EmployeeForm(forms.Form):
         role_qs = Role.objects.for_business(business)
         if not custom_roles_enabled:
             current_role_id = editing.role_id if editing is not None else None
-            role_qs = role_qs.filter(
-                Q(is_system=True) | Q(pk=current_role_id)
-            )
+            allowed_roles = Q(is_system=True) | Q(pk=current_role_id)
+            if self.is_bound:
+                raw_role_id = self.data.get(self.add_prefix("role"))
+                try:
+                    submitted_role_id = int(raw_role_id)
+                except (TypeError, ValueError):
+                    submitted_role_id = None
+                if submitted_role_id is not None and 0 < submitted_role_id < 2**63:
+                    # Let a valid tenant custom role reach the post-validation
+                    # entitlement gate. Malformed and foreign IDs remain
+                    # ordinary ModelChoiceField errors.
+                    allowed_roles |= Q(pk=submitted_role_id)
+            role_qs = role_qs.filter(allowed_roles)
         self.fields["role"].queryset = role_qs
         self.fields["branches"].queryset = Branch.objects.for_business(business).filter(
             is_active=True
@@ -88,18 +98,10 @@ class EmployeeForm(forms.Form):
         qs = User.objects.filter(email__iexact=email)
         if self.editing is not None:
             qs = qs.exclude(pk=self.editing.user_id)
-        existing = qs.first()
-        if existing is not None:
-            if self.editing is not None:
-                raise forms.ValidationError(
-                    "An account with this email already exists."
-                )
-            # Allow attaching an existing platform user only if they are not
-            # already a member of this business.
-            if Membership.objects.filter(business=self.business, user=existing).exists():
-                raise forms.ValidationError(
-                    "An account with this email already exists."
-                )
+        if qs.exists():
+            raise forms.ValidationError(
+                "An account with this email already exists."
+            )
         return email
 
     def clean_role(self):

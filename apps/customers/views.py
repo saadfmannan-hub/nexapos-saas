@@ -179,14 +179,25 @@ def customer_form(request, public_id=None):
             )
         if instance is None and customer.opening_balance:
             customer.balance = customer.opening_balance
-        customer = services.save_customer(
-            customer=customer, business=request.business, user=request.user,
-            membership=request.membership, request=request,
-        )
-        audit.log("customer.saved", request=request, module="customers", obj=customer,
-                  description=f"Customer '{customer.full_name}' saved.")
-        messages.success(request, "Customer saved.")
-        return redirect("customers:detail", public_id=customer.public_id)
+        try:
+            customer = services.save_customer(
+                customer=customer, business=request.business, user=request.user,
+                membership=request.membership, request=request,
+            )
+        except ValidationError as exc:
+            if hasattr(exc, "message_dict"):
+                for field, field_messages in exc.message_dict.items():
+                    target = field if field in form.fields else None
+                    for message in field_messages:
+                        form.add_error(target, message)
+            else:
+                for message in exc.messages:
+                    form.add_error(None, message)
+        else:
+            audit.log("customer.saved", request=request, module="customers", obj=customer,
+                      description=f"Customer '{customer.full_name}' saved.")
+            messages.success(request, "Customer saved.")
+            return redirect("customers:detail", public_id=customer.public_id)
     return render(request, "customers/form.html",
                   {"form": form, "customer": instance, "active_nav": "customers",
                    "credit_write": credit_write,

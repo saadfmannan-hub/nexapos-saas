@@ -27,6 +27,17 @@ def _querystring_without(request, *keys):
     return urlencode(params, doseq=True)
 
 
+def _add_form_validation_error(form, exc):
+    if hasattr(exc, "message_dict"):
+        for field_name, errors in exc.message_dict.items():
+            target = field_name if field_name in form.fields else None
+            for error in errors:
+                form.add_error(target, error)
+        return
+    for error in exc.messages:
+        form.add_error(None, error)
+
+
 @wms_permission_required("wms.employees.view", action=AccessAction.READ)
 def employee_list(request):
     q = request.GET.get("q", "").strip()
@@ -140,14 +151,18 @@ def employee_form(request, public_id=None):
         instance=instance,
     )
     if request.method == "POST" and form.is_valid():
-        employee = services.save_employee(
-            business=request.business,
-            cleaned_data=form.cleaned_data,
-            instance=instance,
-            request=request,
-        )
-        messages.success(request, "Employee saved.")
-        return redirect("wms:employee_detail", public_id=employee.public_id)
+        try:
+            employee = services.save_employee(
+                business=request.business,
+                cleaned_data=form.cleaned_data,
+                instance=instance,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            messages.success(request, "Employee saved.")
+            return redirect("wms:employee_detail", public_id=employee.public_id)
     return render(
         request,
         "wms/employees/form.html",
@@ -199,15 +214,19 @@ def assignment_add(request, employee_public_id):
         request.POST,
     )
     if form.is_valid():
-        services.save_assignment(
-            business=request.business,
-            employee=employee,
-            category=form.cleaned_data["category"],
-            per_piece_rate=form.cleaned_data["per_piece_rate"],
-            request=request,
-        )
-        messages.success(request, "Production category assigned.")
-        return redirect("wms:employee_detail", public_id=employee.public_id)
+        try:
+            services.save_assignment(
+                business=request.business,
+                employee=employee,
+                category=form.cleaned_data["category"],
+                per_piece_rate=form.cleaned_data["per_piece_rate"],
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            messages.success(request, "Production category assigned.")
+            return redirect("wms:employee_detail", public_id=employee.public_id)
     return render(
         request,
         "wms/employees/detail.html",
@@ -237,15 +256,19 @@ def assignment_rate(
     )
     form = WmsAssignmentRateForm(employee, request.POST)
     if form.is_valid():
-        services.save_assignment(
-            business=request.business,
-            employee=employee,
-            category=assignment.category,
-            per_piece_rate=form.cleaned_data["per_piece_rate"],
-            instance=assignment,
-            request=request,
-        )
-        messages.success(request, "Category rate updated.")
+        try:
+            services.save_assignment(
+                business=request.business,
+                employee=employee,
+                category=assignment.category,
+                per_piece_rate=form.cleaned_data["per_piece_rate"],
+                instance=assignment,
+                request=request,
+            )
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+        else:
+            messages.success(request, "Category rate updated.")
     else:
         messages.error(request, "Enter a valid nonnegative rate.")
     return redirect("wms:employee_detail", public_id=employee.public_id)
@@ -344,14 +367,18 @@ def category_form(request, public_id=None):
         instance=instance,
     )
     if request.method == "POST" and form.is_valid():
-        services.save_category(
-            business=request.business,
-            cleaned_data=form.cleaned_data,
-            instance=instance,
-            request=request,
-        )
-        messages.success(request, "Production category saved.")
-        return redirect("wms:category_list")
+        try:
+            services.save_category(
+                business=request.business,
+                cleaned_data=form.cleaned_data,
+                instance=instance,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_form_validation_error(form, exc)
+        else:
+            messages.success(request, "Production category saved.")
+            return redirect("wms:category_list")
     return render(
         request,
         "wms/categories/form.html",

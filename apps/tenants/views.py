@@ -1,6 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth import login as auth_login
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
@@ -20,32 +20,47 @@ def register_view(request):
         return post_login_redirect(request)
     form = RegistrationForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
+        registered = False
         with transaction.atomic():
-            owner = User.objects.create_user(
-                email=form.cleaned_data["email"],
-                password=form.cleaned_data["password"],
-                full_name=form.cleaned_data["owner_name"],
-                phone=form.cleaned_data["phone"],
+            try:
+                with transaction.atomic():
+                    owner = User.objects.create_user(
+                        email=form.cleaned_data["email"],
+                        password=form.cleaned_data["password"],
+                        full_name=form.cleaned_data["owner_name"],
+                        phone=form.cleaned_data["phone"],
+                    )
+            except IntegrityError:
+                if not User.objects.filter(
+                    email=form.cleaned_data["email"]
+                ).exists():
+                    raise
+                form.add_error(
+                    "email",
+                    "An account with this email already exists. Sign in instead.",
+                )
+            else:
+                business = provision_business(
+                    owner=owner,
+                    name=form.cleaned_data["business_name"],
+                    country=form.cleaned_data["country"],
+                    timezone_name=form.cleaned_data["timezone_name"],
+                    currency_code=form.currency_code,
+                    currency_precision=form.currency_precision,
+                    business_category=form.cleaned_data["business_category"],
+                    phone=form.cleaned_data["phone"],
+                    request=request,
+                )
+                registered = True
+        if registered:
+            auth_login(request, owner)
+            request.session[SESSION_BUSINESS_KEY] = business.id
+            messages.success(
+                request,
+                f"Welcome! Your business '{business.name}' is ready. "
+                "Let's finish setting things up.",
             )
-            business = provision_business(
-                owner=owner,
-                name=form.cleaned_data["business_name"],
-                country=form.cleaned_data["country"],
-                timezone_name=form.cleaned_data["timezone_name"],
-                currency_code=form.currency_code,
-                currency_precision=form.currency_precision,
-                business_category=form.cleaned_data["business_category"],
-                phone=form.cleaned_data["phone"],
-                request=request,
-            )
-        auth_login(request, owner)
-        request.session[SESSION_BUSINESS_KEY] = business.id
-        messages.success(
-            request,
-            f"Welcome! Your business '{business.name}' is ready. "
-            "Let's finish setting things up.",
-        )
-        return redirect("tenants:onboarding")
+            return redirect("tenants:onboarding")
     return render(request, "auth/register.html", {"form": form})
 
 
@@ -66,9 +81,12 @@ def no_business_view(request):
 @business_required
 def switch_business(request):
     business_id = request.POST.get("business_id")
-    membership = request.user.memberships.filter(
-        business_id=business_id, is_active=True, business__is_active=True
-    ).first()
+    try:
+        membership = request.user.memberships.filter(
+            business_id=business_id, is_active=True, business__is_active=True
+        ).first()
+    except (TypeError, ValueError):
+        membership = None
     if membership is None:
         messages.error(request, "You do not have access to that business.")
     else:

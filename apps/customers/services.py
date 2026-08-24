@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.http import Http404
 
@@ -223,6 +223,16 @@ def next_customer_code(business, branch=None):
     return f"CUST-{n:05d}"
 
 
+def _customer_code_conflict(customer, business):
+    queryset = Customer.objects.for_business(business).filter(
+        home_branch_id=customer.home_branch_id,
+        code=customer.code,
+    )
+    if customer.pk:
+        queryset = queryset.exclude(pk=customer.pk)
+    return queryset.exists()
+
+
 CUSTOMER_FORM_FIELDS = (
     "home_branch", "full_name", "code", "mobile", "whatsapp", "email", "address", "city",
     "country", "group", "tax_number", "credit_limit", "notes", "is_active",
@@ -357,7 +367,15 @@ def save_customer(*, customer, business, user, membership=None, request=None):
             request=request,
         )
     customer.business = business
-    customer.save()
+    try:
+        with transaction.atomic():
+            customer.save()
+    except IntegrityError as exc:
+        if _customer_code_conflict(customer, business):
+            raise ValidationError(
+                {"code": "This customer code is already in use."}
+            ) from exc
+        raise
     return customer
 
 

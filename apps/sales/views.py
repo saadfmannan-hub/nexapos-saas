@@ -1,6 +1,8 @@
 import json
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Exists, OuterRef, Prefetch, Q
@@ -179,6 +181,19 @@ def _sale_error_response(exc, *, status=400):
     if getattr(exc, "errors", None):
         body["errors"] = exc.errors
     return JsonResponse(body, status=status)
+
+
+def _checkout_decimal(value, label):
+    if value in (None, ""):
+        return Decimal("0")
+    raw_value = repr(value) if isinstance(value, float) else str(value)
+    try:
+        parsed = Decimal(raw_value)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SaleError(f"Enter a valid {label}.") from exc
+    if not parsed.is_finite():
+        raise SaleError(f"Enter a finite {label}.")
+    return parsed
 
 
 def _checkout_success_response(sale):
@@ -731,19 +746,25 @@ def pos_quick_customer(request):
             {"ok": False, "error": "A customer with this mobile already exists."},
             status=400,
         )
-    customer = customer_services.save_customer(
-        customer=Customer(
+    try:
+        customer = customer_services.save_customer(
+            customer=Customer(
+                business=request.business,
+                home_branch=branch,
+                code=next_customer_code(request.business, branch),
+                full_name=name[:160],
+                mobile=mobile[:30],
+            ),
             business=request.business,
-            home_branch=branch,
-            code=next_customer_code(request.business, branch),
-            full_name=name[:160],
-            mobile=mobile[:30],
-        ),
-        business=request.business,
-        user=request.user,
-        membership=request.membership,
-        request=request,
-    )
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
+    except ValidationError as exc:
+        return JsonResponse(
+            {"ok": False, "error": "; ".join(exc.messages)},
+            status=400,
+        )
     return JsonResponse({"ok": True, "customer": {
         "id": customer.id, "name": customer.full_name, "mobile": customer.mobile,
         "balance": "0", "store_credit": "0", "credit_limit": "0", "is_walk_in": False,
@@ -760,7 +781,7 @@ def pos_checkout(request):
 
     try:
         payload = json.loads(request.body)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
     if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
@@ -771,7 +792,7 @@ def pos_checkout(request):
             is_active=True,
             usage_type=Branch.UsageType.SALES_BRANCH,
         )
-    except Branch.DoesNotExist:
+    except (Branch.DoesNotExist, TypeError, ValueError, OverflowError):
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=400)
     if not request.membership.can_access_branch(branch):
         return JsonResponse({"ok": False, "error": "You cannot sell from this branch."},
@@ -786,7 +807,7 @@ def pos_checkout(request):
             home_branch=branch,
             is_active=True,
         )
-    except Customer.DoesNotExist:
+    except (Customer.DoesNotExist, TypeError, ValueError, OverflowError):
         return JsonResponse({"ok": False, "error": "Invalid customer."}, status=400)
 
     checkout_token = str(payload.get("checkout_token") or "").strip()
@@ -795,6 +816,22 @@ def pos_checkout(request):
             {"ok": False, "error": "A valid checkout token is required."},
             status=400,
         )
+    raw_held_id = payload.get("held_id")
+    if raw_held_id in (None, ""):
+        held_id = None
+    else:
+        try:
+            held_id = int(raw_held_id)
+        except (TypeError, ValueError, OverflowError):
+            return JsonResponse(
+                {"ok": False, "error": "Invalid held sale."},
+                status=400,
+            )
+        if held_id <= 0 or held_id > 9_223_372_036_854_775_807:
+            return JsonResponse(
+                {"ok": False, "error": "Invalid held sale."},
+                status=400,
+            )
     existing_sale = Sale.objects.for_business(request.business).filter(
         checkout_token=checkout_token,
     ).first()
@@ -836,7 +873,6 @@ def pos_checkout(request):
                 permission_code="sales.create",
                 action=AccessAction.WRITE,
             )
-        held_id = payload.get("held_id")
         if held_id:
             # Only clean the held cart that originally carried this token. A
             # replay must never delete another one of the cashier's carts.
@@ -849,7 +885,6 @@ def pos_checkout(request):
         return _checkout_success_response(existing_sale)
 
     held = None
-    held_id = payload.get("held_id")
 
     shift = register_services.get_open_shift(
         request.business, request.user, membership=request.membership
@@ -870,7 +905,7 @@ def pos_checkout(request):
             product = Product.objects.for_business(request.business).select_related(
                 "unit"
             ).get(pk=raw.get("product_id"), is_active=True, is_archived=False)
-        except Product.DoesNotExist:
+        except (Product.DoesNotExist, TypeError, ValueError, OverflowError):
             return JsonResponse({"ok": False, "error": "Invalid product in cart."},
                                 status=400)
         variant = None
@@ -879,13 +914,23 @@ def pos_checkout(request):
                 variant = ProductVariant.objects.for_business(request.business).get(
                     pk=raw["variant_id"], product=product, is_active=True
                 )
-            except ProductVariant.DoesNotExist:
+            except (
+                ProductVariant.DoesNotExist,
+                TypeError,
+                ValueError,
+                OverflowError,
+            ):
                 return JsonResponse({"ok": False, "error": "Invalid variant in cart."},
                                     status=400)
+        try:
+            quantity = _checkout_decimal(raw.get("quantity"), "quantity")
+            unit_price = _checkout_decimal(raw.get("unit_price"), "unit price")
+        except SaleError as exc:
+            return _sale_error_response(exc)
         line = {
             "product": product, "variant": variant,
-            "quantity": D(raw.get("quantity")),
-            "unit_price": D(raw.get("unit_price")),
+            "quantity": quantity,
+            "unit_price": unit_price,
             # POS line discounts were retired in favour of invoice discounts.
             # Keep the persisted field for historical and non-POS compatibility.
             "discount_amount": D("0"),
@@ -924,11 +969,28 @@ def pos_checkout(request):
             method = PaymentMethod.objects.for_business(request.business).get(
                 pk=raw.get("method_id"), is_active=True
             )
-        except PaymentMethod.DoesNotExist:
+        except (
+            PaymentMethod.DoesNotExist,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ):
             return JsonResponse({"ok": False, "error": "Invalid payment method."},
                                 status=400)
-        payments.append({"method": method, "amount": D(raw.get("amount")),
+        try:
+            payment_amount = _checkout_decimal(raw.get("amount"), "payment amount")
+        except SaleError as exc:
+            return _sale_error_response(exc)
+        payments.append({"method": method, "amount": payment_amount,
                          "reference": str(raw.get("reference", ""))[:120]})
+
+    try:
+        invoice_discount = _checkout_decimal(
+            payload.get("invoice_discount"),
+            "invoice discount",
+        )
+    except SaleError as exc:
+        return _sale_error_response(exc)
 
     delivery_date = None
     raw_delivery = str(payload.get("delivery_date") or "").strip()
@@ -993,7 +1055,7 @@ def pos_checkout(request):
                     membership=request.membership,
                     register=shift.register if shift else None,
                     shift=shift,
-                    invoice_discount=D(payload.get("invoice_discount")),
+                    invoice_discount=invoice_discount,
                     notes=str(payload.get("notes", ""))[:1000],
                     delivery_date=delivery_date,
                     priority=_checkout_priority(payload, raw_items),
@@ -1023,11 +1085,10 @@ def pos_checkout(request):
             if checkout_token else None
         )
         if sale is None:
-            return JsonResponse(
-                {"ok": False, "error": "The sale could not be completed."},
-                status=400,
-            )
-    except Exception as exc:  # ValidationError from inventory etc.
+            # Only a confirmed tenant/token winner is an expected idempotency
+            # race. Do not disguise unrelated database defects as user input.
+            raise
+    except ValidationError as exc:
         msg = "; ".join(getattr(exc, "messages", [str(exc)]))
         return JsonResponse({"ok": False, "error": msg}, status=400)
 
@@ -1039,10 +1100,17 @@ def pos_checkout(request):
 def pos_hold(request):
     try:
         payload = json.loads(request.body)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
+    if not isinstance(payload, dict):
         return JsonResponse({"ok": False, "error": "Invalid request."}, status=400)
     cart = payload.get("cart") or {}
-    if not cart.get("items"):
+    if not isinstance(cart, dict):
+        return JsonResponse({"ok": False, "error": "Invalid cart."}, status=400)
+    cart_items = cart.get("items")
+    if not isinstance(cart_items, list):
+        return JsonResponse({"ok": False, "error": "Invalid cart."}, status=400)
+    if not cart_items:
         return JsonResponse({"ok": False, "error": "Cart is empty."}, status=400)
     checkout_token = str(cart.get("checkout_token") or "").strip()
     if not checkout_token or len(checkout_token) > 64:
@@ -1058,7 +1126,7 @@ def pos_hold(request):
             is_active=True,
             usage_type=Branch.UsageType.SALES_BRANCH,
         )
-    except Branch.DoesNotExist:
+    except (Branch.DoesNotExist, TypeError, ValueError, OverflowError):
         return JsonResponse({"ok": False, "error": "Invalid branch."}, status=400)
     if not request.membership.can_access_branch(branch):
         return JsonResponse(
@@ -1969,17 +2037,24 @@ def return_create(request, public_id):
         ]
     if request.method == "POST":
         selected = []
+        invalid_quantity = False
         for item in items:
             raw = request.POST.get(f"qty_{item.pk}", "").strip()
             if raw:
                 qty = D(raw)
+                if not qty.is_finite():
+                    messages.error(request, "Enter a finite return quantity.")
+                    invalid_quantity = True
+                    break
                 if qty > 0:
                     selected.append({
                         "sale_item": item, "quantity": qty,
                         "restock": request.POST.get(f"restock_{item.pk}") == "on",
                     })
         refund_method = request.POST.get("refund_method", "")
-        if refund_method not in dict(SaleReturn.RefundMethod.choices):
+        if invalid_quantity:
+            pass
+        elif refund_method not in dict(SaleReturn.RefundMethod.choices):
             messages.error(request, "Choose a refund method.")
         else:
             try:
@@ -2011,7 +2086,7 @@ def return_create(request, public_id):
                 return redirect("sales:detail", public_id=sale.public_id)
             except (SaleError, subscriptions.SubscriptionInactive) as exc:
                 messages.error(request, str(exc))
-            except Exception as exc:
+            except ValidationError as exc:
                 messages.error(request, "; ".join(getattr(exc, "messages", [str(exc)])))
     return render(request, "sales/return_form.html", {
         "sale": sale, "items": returnable, "active_nav": "returns",

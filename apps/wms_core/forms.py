@@ -275,8 +275,8 @@ class WmsUserForm(forms.Form):
             self.fields["password"].required = True
             self.fields["password_confirm"].required = True
             self.fields["password"].help_text = (
-                "At least 8 characters. Used only when this email is not "
-                "already registered on the platform."
+                "At least 8 characters. The email must not already be "
+                "registered on the platform."
             )
         else:
             self.fields["email"].disabled = True
@@ -292,16 +292,12 @@ class WmsUserForm(forms.Form):
                 self.fields[field_name].disabled = True
 
     def clean_email(self):
-        email = User.objects.normalize_email(self.cleaned_data["email"])
+        email = User.objects.normalize_email(self.cleaned_data["email"]).lower()
         if self.access_record is not None:
             return email
-        existing = User.objects.filter(email__iexact=email).first()
-        if existing is not None and Membership.objects.filter(
-            business=self.business, user=existing
-        ).exists():
+        if User.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError(
-                "This email already belongs to a member of this business. "
-                "Use 'Grant WMS access to existing user' instead."
+                "An account with this email already exists."
             )
         return email
 

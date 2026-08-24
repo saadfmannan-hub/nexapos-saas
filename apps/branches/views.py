@@ -1,4 +1,5 @@
 from django.contrib import messages
+from django.db import IntegrityError, transaction
 from django.shortcuts import redirect, render
 
 from apps.audit import services as audit
@@ -59,15 +60,31 @@ def branch_form(request, public_id=None):
         creating = instance is None
         branch = form.save(commit=False)
         branch.business = request.business
-        branch.save()
-        if creating and branch.usage_type == Branch.UsageType.SALES_BRANCH:
-            from apps.customers.services import ensure_walk_in_customer
+        saved = False
+        with transaction.atomic():
+            try:
+                with transaction.atomic():
+                    branch.save()
+            except IntegrityError:
+                conflicts = Branch.objects.for_business(request.business).filter(
+                    code=branch.code
+                )
+                if branch.pk:
+                    conflicts = conflicts.exclude(pk=branch.pk)
+                if not conflicts.exists():
+                    raise
+                form.add_error("code", "This branch code is already in use.")
+            else:
+                saved = True
+                if creating and branch.usage_type == Branch.UsageType.SALES_BRANCH:
+                    from apps.customers.services import ensure_walk_in_customer
 
-            ensure_walk_in_customer(request.business, branch)
-        audit.log("branch.saved", request=request, module="branches", obj=branch,
-                  description=f"Branch '{branch.name}' saved.")
-        messages.success(request, "Branch saved.")
-        return redirect("branches:list")
+                    ensure_walk_in_customer(request.business, branch)
+        if saved:
+            audit.log("branch.saved", request=request, module="branches", obj=branch,
+                      description=f"Branch '{branch.name}' saved.")
+            messages.success(request, "Branch saved.")
+            return redirect("branches:list")
     return render(request, "branches/branch_form.html",
                   {"form": form, "branch": instance, "active_nav": "branches"})
 
@@ -93,14 +110,30 @@ def warehouse_form(request, public_id=None):
     if request.method == "POST" and form.is_valid():
         warehouse = form.save(commit=False)
         warehouse.business = request.business
-        warehouse.save()
-        if warehouse.is_default:
-            _allowed_warehouses(request).exclude(pk=warehouse.pk).update(
-                is_default=False
-            )
-        audit.log("warehouse.saved", request=request, module="branches", obj=warehouse,
-                  description=f"Warehouse '{warehouse.name}' saved.")
-        messages.success(request, "Warehouse saved.")
-        return redirect("branches:list")
+        saved = False
+        with transaction.atomic():
+            try:
+                with transaction.atomic():
+                    warehouse.save()
+            except IntegrityError:
+                conflicts = Warehouse.objects.for_business(request.business).filter(
+                    code=warehouse.code
+                )
+                if warehouse.pk:
+                    conflicts = conflicts.exclude(pk=warehouse.pk)
+                if not conflicts.exists():
+                    raise
+                form.add_error("code", "This warehouse code is already in use.")
+            else:
+                saved = True
+                if warehouse.is_default:
+                    _allowed_warehouses(request).exclude(pk=warehouse.pk).update(
+                        is_default=False
+                    )
+        if saved:
+            audit.log("warehouse.saved", request=request, module="branches", obj=warehouse,
+                      description=f"Warehouse '{warehouse.name}' saved.")
+            messages.success(request, "Warehouse saved.")
+            return redirect("branches:list")
     return render(request, "branches/warehouse_form.html",
                   {"form": form, "warehouse": instance, "active_nav": "branches"})

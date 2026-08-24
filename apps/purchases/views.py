@@ -2,7 +2,6 @@ from django import forms as django_forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db import IntegrityError
 from django.db.models import F, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import redirect, render
@@ -188,12 +187,15 @@ def _parse_purchase_rows(request):
                 raise ValidationError("Invalid variant in line items.") from None
         if product.is_meter_tailoring and product.has_variants and variant is None:
             raise ValidationError(f"Select a variant/color for {product.name}.")
-        qty = D(qtys[i] if i < len(qtys) else 0)
+        qty = services._validated_decimal(
+            qtys[i] if i < len(qtys) else 0,
+            "Purchase quantity",
+        )
         if qty == 0:
             continue
         rows.append({
             "product": product, "variant": variant, "quantity": qty,
-            "unit_cost": D(costs[i] if i < len(costs) else 0),
+            "unit_cost": costs[i] if i < len(costs) else 0,
         })
     if not rows:
         raise ValidationError("Add at least one line with a quantity.")
@@ -234,9 +236,9 @@ def purchase_create(request):
                 ),
                 due_date=request.POST.get("due_date") or None,
                 supplier_invoice_number=request.POST.get("supplier_invoice_number", ""),
-                discount=D(request.POST.get("discount")),
-                shipping=D(request.POST.get("shipping")),
-                other=D(request.POST.get("other")),
+                discount=request.POST.get("discount"),
+                shipping=request.POST.get("shipping"),
+                other=request.POST.get("other"),
                 notes=request.POST.get("notes", ""),
                 attachment=request.FILES.get("attachment"),
                 membership=request.membership,
@@ -308,11 +310,13 @@ def quick_add_product(request):
         return JsonResponse({
             "ok": False, "errors": {"__all__": [str(exc)]},
         }, status=400)
-    except IntegrityError:
-        return JsonResponse({
-            "ok": False,
-            "errors": {"sku": ["This SKU is already in use."]},
-        }, status=400)
+    except ValidationError as exc:
+        errors = (
+            exc.message_dict
+            if hasattr(exc, "message_dict")
+            else {"__all__": exc.messages}
+        )
+        return JsonResponse({"ok": False, "errors": errors}, status=400)
 
     unit_label = product.unit.abbreviation or product.unit.name
     return JsonResponse({

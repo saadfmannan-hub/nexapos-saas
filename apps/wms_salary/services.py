@@ -423,9 +423,18 @@ def calculate_salary(
         with transaction.atomic():
             salary.save()
     except IntegrityError as exc:
-        raise ValidationError(
-            "Salary already exists for this employee and month."
-        ) from exc
+        conflicts = WmsSalary.objects.for_business(business).filter(
+            employee_id=employee.pk,
+            salary_year=salary_year,
+            salary_month=salary_month,
+        )
+        if salary.pk is not None:
+            conflicts = conflicts.exclude(pk=salary.pk)
+        if conflicts.exists():
+            raise ValidationError(
+                "Salary already exists for this employee and month."
+            ) from exc
+        raise
 
     for location in sorted(
         locations.values(),

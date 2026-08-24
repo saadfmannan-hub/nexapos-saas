@@ -17,6 +17,7 @@ from django.utils.dateparse import parse_date
 
 from apps.audit import services as audit
 from apps.branches.models import Branch, Warehouse
+from apps.catalog import services as catalog_services
 from apps.catalog.models import Category, Product, ProductVariant, TaxRate, Unit
 from apps.core.date_ranges import business_localdate
 from apps.core.money import money
@@ -462,7 +463,13 @@ def quick_add_product(
         product.track_inventory = True
         product.allow_discount = False
     product.is_active = True
-    product.save()
+    product = catalog_services.save_product(
+        product=product,
+        business=business,
+        user=user,
+        membership=context.membership,
+        request=request,
+    )
     audit.log(
         "product.saved",
         business=business,

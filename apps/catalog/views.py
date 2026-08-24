@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Sum
 from django.forms.models import construct_instance
 from django.http import Http404, HttpResponse
@@ -477,10 +477,17 @@ def product_form(request, public_id=None):
             if not reused_product:
                 if auto_sku and not product.sku:
                     product.sku = catalog_services.generate_sku(request.business)
-                product = catalog_services.save_product(
-                    product=product, business=request.business, user=request.user,
-                    membership=request.membership, request=request,
-                )
+                try:
+                    product = catalog_services.save_product(
+                        product=product, business=request.business, user=request.user,
+                        membership=request.membership, request=request,
+                    )
+                except ValidationError as exc:
+                    transaction.savepoint_rollback(onboarding_savepoint)
+                    form.add_error(None, exc)
+                    return render(
+                        request, "catalog/product_form.html", form_context
+                    )
 
             opening = form.cleaned_data.get("opening_stock")
             warehouse = (
@@ -1002,13 +1009,28 @@ def _simple_crud(request, model, form_class, list_template, name, perm="products
         if request.method == "POST" and form.is_valid():
             obj = form.save(commit=False)
             obj.business = request.business
-            obj.save()
-            if isinstance(obj, TaxRate) and obj.is_default:
-                TaxRate.objects.for_business(request.business).exclude(pk=obj.pk).update(
-                    is_default=False
+            try:
+                with transaction.atomic():
+                    obj.save()
+                    if isinstance(obj, TaxRate) and obj.is_default:
+                        TaxRate.objects.for_business(request.business).exclude(
+                            pk=obj.pk
+                        ).update(is_default=False)
+            except IntegrityError:
+                # The form is the primary validation layer. Recheck the exact
+                # tenant-scoped domain conflict after rollback so only the
+                # expected uniqueness race becomes a controlled form error.
+                conflict_check = getattr(
+                    form,
+                    "database_name_conflict_exists",
+                    None,
                 )
-            messages.success(request, f"{name} saved.")
-            return redirect(request.path)
+                if conflict_check is None or not conflict_check():
+                    raise
+                form.add_error("name", form.duplicate_name_error)
+            else:
+                messages.success(request, f"{name} saved.")
+                return redirect(request.path)
         items = model.objects.for_business(request.business)
         ctx = {"form": form, "items": items, "editing": instance,
                "active_nav": "catalog_setup"}

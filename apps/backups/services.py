@@ -928,6 +928,13 @@ def acquire_tenant_operation_lock(
                     active=True,
                 )
         except IntegrityError as exc:
+            conflict_exists = (
+                TenantOperationLock.objects.for_business(business)
+                .filter(active=True)
+                .exists()
+            )
+            if not conflict_exists:
+                raise
             raise TenantOperationLocked(
                 "Another exclusive operation is active for this business."
             ) from exc

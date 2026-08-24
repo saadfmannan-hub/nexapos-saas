@@ -414,17 +414,20 @@ def hold_sale(
     normalized_cart = deepcopy(cart)
     cart_items = normalized_cart.get("items", [])
     validation_items = cart_items if isinstance(cart_items, list) else []
-    product_ids = {
-        line.get("product_id")
-        for line in validation_items
-        if isinstance(line, dict) and line.get("product_id")
-    }
-    products = {
-        str(product.pk): product
-        for product in Product.objects.for_business(business)
-        .filter(pk__in=product_ids)
-        .select_related("unit")
-    }
+    try:
+        product_ids = {
+            line.get("product_id")
+            for line in validation_items
+            if isinstance(line, dict) and line.get("product_id")
+        }
+        products = {
+            str(product.pk): product
+            for product in Product.objects.for_business(business)
+            .filter(pk__in=product_ids)
+            .select_related("unit")
+        }
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise SaleError("Invalid product in cart.") from exc
     for index, line in enumerate(validation_items):
         if not isinstance(line, dict):
             continue
@@ -1441,6 +1444,9 @@ def add_sale_payment(
                 membership=context.membership,
                 request=request,
             )
+    amount = D(amount)
+    if not amount.is_finite():
+        raise SaleError("Enter a finite payment amount.")
     amount = money(amount)
     if amount <= 0:
         raise SaleError("Payment amount must be positive.")

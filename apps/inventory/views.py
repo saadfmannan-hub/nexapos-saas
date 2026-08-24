@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django import forms as django_forms
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -8,7 +10,6 @@ from django.shortcuts import redirect, render
 
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.mixins import get_tenant_object
-from apps.core.money import D
 from apps.subscriptions import services as subscriptions
 from apps.subscriptions.access import get_access_context
 from apps.subscriptions.decorators import module_permission_required
@@ -32,24 +33,31 @@ def _qs_without_page(request):
 
 
 def _warehouse_scoped(request, queryset, *, field="warehouse"):
-    allowed = request.membership.allowed_branch_ids
-    if allowed is None:
-        return queryset
-    return queryset.filter(**{f"{field}__branch_id__in": allowed})
+    allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_branches is not None:
+        queryset = queryset.filter(
+            **{f"{field}__branch_id__in": allowed_branches}
+        )
+    if allowed_warehouses is not None:
+        queryset = queryset.filter(**{f"{field}_id__in": allowed_warehouses})
+    return queryset
 
 
 def _allowed_warehouse_ids(request):
-    """Return None for tenant-wide access, otherwise assigned-branch IDs."""
-    allowed = request.membership.allowed_branch_ids
-    if allowed is None:
+    """Return the effective intersection of branch and warehouse scope."""
+    allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_branches is None and allowed_warehouses is None:
         return None
     from apps.branches.models import Warehouse
 
-    return list(
-        Warehouse.objects.for_business(request.business)
-        .filter(branch_id__in=allowed)
-        .values_list("id", flat=True)
-    )
+    warehouses = Warehouse.objects.for_business(request.business)
+    if allowed_branches is not None:
+        warehouses = warehouses.filter(branch_id__in=allowed_branches)
+    if allowed_warehouses is not None:
+        warehouses = warehouses.filter(pk__in=allowed_warehouses)
+    return list(warehouses.values_list("id", flat=True))
 
 
 def _warehouse_queryset(request):
@@ -70,8 +78,11 @@ def _inventory_context(request, *, required=False):
     raw_warehouse = source.get("warehouse", "")
     branches = Branch.objects.for_business(request.business).filter(is_active=True)
     allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
     if allowed_branches is not None:
         branches = branches.filter(pk__in=allowed_branches)
+    if allowed_warehouses is not None:
+        branches = branches.filter(warehouses__pk__in=allowed_warehouses).distinct()
     branch = None
     if raw_branch:
         if not str(raw_branch).isdigit():
@@ -79,7 +90,7 @@ def _inventory_context(request, *, required=False):
         branch = branches.filter(pk=int(raw_branch)).first()
         if branch is None:
             raise Http404
-    elif allowed_branches is not None:
+    elif allowed_branches is not None or allowed_warehouses is not None:
         branch_list = list(branches.order_by("id")[:2])
         if len(branch_list) == 1:
             branch = branch_list[0]
@@ -92,7 +103,6 @@ def _inventory_context(request, *, required=False):
         branch=branch,
         is_active=True,
     )
-    allowed_warehouses = request.membership.allowed_warehouse_ids
     if allowed_warehouses is not None:
         warehouses = warehouses.filter(pk__in=allowed_warehouses)
     warehouse = None
@@ -112,12 +122,19 @@ def _inventory_context(request, *, required=False):
 
 
 def _transfer_scoped(request, queryset):
-    allowed = request.membership.allowed_branch_ids
-    if allowed is None:
-        return queryset
-    from_allowed = Q(from_warehouse__branch_id__in=allowed)
-    to_allowed = Q(to_warehouse__branch_id__in=allowed)
-    return queryset.filter(from_allowed & to_allowed)
+    allowed_branches = request.membership.allowed_branch_ids
+    allowed_warehouses = request.membership.allowed_warehouse_ids
+    if allowed_branches is not None:
+        queryset = queryset.filter(
+            from_warehouse__branch_id__in=allowed_branches,
+            to_warehouse__branch_id__in=allowed_branches,
+        )
+    if allowed_warehouses is not None:
+        queryset = queryset.filter(
+            from_warehouse_id__in=allowed_warehouses,
+            to_warehouse_id__in=allowed_warehouses,
+        )
+    return queryset
 
 
 @module_permission_required("inventory", "inventory.view")
@@ -314,14 +331,14 @@ def inventory_import(request):
 @module_permission_required("inventory", "inventory.view")
 def movement_list(request):
     qs = (
-        StockMovement.objects.for_business(request.business)
+        _warehouse_scoped(
+            request,
+            StockMovement.objects.for_business(request.business),
+        )
         .select_related("product__unit", "variant", "warehouse", "user")
     )
     if not get_access_context(request).has_module("tailoring"):
         qs = qs.filter(product__is_tailoring_item=False)
-    allowed = request.membership.allowed_branch_ids
-    if allowed is not None:
-        qs = qs.filter(warehouse__branch_id__in=allowed)
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(Q(product__name__icontains=q) | Q(reference_id__icontains=q))
@@ -735,13 +752,31 @@ def count_detail(request, public_id):
         items = items.filter(product__is_tailoring_item=False)
     if request.method == "POST" and count.status in ("open", "review"):
         action = request.POST.get("action", "save")
+        counted_values = {}
         for item in items:
             raw = request.POST.get(f"counted_{item.pk}", "")
             if raw != "":
-                item.counted_quantity = D(raw)
-                item.save(update_fields=["counted_quantity"])
+                try:
+                    counted_quantity = Decimal(str(raw))
+                except (InvalidOperation, TypeError, ValueError):
+                    messages.error(
+                        request,
+                        "Counted quantities must be valid numbers.",
+                    )
+                    return redirect(
+                        "inventory:count_detail",
+                        public_id=count.public_id,
+                    )
+                if not counted_quantity.is_finite():
+                    messages.error(request, "Counted quantities must be finite numbers.")
+                    return redirect("inventory:count_detail", public_id=count.public_id)
+                counted_values[item.pk] = counted_quantity
             elif action == "approve":
                 continue
+        for item in items:
+            if item.pk in counted_values:
+                item.counted_quantity = counted_values[item.pk]
+                item.save(update_fields=["counted_quantity"])
         if action == "approve":
             if not request.membership.has_perm("inventory.adjust_approve"):
                 messages.error(request, "You need approval permission to apply a count.")

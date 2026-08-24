@@ -3,7 +3,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.subscriptions.access import AccessAction, require_actor_access
 from apps.subscriptions.exceptions import ModuleAccessDenied
@@ -113,6 +113,39 @@ VARIANT_FORM_FIELDS = (
     "name", "sku", "barcode", "purchase_price", "sale_price", "image",
     "is_active", "attributes",
 )
+
+
+def _identifier_conflict(instance, business):
+    products = Product.objects.for_business(business)
+    variants = ProductVariant.objects.for_business(business)
+    if isinstance(instance, Product):
+        if instance.pk:
+            products = products.exclude(pk=instance.pk)
+    elif instance.pk:
+        variants = variants.exclude(pk=instance.pk)
+
+    for field_name, label in (("sku", "SKU"), ("barcode", "barcode")):
+        value = str(getattr(instance, field_name, "") or "").strip()
+        if value and (
+            products.filter(**{field_name: value}).exists()
+            or variants.filter(**{field_name: value}).exists()
+        ):
+            return field_name, f"This {label} is already in use."
+    return None
+
+
+def _save_with_identifier_guard(instance, business):
+    try:
+        # The savepoint keeps the surrounding service transaction usable for
+        # the post-rollback conflict check.
+        with transaction.atomic():
+            instance.save()
+    except IntegrityError as exc:
+        conflict = _identifier_conflict(instance, business)
+        if conflict is None:
+            raise
+        field_name, message = conflict
+        raise ValidationError({field_name: message}) from exc
 
 
 def _require_product_write(*, business, user, permission_code,
@@ -234,7 +267,7 @@ def save_product(*, product, business, user, membership=None, request=None):
             request=request,
         )
     product.business = business
-    product.save()
+    _save_with_identifier_guard(product, business)
     return product
 
 
@@ -306,7 +339,7 @@ def save_variant(*, variant, product, user, membership=None, request=None):
         variant = canonical_variant
     variant.business = business
     variant.product = canonical_product
-    variant.save()
+    _save_with_identifier_guard(variant, business)
     return variant
 
 

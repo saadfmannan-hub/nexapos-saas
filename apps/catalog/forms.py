@@ -24,6 +24,60 @@ class ProductUnitSelect(forms.Select):
         return option
 
 
+class TenantScopedNameValidationMixin:
+    """Validate human-readable setup names inside their tenant scope."""
+
+    duplicate_name_error = "An item with this name already exists."
+    duplicate_scope_fields = ()
+
+    def name_conflict_exists(self):
+        name = str(self.cleaned_data.get("name") or "").strip()
+        if not name:
+            return False
+        queryset = self._meta.model.objects.for_business(self.business).filter(
+            name__iexact=name
+        )
+        for field_name in self.duplicate_scope_fields:
+            queryset = queryset.filter(
+                **{field_name: self.cleaned_data.get(field_name)}
+            )
+        if self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        return queryset.exists()
+
+    def database_name_conflict_exists(self):
+        """Match the exact database constraint after an IntegrityError."""
+        name = str(self.cleaned_data.get("name") or "").strip()
+        if not name:
+            return False
+        if any(
+            self.cleaned_data.get(field_name) is None
+            for field_name in self.duplicate_scope_fields
+        ):
+            # SQL unique constraints treat nullable scope values as distinct;
+            # an IntegrityError in that case came from another constraint.
+            return False
+        queryset = self._meta.model.objects.for_business(self.business).filter(
+            name=name
+        )
+        for field_name in self.duplicate_scope_fields:
+            queryset = queryset.filter(
+                **{field_name: self.cleaned_data.get(field_name)}
+            )
+        if self.instance.pk:
+            queryset = queryset.exclude(pk=self.instance.pk)
+        return queryset.exists()
+
+    def clean(self):
+        cleaned = super().clean()
+        name = str(cleaned.get("name") or "").strip()
+        if name:
+            cleaned["name"] = name
+            if self.name_conflict_exists():
+                self.add_error("name", self.duplicate_name_error)
+        return cleaned
+
+
 class ProductIdentifierValidationMixin:
     def _unique_check(self, field, value):
         if not value:
@@ -52,7 +106,10 @@ class ProductIdentifierValidationMixin:
         return self._unique_check("barcode", self.cleaned_data.get("barcode", "").strip())
 
 
-class CategoryForm(TenantStyledModelForm):
+class CategoryForm(TenantScopedNameValidationMixin, TenantStyledModelForm):
+    duplicate_name_error = "A category with this name already exists under this parent."
+    duplicate_scope_fields = ("parent",)
+
     class Meta:
         model = Category
         fields = ["name", "parent", "is_active"]
@@ -66,13 +123,17 @@ class CategoryForm(TenantStyledModelForm):
         self.fields["parent"].required = False
 
 
-class BrandForm(TenantStyledModelForm):
+class BrandForm(TenantScopedNameValidationMixin, TenantStyledModelForm):
+    duplicate_name_error = "A brand with this name already exists."
+
     class Meta:
         model = Brand
         fields = ["name", "is_active"]
 
 
-class UnitForm(TenantStyledModelForm):
+class UnitForm(TenantScopedNameValidationMixin, TenantStyledModelForm):
+    duplicate_name_error = "A unit with this name already exists."
+
     class Meta:
         model = Unit
         fields = ["name", "abbreviation", "allow_decimal", "is_active"]
@@ -119,7 +180,9 @@ class UnitForm(TenantStyledModelForm):
         return unit
 
 
-class TaxRateForm(TenantStyledModelForm):
+class TaxRateForm(TenantScopedNameValidationMixin, TenantStyledModelForm):
+    duplicate_name_error = "A tax rate with this name already exists."
+
     class Meta:
         model = TaxRate
         fields = ["name", "rate", "is_default", "is_active"]

@@ -1,7 +1,7 @@
 """Transactional WMS attendance mutations with immutable audit history."""
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.audit import services as audit
 from apps.wms_core.models import WmsSettings
@@ -79,7 +79,21 @@ def create_attendance(
     )
     for field in ATTENDANCE_TIME_FIELDS:
         setattr(attendance, field, time_values.get(field))
-    attendance.save()
+    try:
+        # Keep the outer service transaction usable if the database wins a
+        # concurrent unique race after model validation has already passed.
+        with transaction.atomic():
+            attendance.save()
+    except IntegrityError as exc:
+        conflict_exists = WmsAttendance.objects.for_business(business).filter(
+            employee_id=employee.pk,
+            attendance_date=attendance_date,
+        ).exists()
+        if conflict_exists:
+            raise ValidationError(
+                "Attendance already exists for this employee on this date."
+            ) from exc
+        raise
     audit.log(
         "wms.attendance_created",
         business=business,

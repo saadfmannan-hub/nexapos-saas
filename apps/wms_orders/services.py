@@ -2,6 +2,7 @@
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models.functions import Lower
 
 from apps.audit import services as audit
 from apps.wms_core.models import WmsLocation
@@ -134,9 +135,21 @@ def create_order_batch(
                 )
                 orders.append(order)
     except IntegrityError as exc:
-        raise ValidationError(
-            "One or more order references already exist."
-        ) from exc
+        conflict_exists = (
+            WmsWorkshopOrder.objects.for_business(business)
+            .annotate(normalized_reference=Lower("order_reference"))
+            .filter(
+                normalized_reference__in=[
+                    reference.lower() for reference in references
+                ]
+            )
+            .exists()
+        )
+        if conflict_exists:
+            raise ValidationError(
+                "One or more order references already exist."
+            ) from exc
+        raise
 
     audit.log(
         "wms.order_batch_created",

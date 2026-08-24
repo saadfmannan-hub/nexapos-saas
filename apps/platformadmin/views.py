@@ -11,11 +11,11 @@ from functools import wraps
 from django import forms
 from django.contrib import messages
 from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
-from django.http import HttpResponseBadRequest
+from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.crypto import get_random_string
@@ -37,6 +37,10 @@ from apps.subscriptions.services import (
 from apps.tenants.models import Business
 
 from .models import Announcement, SupportAccessGrant
+
+# Well beyond any practical commercial subscription while remaining safely
+# inside Python's datetime range from the current date.
+MAX_SUBSCRIPTION_DAYS = 365_000
 
 
 def platform_admin_required(view_func):
@@ -641,12 +645,24 @@ def business_action(request, public_id, action):
         else:
             messages.error(request, "Payment could not be recorded. Check the form values.")
     elif action == "extend" and sub:
-        days = int(request.POST.get("days", 30))
-        plan_id = request.POST.get("plan_id")
+        extension_data = request.POST.copy()
+        extension_data.setdefault("days", "30")
+        extension_data.setdefault("method", "manual")
+        form = LegacySubscriptionExtensionForm(extension_data)
+        if not form.is_valid():
+            messages.error(
+                request,
+                "Subscription extension could not be saved. Check the form values.",
+            )
+            return redirect(
+                "platformadmin:business_detail", public_id=public_id
+            )
+        days = form.cleaned_data["days"]
+        new_plan = form.cleaned_data.get("plan_id")
         old_plan = sub.plan
         subscription_state_before = capture_subscription_state(sub)
-        if plan_id:
-            sub.plan = Plan.objects.get(pk=plan_id)
+        if new_plan:
+            sub.plan = new_plan
         base = sub.current_period_end or timezone.now()
         if base < timezone.now():
             base = timezone.now()
@@ -663,14 +679,14 @@ def business_action(request, public_id, action):
             request=request,
         )
         subscription_state_after = capture_subscription_state(sub)
-        amount = request.POST.get("amount", "")
-        if amount:
+        amount = form.cleaned_data.get("amount")
+        if amount is not None:
             record_subscription_payment(
                 business=business,
                 subscription=sub,
                 amount=amount,
-                method=request.POST.get("method", "manual"),
-                reference=request.POST.get("reference", "")[:120],
+                method=form.cleaned_data["method"],
+                reference=form.cleaned_data.get("reference", ""),
                 period_start=sub.current_period_start,
                 period_end=sub.current_period_end,
                 user=request.user,
@@ -685,7 +701,18 @@ def business_action(request, public_id, action):
         messages.success(request, f"Subscription extended to "
                                   f"{sub.current_period_end:%Y-%m-%d}.")
     elif action == "extend_trial" and sub:
-        days = int(request.POST.get("days", 7))
+        trial_data = request.POST.copy()
+        trial_data.setdefault("days", "7")
+        form = LegacyTrialExtensionForm(trial_data)
+        if not form.is_valid():
+            messages.error(
+                request,
+                "Trial extension could not be saved. Check the form values.",
+            )
+            return redirect(
+                "platformadmin:business_detail", public_id=public_id
+            )
+        days = form.cleaned_data["days"]
         base = sub.trial_ends_at or timezone.now()
         if base < timezone.now():
             base = timezone.now()
@@ -748,7 +775,10 @@ class BusinessCreateForm(forms.Form):
         choices=[("trial", "Trial"), ("active", "Active (paid)")],
         initial="trial", widget=forms.Select(attrs=SELECT))
     days = forms.IntegerField(
-        required=False, min_value=1, label="Days (trial / paid period)",
+        required=False,
+        min_value=1,
+        max_value=MAX_SUBSCRIPTION_DAYS,
+        label="Days (trial / paid period)",
         help_text="Leave blank to use the plan's trial length.",
         widget=forms.NumberInput(attrs=INPUT))
     amount = forms.DecimalField(
@@ -925,6 +955,49 @@ class SubscriptionPaymentReversalForm(forms.Form):
     )
 
 
+class LegacySubscriptionExtensionForm(forms.Form):
+    days = forms.IntegerField(min_value=1, max_value=MAX_SUBSCRIPTION_DAYS)
+    plan_id = forms.ModelChoiceField(
+        queryset=Plan.objects.filter(is_active=True),
+        required=False,
+    )
+    amount = forms.DecimalField(
+        required=False,
+        min_value=Decimal("0.001"),
+        max_digits=14,
+        decimal_places=3,
+    )
+    method = forms.ChoiceField(
+        choices=SubscriptionPayment._meta.get_field("method").choices,
+        initial="manual",
+    )
+    reference = forms.CharField(required=False, max_length=120)
+
+
+class LegacyTrialExtensionForm(forms.Form):
+    days = forms.IntegerField(min_value=1, max_value=MAX_SUBSCRIPTION_DAYS)
+
+
+class _OwnerEmailConflict(Exception):
+    """A concurrent platform-owner creation claimed the submitted email."""
+
+
+def _create_platform_owner(*, email, password, full_name, phone):
+    email = User.objects.normalize_email(email)
+    try:
+        with transaction.atomic():
+            return User.objects.create_user(
+                email=email,
+                password=password,
+                full_name=full_name,
+                phone=phone,
+            )
+    except IntegrityError as exc:
+        if User.objects.filter(email=email).exists():
+            raise _OwnerEmailConflict from exc
+        raise
+
+
 @platform_admin_required
 def business_create(request):
     form = BusinessCreateForm(request.POST or None)
@@ -942,84 +1015,90 @@ def business_create(request):
             password = get_random_string(12)
             generated_password = password
 
-        with transaction.atomic():
-            owner = existing_owner
-            if owner is None:
-                owner = User.objects.create_user(
-                    email=cd["owner_email"],
-                    password=password,
-                    full_name=cd["owner_name"],
-                    phone=cd.get("phone", ""),
-                )
-            business = provision_business(
-                owner=owner,
-                name=cd["business_name"],
-                country=cd.get("country", ""),
-                currency_code=currency_code,
-                currency_precision=precision_for(currency_code, default=2),
-                business_category=cd.get("business_category", ""),
-                phone=cd.get("phone", ""),
-                plan=cd["plan"],
-                request=request,
-            )
-
-            sub = business.subscription
-            now = timezone.now()
-            days = cd.get("days")
-            if cd["subscription_mode"] == "active":
-                # Mirror the existing "extend" action: active paid period.
-                period_days = days or 30
-                subscription_state_before = capture_subscription_state(sub)
-                sub.status = Subscription.Status.ACTIVE
-                sub.current_period_start = now
-                sub.current_period_end = now + timedelta(days=period_days)
-                sub.save()
-                subscription_state_after = capture_subscription_state(sub)
-                amount = cd.get("amount")
-                if amount:
-                    record_subscription_payment(
-                        business=business,
-                        subscription=sub,
-                        amount=amount,
-                        method="manual",
-                        reference=cd.get("reference", "")[:120],
-                        period_start=sub.current_period_start,
-                        period_end=sub.current_period_end,
-                        user=request.user,
-                        subscription_state_before=subscription_state_before,
-                        subscription_state_after=subscription_state_after,
+        try:
+            with transaction.atomic():
+                owner = existing_owner
+                if owner is None:
+                    owner = _create_platform_owner(
+                        email=cd["owner_email"],
+                        password=password,
+                        full_name=cd["owner_name"],
+                        phone=cd.get("phone", ""),
                     )
-            elif days:
-                # Trial with an explicit length overriding the plan default.
-                sub.status = Subscription.Status.TRIAL
-                sub.trial_ends_at = now + timedelta(days=days)
-                sub.save()
+                business = provision_business(
+                    owner=owner,
+                    name=cd["business_name"],
+                    country=cd.get("country", ""),
+                    currency_code=currency_code,
+                    currency_precision=precision_for(currency_code, default=2),
+                    business_category=cd.get("business_category", ""),
+                    phone=cd.get("phone", ""),
+                    plan=cd["plan"],
+                    request=request,
+                )
 
-            audit.log(
-                "platform.business_created", business=business,
-                user=request.user, request=request, module="platformadmin",
-                obj=business,
-                description=f"Business '{business.name}' created with owner "
-                            f"{owner.email} on plan {sub.plan.name}.")
+                sub = business.subscription
+                now = timezone.now()
+                days = cd.get("days")
+                if cd["subscription_mode"] == "active":
+                    # Mirror the existing "extend" action: active paid period.
+                    period_days = days or 30
+                    subscription_state_before = capture_subscription_state(sub)
+                    sub.status = Subscription.Status.ACTIVE
+                    sub.current_period_start = now
+                    sub.current_period_end = now + timedelta(days=period_days)
+                    sub.save()
+                    subscription_state_after = capture_subscription_state(sub)
+                    amount = cd.get("amount")
+                    if amount:
+                        record_subscription_payment(
+                            business=business,
+                            subscription=sub,
+                            amount=amount,
+                            method="manual",
+                            reference=cd.get("reference", "")[:120],
+                            period_start=sub.current_period_start,
+                            period_end=sub.current_period_end,
+                            user=request.user,
+                            subscription_state_before=subscription_state_before,
+                            subscription_state_after=subscription_state_after,
+                        )
+                elif days:
+                    # Trial with an explicit length overriding the plan default.
+                    sub.status = Subscription.Status.TRIAL
+                    sub.trial_ends_at = now + timedelta(days=days)
+                    sub.save()
 
-        if existing_owner is not None:
-            messages.success(
-                request,
-                f"Business '{business.name}' created using the existing shared "
-                f"owner account {owner.email}.",
+                audit.log(
+                    "platform.business_created", business=business,
+                    user=request.user, request=request, module="platformadmin",
+                    obj=business,
+                    description=f"Business '{business.name}' created with owner "
+                                f"{owner.email} on plan {sub.plan.name}.")
+        except _OwnerEmailConflict:
+            form.add_error(
+                "owner_email",
+                "An account with this email already exists.",
             )
-        elif generated_password:
-            messages.success(
-                request,
-                f"Business '{business.name}' created. Owner login — "
-                f"email: {owner.email} · password: {generated_password} "
-                "(shown once; copy it now).")
         else:
-            messages.success(
-                request,
-                f"Business '{business.name}' created. Owner: {owner.email}.")
-        return redirect("platformadmin:business_detail",
-                        public_id=business.public_id)
+            if existing_owner is not None:
+                messages.success(
+                    request,
+                    f"Business '{business.name}' created using the existing shared "
+                    f"owner account {owner.email}.",
+                )
+            elif generated_password:
+                messages.success(
+                    request,
+                    f"Business '{business.name}' created. Owner login — "
+                    f"email: {owner.email} · password: {generated_password} "
+                    "(shown once; copy it now).")
+            else:
+                messages.success(
+                    request,
+                    f"Business '{business.name}' created. Owner: {owner.email}.")
+            return redirect("platformadmin:business_detail",
+                            public_id=business.public_id)
 
     return render(request, "platformadmin/business_create.html",
                   {"form": form, "pa_nav": "businesses"})
@@ -1034,8 +1113,17 @@ def support_access(request, public_id):
         raise Http404 from None
     if request.method == "POST":
         if request.POST.get("revoke_id"):
+            try:
+                revoke_id = forms.IntegerField(min_value=1).clean(
+                    request.POST["revoke_id"]
+                )
+            except forms.ValidationError:
+                messages.error(request, "Select a valid support access grant.")
+                return redirect(
+                    "platformadmin:business_detail", public_id=public_id
+                )
             grant = SupportAccessGrant.objects.filter(
-                pk=request.POST["revoke_id"], business=business).first()
+                pk=revoke_id, business=business).first()
             if grant:
                 grant.revoked_at = timezone.now()
                 grant.revoked_by = request.user
@@ -1047,9 +1135,16 @@ def support_access(request, public_id):
                 messages.success(request, "Support access revoked.")
         else:
             reason = request.POST.get("reason", "").strip()
-            hours = int(request.POST.get("hours", 4))
+            try:
+                hours = forms.IntegerField(min_value=1, max_value=72).clean(
+                    request.POST.get("hours", 4)
+                )
+            except forms.ValidationError:
+                hours = None
             if not reason:
                 messages.error(request, "A reason is required for support access.")
+            elif hours is None:
+                messages.error(request, "Hours must be between 1 and 72.")
             else:
                 grant = SupportAccessGrant.objects.create(
                     business=business, granted_to=request.user,
@@ -1304,6 +1399,23 @@ class PlanForm(forms.ModelForm):
         self.limit_fields = [self[name] for name in self.LIMIT_FIELDS]
         self.module_fields = [self[name] for name in self.MODULE_FIELDS]
 
+    def clean_name(self):
+        name = self.cleaned_data["name"].strip()
+        plans = Plan.objects.filter(name__iexact=name)
+        if self.instance.pk:
+            plans = plans.exclude(pk=self.instance.pk)
+        if plans.exists():
+            raise forms.ValidationError("A plan with this name already exists.")
+        return name
+
+    def clean_trial_days(self):
+        trial_days = self.cleaned_data["trial_days"]
+        if trial_days > MAX_SUBSCRIPTION_DAYS:
+            raise forms.ValidationError(
+                f"Ensure this value is less than or equal to {MAX_SUBSCRIPTION_DAYS}."
+            )
+        return trial_days
+
     def clean(self):
         cleaned_data = super().clean()
         for module_field, dependency_fields in PLAN_MODULE_DEPENDENCIES.items():
@@ -1336,26 +1448,39 @@ def plan_form(request, pk=None):
     was_wms_enabled = bool(instance.feature_wms) if instance else False
     form = PlanForm(request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
+        saved = False
         with transaction.atomic():
-            plan = form.save()
-            if was_wms_enabled != plan.feature_wms:
-                from apps.wms_core.services import sync_wms_entitlement
+            try:
+                with transaction.atomic():
+                    plan = form.save()
+            except IntegrityError:
+                conflicts = Plan.objects.filter(name=form.cleaned_data["name"])
+                if form.instance.pk:
+                    conflicts = conflicts.exclude(pk=form.instance.pk)
+                if not conflicts.exists():
+                    raise
+                form.add_error("name", "A plan with this name already exists.")
+            else:
+                saved = True
+                if was_wms_enabled != plan.feature_wms:
+                    from apps.wms_core.services import sync_wms_entitlement
 
-                subscriptions = Subscription.objects.filter(
-                    plan=plan
-                ).select_related("business__owner")
-                for subscription in subscriptions:
-                    sync_wms_entitlement(
-                        subscription.business,
-                        was_enabled=was_wms_enabled,
-                        is_enabled=plan.feature_wms,
-                        request=request,
-                    )
-            audit.log("platform.plan_saved", user=request.user, request=request,
-                      module="platformadmin", obj=plan,
-                      description=f"Plan '{plan.name}' saved.")
-        messages.success(request, "Plan saved.")
-        return redirect("platformadmin:plan_list")
+                    subscriptions = Subscription.objects.filter(
+                        plan=plan
+                    ).select_related("business__owner")
+                    for subscription in subscriptions:
+                        sync_wms_entitlement(
+                            subscription.business,
+                            was_enabled=was_wms_enabled,
+                            is_enabled=plan.feature_wms,
+                            request=request,
+                        )
+                audit.log("platform.plan_saved", user=request.user, request=request,
+                          module="platformadmin", obj=plan,
+                          description=f"Plan '{plan.name}' saved.")
+        if saved:
+            messages.success(request, "Plan saved.")
+            return redirect("platformadmin:plan_list")
     return render(request, "platformadmin/plan_form.html",
                   {"form": form, "plan": instance, "pa_nav": "plans"})
 
@@ -1375,17 +1500,42 @@ class CouponForm(forms.ModelForm):
             else:
                 f.widget.attrs.setdefault("class", "form-control")
 
+    def clean_code(self):
+        code = self.cleaned_data["code"].strip()
+        coupons = Coupon.objects.filter(code__iexact=code)
+        if self.instance.pk:
+            coupons = coupons.exclude(pk=self.instance.pk)
+        if coupons.exists():
+            raise forms.ValidationError("A coupon with this code already exists.")
+        return code
+
 
 @platform_admin_required
 def coupon_list(request):
     instance = None
     if request.GET.get("edit"):
-        instance = Coupon.objects.filter(public_id=request.GET["edit"]).first()
+        try:
+            instance = Coupon.objects.filter(
+                public_id=request.GET["edit"]
+            ).first()
+        except (ValidationError, ValueError):
+            raise Http404 from None
     form = CouponForm(request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Coupon saved.")
-        return redirect("platformadmin:coupon_list")
+        try:
+            with transaction.atomic():
+                form.save()
+        except IntegrityError:
+            code = form.cleaned_data["code"]
+            conflict = Coupon.objects.filter(code=code)
+            if form.instance.pk:
+                conflict = conflict.exclude(pk=form.instance.pk)
+            if not conflict.exists():
+                raise
+            form.add_error("code", "A coupon with this code already exists.")
+        else:
+            messages.success(request, "Coupon saved.")
+            return redirect("platformadmin:coupon_list")
     coupons = Coupon.objects.all()
     return render(request, "platformadmin/coupon_list.html",
                   {"coupons": coupons, "form": form, "editing": instance})

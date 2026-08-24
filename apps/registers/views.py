@@ -10,7 +10,6 @@ from django.views.decorators.http import require_POST
 from apps.audit import services as audit
 from apps.core.date_ranges import date_range_querystring, resolve_date_range
 from apps.core.mixins import get_tenant_object
-from apps.core.money import D
 from apps.subscriptions import services as subscriptions
 from apps.subscriptions.decorators import module_permission_required
 from apps.subscriptions.helpers import guard_limit, limit_blocked_response
@@ -159,7 +158,7 @@ def shift_open(request):
             business=request.business,
             register=register,
             cashier=request.user,
-            opening_cash=D(request.POST.get("opening_cash")),
+            opening_cash=request.POST.get("opening_cash"),
             notes=request.POST.get("notes", "")[:300],
             membership=request.membership,
             request=request,
@@ -215,7 +214,7 @@ def shift_close(request, public_id):
         try:
             services.close_shift(
                 shift=shift,
-                actual_cash=D(request.POST.get("actual_cash")),
+                actual_cash=request.POST.get("actual_cash"),
                 notes=request.POST.get("notes", "")[:300],
                 user=request.user,
                 membership=request.membership,
@@ -315,6 +314,13 @@ def register_form(request, public_id=None):
                     request=request,
                 )
         except IntegrityError:
+            conflicts = CashRegister.objects.for_business(
+                request.business
+            ).filter(code=saved_register.code)
+            if saved_register.pk:
+                conflicts = conflicts.exclude(pk=saved_register.pk)
+            if not conflicts.exists():
+                raise
             form.add_error("code", "This register code is already in use.")
         else:
             new_values = {

@@ -3,6 +3,7 @@
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -190,6 +191,7 @@ def manual_backup(request):
 def restore_preflight(request, public_id):
     backup = selectors.get_backup_for_business(request.business, public_id)
     eligible = selectors.is_backup_restore_eligible(request.business, backup)
+    response_status = 200
     if request.method == "POST":
         form = RestorePreflightForm(request.POST)
         if form.is_valid() and eligible:
@@ -203,6 +205,13 @@ def restore_preflight(request, public_id):
                 )
             except owner_services.OwnerBackupActionUnavailable as exc:
                 messages.warning(request, str(exc))
+                response_status = 409
+            except ValidationError:
+                messages.warning(
+                    request,
+                    "Restore readiness changed. Refresh the page and try again.",
+                )
+                response_status = 409
             else:
                 request.session[PREFLIGHT_SESSION_KEY] = outcome.as_session_value(
                     business_public_id=request.business.public_id,
@@ -211,9 +220,12 @@ def restore_preflight(request, public_id):
                 return redirect("backups:restore", public_id=backup.public_id)
         elif not eligible:
             messages.warning(request, "This backup is not eligible for restore.")
+            response_status = 409
+        else:
+            response_status = 400
     else:
         form = RestorePreflightForm()
-    return render(
+    response = render(
         request,
         "backups/restore_preflight.html",
         {
@@ -223,6 +235,8 @@ def restore_preflight(request, public_id):
             "form": form,
         },
     )
+    response.status_code = response_status
+    return response
 
 
 def _session_preflight(request, backup):

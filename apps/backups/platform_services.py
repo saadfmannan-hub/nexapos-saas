@@ -197,26 +197,27 @@ def platform_run_restore_preflight(*, business, backup, actor, reason, request=N
             "No business data was changed."
         )
 
-    restore = services.create_restore_request(
-        business=business,
-        source_backup=backup,
-        requested_scope=BackupScope(backup.scope),
-        actor=actor,
-        reason=reason,
-        idempotency_key=services.generate_idempotency_key("platform-preflight"),
-        request=request,
-    )
-    services.create_backup_activity(
-        business=business,
-        backup=backup,
-        restore=restore,
-        actor=actor,
-        request=request,
-        event_type=PLATFORM_RESTORE_PREFLIGHT_REQUESTED,
-        reason=reason,
-        sanitized_message="Restore readiness was requested by Platform Administration.",
-        structured_metadata={"scope": str(restore.requested_scope), "mutation": False},
-    )
+    with transaction.atomic():
+        restore = services.create_restore_request(
+            business=business,
+            source_backup=backup,
+            requested_scope=BackupScope(backup.scope),
+            actor=actor,
+            reason=reason,
+            idempotency_key=services.generate_idempotency_key("platform-preflight"),
+            request=request,
+        )
+        services.create_backup_activity(
+            business=business,
+            backup=backup,
+            restore=restore,
+            actor=actor,
+            request=request,
+            event_type=PLATFORM_RESTORE_PREFLIGHT_REQUESTED,
+            reason=reason,
+            sanitized_message="Restore readiness was requested by Platform Administration.",
+            structured_metadata={"scope": str(restore.requested_scope), "mutation": False},
+        )
 
     coordinator = None
     result = None

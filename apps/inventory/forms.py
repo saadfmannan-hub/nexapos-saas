@@ -1,10 +1,11 @@
+from decimal import Decimal, InvalidOperation
+
 from django import forms
-from django.db.models import Q
 
 from apps.branches.models import Warehouse
 from apps.catalog.models import Product
 
-from .models import StockAdjustment, StockTransfer
+from .models import StockAdjustment
 
 
 class WarehouseScopedForm(forms.Form):
@@ -13,11 +14,16 @@ class WarehouseScopedForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.business = business
         warehouse_qs = Warehouse.objects.for_business(business).filter(is_active=True)
-        allowed = membership.allowed_branch_ids if membership is not None else None
-        if allowed is not None:
-            warehouse_qs = warehouse_qs.filter(
-                Q(branch_id__in=allowed) | Q(branch__isnull=True)
-            )
+        allowed_branches = (
+            membership.allowed_branch_ids if membership is not None else None
+        )
+        allowed_warehouses = (
+            membership.allowed_warehouse_ids if membership is not None else None
+        )
+        if allowed_branches is not None:
+            warehouse_qs = warehouse_qs.filter(branch_id__in=allowed_branches)
+        if allowed_warehouses is not None:
+            warehouse_qs = warehouse_qs.filter(pk__in=allowed_warehouses)
         self.warehouse_queryset = warehouse_qs
         if "warehouse" in self.fields:
             self.fields["warehouse"].queryset = warehouse_qs
@@ -74,8 +80,6 @@ def parse_item_rows(
     """Parse repeated product_id[]/variant_id[]/quantity[] rows from POST.
     Returns list of dicts; raises forms.ValidationError on bad input."""
     from apps.catalog.models import ProductVariant
-    from apps.core.money import D
-
     product_ids = request.POST.getlist("product_id")
     variant_ids = request.POST.getlist("variant_id")
     quantities = request.POST.getlist("quantity")
@@ -86,7 +90,7 @@ def parse_item_rows(
         try:
             product = Product.objects.for_business(business).get(pk=int(pid))
         except (Product.DoesNotExist, ValueError):
-            raise forms.ValidationError("Invalid product in line items.")
+            raise forms.ValidationError("Invalid product in line items.") from None
         variant = None
         vid = variant_ids[i] if i < len(variant_ids) else ""
         if vid:
@@ -94,8 +98,16 @@ def parse_item_rows(
                 variant = ProductVariant.objects.for_business(business).get(
                     pk=int(vid), product=product)
             except (ProductVariant.DoesNotExist, ValueError):
-                raise forms.ValidationError("Invalid variant in line items.")
-        qty = D(quantities[i] if i < len(quantities) else 0)
+                raise forms.ValidationError("Invalid variant in line items.") from None
+        raw_quantity = quantities[i] if i < len(quantities) else 0
+        try:
+            qty = Decimal(str(raw_quantity))
+        except (InvalidOperation, TypeError, ValueError):
+            raise forms.ValidationError(
+                "Quantities must be valid numbers."
+            ) from None
+        if not qty.is_finite():
+            raise forms.ValidationError("Quantities must be finite numbers.")
         if qty == 0:
             continue
         if (

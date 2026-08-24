@@ -1,6 +1,6 @@
 """Register lifecycle and shift services."""
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.db.models import ProtectedError, Q, Sum
@@ -53,6 +53,20 @@ def get_open_shift(business, user, register=None, membership=None):
 
 class ShiftError(Exception):
     pass
+
+
+def _cash_decimal(value, label):
+    if isinstance(value, Decimal):
+        parsed = value
+    else:
+        raw_value = repr(value) if isinstance(value, float) else str(value)
+        try:
+            parsed = Decimal(raw_value)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ShiftError(f"Enter a valid {label}.") from exc
+    if not parsed.is_finite():
+        raise ShiftError(f"Enter a finite {label}.")
+    return parsed
 
 
 class RegisterLifecycleError(Exception):
@@ -478,6 +492,7 @@ def open_shift(*, business, register, cashier, opening_cash, notes="",
         cashier=cashier, status=Shift.Status.OPEN
     ).exists():
         raise ShiftError("You already have an open shift on another register.")
+    opening_cash = _cash_decimal(opening_cash, "opening cash amount")
     shift = Shift.objects.create(
         business=business,
         register=register,
@@ -570,6 +585,7 @@ def close_shift(*, shift, actual_cash, user, notes="", denominations=None,
         raise ShiftError("Only the shift's cashier or a manager can close it.")
     if shift.status != Shift.Status.OPEN:
         raise ShiftError("This shift is not open.")
+    actual_cash = _cash_decimal(actual_cash, "actual cash amount")
     totals = shift_totals(shift)
     shift.expected_cash = totals["expected_cash"]
     shift.actual_cash = actual_cash

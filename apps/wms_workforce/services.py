@@ -1,7 +1,7 @@
 """Transactional WMS workforce mutation services with audit coverage."""
 
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.audit import services as audit
 
@@ -44,6 +44,34 @@ def _safe_compensation_audit_state(employee):
     }
 
 
+def _employee_code_conflict_exists(*, business, employee, creating):
+    conflicts = WmsEmployee.objects.for_business(business).filter(
+        employee_code__iexact=employee.employee_code,
+    )
+    if not creating:
+        conflicts = conflicts.exclude(pk=employee.pk)
+    return conflicts.exists()
+
+
+def _category_conflict_errors(*, business, category, creating):
+    categories = WmsProductionCategory.objects.for_business(business)
+    if not creating:
+        categories = categories.exclude(pk=category.pk)
+    errors = {}
+    if categories.filter(name__iexact=category.name).exists():
+        errors["name"] = "This production category already exists."
+    if category.code and categories.filter(code__iexact=category.code).exists():
+        errors["code"] = "This category code is already in use."
+    return errors
+
+
+def _assignment_conflict_exists(*, business, employee, category):
+    return WmsEmployeeCategoryAssignment.objects.for_business(business).filter(
+        employee_id=employee.pk,
+        category_id=category.pk,
+    ).exists()
+
+
 @transaction.atomic
 def save_employee(
     *,
@@ -71,7 +99,21 @@ def save_employee(
     if creating:
         employee.created_by = actor
     employee.updated_by = actor
-    employee.save()
+    try:
+        # Preserve the outer transaction after a database uniqueness race so
+        # the exact tenant-scoped conflict can be verified safely.
+        with transaction.atomic():
+            employee.save()
+    except IntegrityError as exc:
+        if _employee_code_conflict_exists(
+            business=business,
+            employee=employee,
+            creating=creating,
+        ):
+            raise ValidationError(
+                {"employee_code": "This employee code is already in use."}
+            ) from exc
+        raise
 
     audit.log(
         "wms.employee_created" if creating else "wms.employee_updated",
@@ -187,7 +229,18 @@ def save_category(
     if creating:
         category.created_by = actor
     category.updated_by = actor
-    category.save()
+    try:
+        with transaction.atomic():
+            category.save()
+    except IntegrityError as exc:
+        errors = _category_conflict_errors(
+            business=business,
+            category=category,
+            creating=creating,
+        )
+        if errors:
+            raise ValidationError(errors) from exc
+        raise
     audit.log(
         "wms.category_created" if creating else "wms.category_updated",
         business=business,
@@ -283,11 +336,18 @@ def save_assignment(
     creating = False
     reactivating = False
     if instance is not None:
-        assignment = WmsEmployeeCategoryAssignment.objects.select_for_update().get(
-            pk=instance.pk
-        )
-        if assignment.business_id != business.pk:
+        if instance.business_id != business.pk:
             raise ValidationError("The WMS assignment belongs to another business.")
+        try:
+            assignment = (
+                WmsEmployeeCategoryAssignment.objects.for_business(business)
+                .select_for_update()
+                .get(pk=instance.pk)
+            )
+        except WmsEmployeeCategoryAssignment.DoesNotExist as exc:
+            raise ValidationError(
+                "The WMS assignment belongs to another business."
+            ) from exc
         if (
             assignment.employee_id != employee.pk
             or assignment.category_id != category.pk
@@ -298,9 +358,9 @@ def save_assignment(
         target_active = assignment.is_active
     else:
         assignment = (
-            WmsEmployeeCategoryAssignment.objects.select_for_update()
+            WmsEmployeeCategoryAssignment.objects.for_business(business)
+            .select_for_update()
             .filter(
-                business=business,
                 employee=employee,
                 category=category,
             )
@@ -322,7 +382,24 @@ def save_assignment(
     assignment.per_piece_rate = per_piece_rate
     assignment.is_active = target_active
     assignment.updated_by = actor
-    assignment.save()
+    try:
+        with transaction.atomic():
+            assignment.save()
+    except IntegrityError as exc:
+        if creating and _assignment_conflict_exists(
+            business=business,
+            employee=employee,
+            category=category,
+        ):
+            raise ValidationError(
+                {
+                    "category": (
+                        "This production category is already assigned to "
+                        "this employee."
+                    )
+                }
+            ) from exc
+        raise
 
     action = (
         "wms.employee_category_assigned"

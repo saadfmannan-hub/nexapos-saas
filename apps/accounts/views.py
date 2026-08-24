@@ -6,7 +6,7 @@ from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import views as auth_views
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.shortcuts import redirect, render
 from django.urls import reverse_lazy
 from django.utils import timezone
@@ -37,19 +37,13 @@ def _custom_roles_enabled(request):
     return get_access_context(request).has_module("custom_roles")
 
 
-def _require_custom_role_assignment(request, *, current_role=None):
+def _require_custom_role_assignment(request, *, selected_role, current_role=None):
     """Gate only selecting a new custom role; preserve existing assignments."""
 
-    if request.method != "POST":
-        return
-    selected = Role.objects.for_business(request.business).filter(
-        pk=request.POST.get("role")
-    ).first()
     if (
-        selected is not None
-        and not selected.is_system
-        and not selected.is_owner
-        and (current_role is None or selected.pk != current_role.pk)
+        not selected_role.is_system
+        and not selected_role.is_owner
+        and (current_role is None or selected_role.pk != current_role.pk)
     ):
         require_access(
             request,
@@ -57,6 +51,30 @@ def _require_custom_role_assignment(request, *, current_role=None):
             permission_code="users.manage",
             action=AccessAction.WRITE,
         )
+
+
+def _protected_identity_changes(form, user):
+    """Return identity fields a non-self admin tried to change."""
+
+    changes = []
+    if form.cleaned_data["full_name"] != user.full_name.strip():
+        changes.append("full_name")
+    if form.cleaned_data["email"] != User.objects.normalize_email(user.email):
+        changes.append("email")
+    if form.cleaned_data["phone"] != user.phone.strip():
+        changes.append("phone")
+    if form.cleaned_data["password"]:
+        changes.append("password")
+    return changes
+
+
+def _add_protected_identity_errors(form, fields):
+    message = (
+        "Only the account holder can change identity or password for an owner "
+        "or shared account."
+    )
+    for field in fields:
+        form.add_error(field, message)
 
 
 def login_view(request):
@@ -212,7 +230,6 @@ def _lock_and_check_user_seat(business):
 
 @module_permission_required("pos_core", "users.manage")
 def user_create(request):
-    _require_custom_role_assignment(request)
     custom_roles_enabled = _custom_roles_enabled(request)
     form = EmployeeForm(
         request.business,
@@ -220,19 +237,24 @@ def user_create(request):
         custom_roles_enabled=custom_roles_enabled,
     )
     if request.method == "POST" and form.is_valid():
+        _require_custom_role_assignment(
+            request,
+            selected_role=form.cleaned_data["role"],
+        )
+        integrity_stage = None
         try:
             with transaction.atomic():
                 if form.cleaned_data["is_active"]:
                     _lock_and_check_user_seat(request.business)
                 email = form.cleaned_data["email"]
-                user = User.objects.filter(email__iexact=email).first()
-                if user is None:
-                    user = User.objects.create_user(
-                        email=email,
-                        password=form.cleaned_data["password"],
-                        full_name=form.cleaned_data["full_name"],
-                        phone=form.cleaned_data["phone"],
-                    )
+                integrity_stage = "user"
+                user = User.objects.create_user(
+                    email=email,
+                    password=form.cleaned_data["password"],
+                    full_name=form.cleaned_data["full_name"],
+                    phone=form.cleaned_data["phone"],
+                )
+                integrity_stage = "membership"
                 membership = Membership.objects.create(
                     business=request.business,
                     user=user,
@@ -250,8 +272,16 @@ def user_create(request):
             from apps.subscriptions.helpers import limit_blocked_response
 
             return limit_blocked_response(request, exc, resource="users")
-        messages.success(request, "Employee added.")
-        return redirect("accounts:user_list")
+        except IntegrityError:
+            if (
+                integrity_stage != "user"
+                or not User.objects.filter(email=email).exists()
+            ):
+                raise
+            form.add_error("email", "An account with this email already exists.")
+        else:
+            messages.success(request, "Employee added.")
+            return redirect("accounts:user_list")
     return render(request, "accounts/user_form.html",
                   {"form": form, "active_nav": "users", "creating": True})
 
@@ -259,7 +289,6 @@ def user_create(request):
 @module_permission_required("pos_core", "users.manage")
 def user_edit(request, public_id):
     membership = get_tenant_object(Membership, request.business, public_id=public_id)
-    _require_custom_role_assignment(request, current_role=membership.role)
     custom_roles_enabled = _custom_roles_enabled(request)
     initial = {
         "full_name": membership.user.full_name,
@@ -273,36 +302,82 @@ def user_edit(request, public_id):
                         editing=membership, initial=initial,
                         custom_roles_enabled=custom_roles_enabled)
     if request.method == "POST" and form.is_valid():
+        _require_custom_role_assignment(
+            request,
+            selected_role=form.cleaned_data["role"],
+            current_role=membership.role,
+        )
         reactivating = (
             not membership.is_active
             and form.cleaned_data["is_active"]
             and not membership.role.is_owner
         )
+        protected_identity_fields = []
+        identity_email_conflict = False
         try:
             with transaction.atomic():
                 if reactivating:
                     _lock_and_check_user_seat(request.business)
-                user = membership.user
-                old_role = membership.role.name
-                old_email = user.email
-                old_active = membership.is_active
-                user.full_name = form.cleaned_data["full_name"]
-                user.email = form.cleaned_data["email"]
-                user.phone = form.cleaned_data["phone"]
-                if form.cleaned_data["password"]:
-                    user.set_password(form.cleaned_data["password"])
-                user.save()
-                if not membership.role.is_owner:
-                    membership.role = form.cleaned_data["role"]
-                    membership.is_active = form.cleaned_data["is_active"]
-                membership.save()
-                membership.branches.set(form.cleaned_data["branches"])
-                audit.log("user.updated", request=request, module="accounts", obj=user,
-                          old_values={"email": old_email, "role": old_role,
-                                      "is_active": old_active},
-                          new_values={"email": user.email, "role": membership.role.name,
-                                      "is_active": membership.is_active},
-                          description=f"Employee {user.email} updated.")
+                membership = (
+                    Membership.objects.select_for_update()
+                    .select_related("user", "role")
+                    .get(pk=membership.pk, business=request.business)
+                )
+                user = User.objects.select_for_update().get(pk=membership.user_id)
+                identity_protected = (
+                    request.user.pk != user.pk
+                    and (
+                        membership.role.is_owner
+                        or Membership.objects.filter(user=user)
+                        .exclude(pk=membership.pk)
+                        .exists()
+                    )
+                )
+                if identity_protected:
+                    protected_identity_fields = _protected_identity_changes(form, user)
+                if not protected_identity_fields:
+                    old_role = membership.role.name
+                    old_email = user.email
+                    old_active = membership.is_active
+                    if not identity_protected:
+                        user.full_name = form.cleaned_data["full_name"]
+                        user.email = form.cleaned_data["email"]
+                        user.phone = form.cleaned_data["phone"]
+                        if form.cleaned_data["password"]:
+                            user.set_password(form.cleaned_data["password"])
+                        try:
+                            with transaction.atomic():
+                                user.save()
+                        except IntegrityError:
+                            conflicts = User.objects.filter(
+                                email=form.cleaned_data["email"]
+                            ).exclude(pk=user.pk)
+                            if not conflicts.exists():
+                                raise
+                            identity_email_conflict = True
+                    if not identity_email_conflict:
+                        if not membership.role.is_owner:
+                            membership.role = form.cleaned_data["role"]
+                            membership.is_active = form.cleaned_data["is_active"]
+                        membership.save()
+                        membership.branches.set(form.cleaned_data["branches"])
+                        audit.log(
+                            "user.updated",
+                            request=request,
+                            module="accounts",
+                            obj=user,
+                            old_values={
+                                "email": old_email,
+                                "role": old_role,
+                                "is_active": old_active,
+                            },
+                            new_values={
+                                "email": user.email,
+                                "role": membership.role.name,
+                                "is_active": membership.is_active,
+                            },
+                            description=f"Employee {user.email} updated.",
+                        )
         except (
             subscriptions.LimitExceeded,
             subscriptions.SubscriptionInactive,
@@ -310,8 +385,13 @@ def user_edit(request, public_id):
             from apps.subscriptions.helpers import limit_blocked_response
 
             return limit_blocked_response(request, exc, resource="users")
-        messages.success(request, "Employee updated.")
-        return redirect("accounts:user_list")
+        if protected_identity_fields:
+            _add_protected_identity_errors(form, protected_identity_fields)
+        elif identity_email_conflict:
+            form.add_error("email", "An account with this email already exists.")
+        else:
+            messages.success(request, "Employee updated.")
+            return redirect("accounts:user_list")
     return render(request, "accounts/user_form.html",
                   {"form": form, "active_nav": "users", "membership": membership})
 
@@ -354,10 +434,22 @@ def role_form(request, public_id=None):
         role.business = request.business
         if instance is None:
             role.is_system = False
-        role.save()
-        audit.log("role.saved", request=request, module="accounts", obj=role,
-                  description=f"Role '{role.name}' saved.")
-        messages.success(request, "Role saved.")
-        return redirect("accounts:role_list")
+        try:
+            with transaction.atomic():
+                role.save()
+        except IntegrityError:
+            conflicts = Role.objects.for_business(request.business).filter(
+                name=role.name
+            )
+            if role.pk:
+                conflicts = conflicts.exclude(pk=role.pk)
+            if not conflicts.exists():
+                raise
+            form.add_error("name", "A role with this name already exists.")
+        else:
+            audit.log("role.saved", request=request, module="accounts", obj=role,
+                      description=f"Role '{role.name}' saved.")
+            messages.success(request, "Role saved.")
+            return redirect("accounts:role_list")
     return render(request, "accounts/role_form.html",
                   {"form": form, "active_nav": "users", "role": instance})

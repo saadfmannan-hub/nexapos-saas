@@ -174,25 +174,26 @@ def run_restore_preflight(*, business, backup, actor, reason, request=None):
             "No business data was changed."
         )
 
-    restore = services.create_restore_request(
-        business=business,
-        source_backup=backup,
-        requested_scope=BackupScope(backup.scope),
-        actor=actor,
-        reason=reason,
-        idempotency_key=services.generate_idempotency_key("owner-preflight"),
-        request=request,
-    )
-    services.create_backup_activity(
-        business=business,
-        backup=backup,
-        restore=restore,
-        actor=actor,
-        request=request,
-        event_type=RESTORE_PREFLIGHT_REQUESTED,
-        sanitized_message="Restore readiness was requested by the business owner.",
-        structured_metadata={"scope": str(restore.requested_scope)},
-    )
+    with transaction.atomic():
+        restore = services.create_restore_request(
+            business=business,
+            source_backup=backup,
+            requested_scope=BackupScope(backup.scope),
+            actor=actor,
+            reason=reason,
+            idempotency_key=services.generate_idempotency_key("owner-preflight"),
+            request=request,
+        )
+        services.create_backup_activity(
+            business=business,
+            backup=backup,
+            restore=restore,
+            actor=actor,
+            request=request,
+            event_type=RESTORE_PREFLIGHT_REQUESTED,
+            sanitized_message="Restore readiness was requested by the business owner.",
+            structured_metadata={"scope": str(restore.requested_scope)},
+        )
 
     coordinator = None
     result = None

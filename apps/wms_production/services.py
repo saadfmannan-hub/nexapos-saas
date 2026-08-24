@@ -133,9 +133,15 @@ def create_production_entry(
         with transaction.atomic():
             entry.save()
     except IntegrityError as exc:
-        raise ValidationError(
-            "Production already exists for this employee on this date."
-        ) from exc
+        conflict_exists = WmsProductionEntry.objects.for_business(business).filter(
+            employee_id=employee.pk,
+            production_date=production_date,
+        ).exists()
+        if conflict_exists:
+            raise ValidationError(
+                "Production already exists for this employee on this date."
+            ) from exc
+        raise
 
     lines = []
     for assignment in assignments:

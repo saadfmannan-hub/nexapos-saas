@@ -1,7 +1,7 @@
 from django import forms
 from django.contrib import messages
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import redirect, render
@@ -64,6 +64,8 @@ class ExpenseForm(TenantStyledModelForm):
 
 
 class ExpenseCategoryForm(TenantStyledModelForm):
+    duplicate_name_error = "An expense category with this name already exists."
+
     class Meta:
         model = ExpenseCategory
         fields = ["name", "parent", "is_active"]
@@ -73,6 +75,27 @@ class ExpenseCategoryForm(TenantStyledModelForm):
         self.fields["parent"].queryset = ExpenseCategory.objects.for_business(
             business).filter(parent__isnull=True)
         self.fields["parent"].required = False
+
+    def _duplicate_name_exists(self, name, parent):
+        categories = ExpenseCategory.objects.for_business(self.business).filter(
+            name__iexact=name,
+            parent=parent,
+        )
+        if self.instance.pk:
+            categories = categories.exclude(pk=self.instance.pk)
+        return categories.exists()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        name = (cleaned_data.get("name") or "").strip()
+        if name:
+            cleaned_data["name"] = name
+        if name and "parent" in cleaned_data and self._duplicate_name_exists(
+            name,
+            cleaned_data["parent"],
+        ):
+            self.add_error("name", self.duplicate_name_error)
+        return cleaned_data
 
 
 class RecurringExpenseTemplateForm(TenantStyledModelForm):
@@ -482,9 +505,24 @@ def category_manage(request):
     if request.method == "POST" and form.is_valid():
         obj = form.save(commit=False)
         obj.business = request.business
-        obj.save()
-        messages.success(request, "Expense category saved.")
-        return redirect("expenses:categories")
+        try:
+            with transaction.atomic():
+                obj.save()
+        except IntegrityError:
+            if obj.parent_id is None:
+                raise
+            conflict = (
+                ExpenseCategory.objects.for_business(request.business)
+                .filter(name=obj.name, parent=obj.parent)
+                .exclude(pk=obj.pk)
+                .exists()
+            )
+            if not conflict:
+                raise
+            form.add_error("name", form.duplicate_name_error)
+        else:
+            messages.success(request, "Expense category saved.")
+            return redirect("expenses:categories")
     items = ExpenseCategory.objects.for_business(request.business)
     return render(request, "expenses/categories.html",
                   {"form": form, "items": items, "editing": instance,
