@@ -26,6 +26,8 @@ class WmsSalaryAdmin(ReadOnlySalaryAdminMixin, admin.ModelAdmin):
         "salary_year",
         "salary_month",
         "status",
+        "fixed_salary_component",
+        "production_salary_component",
         "gross_salary",
         "business",
     )

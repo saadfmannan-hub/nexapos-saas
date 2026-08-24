@@ -14,6 +14,13 @@ from .models import (
 )
 
 
+def _supports_piece_rates(employee):
+    return employee.compensation_type in {
+        WmsEmployee.CompensationType.PER_PIECE,
+        WmsEmployee.CompensationType.HYBRID,
+    }
+
+
 class TenantStyledModelForm(forms.ModelForm):
     def __init__(self, business, *args, **kwargs):
         self.business = business
@@ -156,10 +163,10 @@ class WmsAssignmentForm(TenantStyledModelForm):
             "display_order",
             "name",
         )
-        if employee.compensation_type != WmsEmployee.CompensationType.PER_PIECE:
+        if not _supports_piece_rates(employee):
             self.fields["per_piece_rate"].disabled = True
             self.fields["per_piece_rate"].help_text = (
-                "Category rates apply only to Per Piece employees."
+                "Category rates apply only to Per Piece and Hybrid employees."
             )
         else:
             self.fields["per_piece_rate"].help_text = (
@@ -179,10 +186,7 @@ class WmsAssignmentForm(TenantStyledModelForm):
             raise forms.ValidationError(
                 "The employee must have an active WMS location."
             )
-        if (
-            self.employee.compensation_type
-            != WmsEmployee.CompensationType.PER_PIECE
-        ):
+        if not _supports_piece_rates(self.employee):
             cleaned_data["per_piece_rate"] = None
         return cleaned_data
 
@@ -204,12 +208,8 @@ class WmsAssignmentRateForm(forms.Form):
 
     def clean_per_piece_rate(self):
         rate = self.cleaned_data.get("per_piece_rate")
-        if (
-            rate is not None
-            and self.employee.compensation_type
-            != WmsEmployee.CompensationType.PER_PIECE
-        ):
+        if not _supports_piece_rates(self.employee):
             raise forms.ValidationError(
-                "Category rates apply only to Per Piece employees."
+                "Category rates apply only to Per Piece and Hybrid employees."
             )
         return rate

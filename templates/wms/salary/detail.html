@@ -40,25 +40,47 @@
 {% endif %}
 
 <div class="row g-3 mb-3">
-  <div class="col-md-3">
+  <div class="col-sm-6 col-xl-3">
     <div class="card h-100"><div class="card-body">
       <div class="small text-secondary">Status</div>
       <div class="h4 mb-0">{{ salary.get_status_display }}</div>
     </div></div>
   </div>
-  <div class="col-md-3">
+  <div class="col-sm-6 col-xl-3">
     <div class="card h-100"><div class="card-body">
-      <div class="small text-secondary">Compensation</div>
+      <div class="small text-secondary">Compensation Type</div>
       <div class="h5 mb-0">{{ salary.get_compensation_type_snapshot_display }}</div>
     </div></div>
   </div>
-  <div class="col-md-3">
+  {% if salary.compensation_type_snapshot != "per_piece" %}
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Fixed Salary</div>
+      <div class="h4 mb-0">
+        {{ salary.fixed_salary_component|money_p:salary.currency_precision_snapshot }}
+        {{ salary.currency_display_snapshot }}
+      </div>
+    </div></div>
+  </div>
+  {% endif %}
+  {% if salary.compensation_type_snapshot != "fixed_salary" %}
+  <div class="col-sm-6 col-xl-3">
+    <div class="card h-100"><div class="card-body">
+      <div class="small text-secondary">Production Earnings</div>
+      <div class="h4 mb-0">
+        {{ salary.production_salary_component|money_p:salary.currency_precision_snapshot }}
+        {{ salary.currency_display_snapshot }}
+      </div>
+    </div></div>
+  </div>
+  <div class="col-sm-6 col-xl-3">
     <div class="card h-100"><div class="card-body">
       <div class="small text-secondary">Eligible quantity</div>
       <div class="h4 mb-0">{{ salary.total_eligible_quantity }}</div>
     </div></div>
   </div>
-  <div class="col-md-3">
+  {% endif %}
+  <div class="col-sm-6 col-xl-3">
     <div class="card h-100"><div class="card-body">
       <div class="small text-secondary">Gross salary</div>
       <div class="h4 mb-0">
@@ -83,13 +105,14 @@
         <span class="badge text-bg-light border me-1">{{ snapshot.location_name_snapshot }} — {{ snapshot.location_type_snapshot|title }}</span>
         {% endfor %}
       </dd>
-      {% if salary.compensation_type_snapshot == "fixed_salary" %}
+      {% if salary.compensation_type_snapshot != "per_piece" %}
       <dt class="col-sm-3">Fixed salary snapshot</dt>
       <dd class="col-sm-9">
         {{ salary.fixed_monthly_salary_snapshot|money_p:salary.currency_precision_snapshot }}
         {{ salary.currency_display_snapshot }}
       </dd>
-      {% else %}
+      {% endif %}
+      {% if salary.compensation_type_snapshot != "fixed_salary" %}
       <dt class="col-sm-3">Employee default rate snapshot</dt>
       <dd class="col-sm-9">
         {{ salary.default_per_piece_rate_snapshot|money_p:salary.currency_precision_snapshot }}
@@ -112,14 +135,14 @@
   </div>
 </div>
 
-{% if salary.compensation_type_snapshot == "fixed_salary" %}
+{% if salary.compensation_type_snapshot == "fixed_salary" or salary.compensation_type_snapshot == "hybrid" %}
 <div class="alert alert-light border">
   Attendance is shown for transparency only. No absence, late-arrival,
   worked-time, missing-time, or incomplete-shift deduction was applied.
   Because no employment end date or approved proration formula exists, the
   configured monthly salary remains undeducted.
 </div>
-<div class="card">
+<div class="card mb-3">
   <div class="card-header">Daily attendance breakdown</div>
   <div class="table-responsive">
     <table class="table table-sm table-hover mb-0 align-middle">
@@ -136,7 +159,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for day in salary.days.all %}
+        {% for day in attendance_days %}
         <tr>
           <td>{{ day.salary_date|date:"M d, Y" }}</td>
           <td>{{ day.location.branch.name }}</td>
@@ -161,13 +184,15 @@
     </table>
   </div>
 </div>
-{% else %}
+{% endif %}
+
+{% if salary.compensation_type_snapshot == "per_piece" or salary.compensation_type_snapshot == "hybrid" %}
 <div class="alert alert-light border">
   This result uses the compensation and assignment rates configured when the
   salary was calculated. Production-line quantities are used; Daily Total
   Pieces, alterations, and workshop orders are excluded.
 </div>
-{% for day in salary.days.all %}
+{% for day in production_days %}
 <div class="card mb-3">
   <div class="card-header d-flex justify-content-between">
     <span>{{ day.salary_date|date:"M d, Y" }} — {{ day.location.branch.name }}</span>

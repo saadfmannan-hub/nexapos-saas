@@ -14,7 +14,7 @@ from apps.subscriptions.access import AccessAction
 from apps.tenants.models import Business
 from apps.wms_attendance.models import WmsAttendance
 from apps.wms_core.access import evaluate_wms_actor_access
-from apps.wms_core.models import WmsLocation, WmsUserAccess
+from apps.wms_core.models import WmsUserAccess
 from apps.wms_production.models import (
     WmsProductionEntry,
     WmsProductionEntryLine,
@@ -309,6 +309,55 @@ def _piece_breakdown(
     return days, locations
 
 
+def _hybrid_breakdown(
+    *,
+    business,
+    employee,
+    period_start,
+    period_end,
+):
+    fixed_days, fixed_locations = _fixed_breakdown(
+        business=business,
+        employee=employee,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    piece_days, piece_locations = _piece_breakdown(
+        business=business,
+        employee=employee,
+        period_start=period_start,
+        period_end=period_end,
+    )
+    piece_days_by_date = {
+        item["salary_date"]: item for item in piece_days
+    }
+    for day in fixed_days:
+        piece_day = piece_days_by_date.pop(day["salary_date"], None)
+        if piece_day is None:
+            continue
+        if (
+            day["attendance"] is not None
+            and day["location"].pk != piece_day["location"].pk
+        ):
+            raise ValidationError(
+                "Attendance and production use different locations on "
+                f"{day['salary_date']:%Y-%m-%d}; the Hybrid salary day "
+                "cannot be snapshotted safely."
+            )
+        if day["attendance"] is None:
+            day["location"] = piece_day["location"]
+        day["production_entry"] = piece_day["production_entry"]
+        day["eligible_quantity"] = piece_day["eligible_quantity"]
+        day["daily_amount"] = piece_day["daily_amount"]
+        day["piece_lines"] = piece_day["piece_lines"]
+    if piece_days_by_date:
+        raise ValidationError(
+            "One or more Hybrid production dates could not be merged into "
+            "the salary calendar."
+        )
+    return fixed_days, {**fixed_locations, **piece_locations}
+
+
 @transaction.atomic
 def calculate_salary(
     *,
@@ -368,26 +417,51 @@ def calculate_salary(
             period_start=period_start,
             period_end=period_end,
         )
-        gross_salary = money(employee.fixed_monthly_salary)
         total_eligible_quantity = 0
-        fixed_snapshot = money(employee.fixed_monthly_salary)
+        fixed_salary_component = money(employee.fixed_monthly_salary)
+        production_salary_component = ZERO
+        fixed_snapshot = fixed_salary_component
         default_rate_snapshot = None
-    else:
+    elif employee.compensation_type == WmsEmployee.CompensationType.PER_PIECE:
         days, locations = _piece_breakdown(
             business=business,
             employee=employee,
             period_start=period_start,
             period_end=period_end,
         )
-        gross_salary = money(
+        production_salary_component = money(
             sum((item["daily_amount"] for item in days), ZERO)
         )
+        fixed_salary_component = ZERO
         total_eligible_quantity = sum(
             (item["eligible_quantity"] for item in days),
             0,
         )
         fixed_snapshot = None
         default_rate_snapshot = money(employee.default_per_piece_rate)
+    elif employee.compensation_type == WmsEmployee.CompensationType.HYBRID:
+        days, locations = _hybrid_breakdown(
+            business=business,
+            employee=employee,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        fixed_salary_component = money(employee.fixed_monthly_salary)
+        production_salary_component = money(
+            sum((item["daily_amount"] for item in days), ZERO)
+        )
+        total_eligible_quantity = sum(
+            (item["eligible_quantity"] for item in days),
+            0,
+        )
+        fixed_snapshot = fixed_salary_component
+        default_rate_snapshot = money(employee.default_per_piece_rate)
+    else:
+        raise ValidationError("The employee compensation type is unsupported.")
+
+    gross_salary = money(
+        fixed_salary_component + production_salary_component
+    )
 
     _validate_location_scope(access, locations)
     if salary is None:
@@ -414,6 +488,8 @@ def calculate_salary(
     salary.currency_symbol_snapshot = business.currency_symbol
     salary.currency_precision_snapshot = business.currency_precision
     salary.total_eligible_quantity = total_eligible_quantity
+    salary.fixed_salary_component = fixed_salary_component
+    salary.production_salary_component = production_salary_component
     salary.gross_salary = gross_salary
     salary.calculated_by = actor
     salary.calculated_at = calculated_at

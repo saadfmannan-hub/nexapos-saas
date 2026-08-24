@@ -72,6 +72,18 @@ class WmsSalary(ValidatedTenantModel):
         default=0,
         editable=False,
     )
+    fixed_salary_component = models.DecimalField(
+        max_digits=18,
+        decimal_places=3,
+        default=Decimal("0"),
+        editable=False,
+    )
+    production_salary_component = models.DecimalField(
+        max_digits=18,
+        decimal_places=3,
+        default=Decimal("0"),
+        editable=False,
+    )
     gross_salary = models.DecimalField(
         max_digits=18,
         decimal_places=3,
@@ -125,6 +137,36 @@ class WmsSalary(ValidatedTenantModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(
+                    fixed_salary_component__gte=0,
+                    production_salary_component__gte=0,
+                ),
+                name="wms_salary_components_nonneg",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        compensation_type_snapshot="fixed_salary",
+                        production_salary_component=0,
+                    )
+                    | models.Q(
+                        compensation_type_snapshot="per_piece",
+                        fixed_salary_component=0,
+                    )
+                    | models.Q(compensation_type_snapshot="hybrid")
+                ),
+                name="wms_salary_component_types",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    gross_salary=(
+                        models.F("fixed_salary_component")
+                        + models.F("production_salary_component")
+                    )
+                ),
+                name="wms_salary_components_sum",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
                     currency_precision_snapshot__gte=0,
                     currency_precision_snapshot__lte=3,
                 ),
@@ -140,6 +182,11 @@ class WmsSalary(ValidatedTenantModel):
                     | models.Q(
                         compensation_type_snapshot="per_piece",
                         fixed_monthly_salary_snapshot__isnull=True,
+                        default_per_piece_rate_snapshot__isnull=False,
+                    )
+                    | models.Q(
+                        compensation_type_snapshot="hybrid",
+                        fixed_monthly_salary_snapshot__isnull=False,
                         default_per_piece_rate_snapshot__isnull=False,
                     )
                 ),
@@ -196,6 +243,8 @@ class WmsSalary(ValidatedTenantModel):
                 "currency_symbol_snapshot",
                 "currency_precision_snapshot",
                 "total_eligible_quantity",
+                "fixed_salary_component",
+                "production_salary_component",
                 "gross_salary",
                 "calculated_by_id",
                 "calculated_at",
@@ -245,6 +294,33 @@ class WmsSalary(ValidatedTenantModel):
         if self.gross_salary is not None and self.gross_salary < 0:
             errors["gross_salary"] = "Gross salary cannot be negative."
         if (
+            self.fixed_salary_component is not None
+            and self.fixed_salary_component < 0
+        ):
+            errors["fixed_salary_component"] = (
+                "Fixed salary component cannot be negative."
+            )
+        if (
+            self.production_salary_component is not None
+            and self.production_salary_component < 0
+        ):
+            errors["production_salary_component"] = (
+                "Production salary component cannot be negative."
+            )
+        if all(
+            value is not None
+            for value in (
+                self.fixed_salary_component,
+                self.production_salary_component,
+                self.gross_salary,
+            )
+        ) and self.gross_salary != money(
+            self.fixed_salary_component + self.production_salary_component
+        ):
+            errors["gross_salary"] = (
+                "Gross salary must equal fixed plus production components."
+            )
+        if (
             self.currency_precision_snapshot is not None
             and not 0 <= self.currency_precision_snapshot <= 3
         ):
@@ -269,6 +345,28 @@ class WmsSalary(ValidatedTenantModel):
                 errors["fixed_monthly_salary_snapshot"] = (
                     "Per-piece salaries cannot contain a fixed salary snapshot."
                 )
+            if self.fixed_salary_component != money(0):
+                errors["fixed_salary_component"] = (
+                    "Per-piece salaries cannot contain a fixed component."
+                )
+        elif self.compensation_type_snapshot == WmsEmployee.CompensationType.HYBRID:
+            if self.fixed_monthly_salary_snapshot is None:
+                errors["fixed_monthly_salary_snapshot"] = (
+                    "A fixed salary snapshot is required."
+                )
+            if self.default_per_piece_rate_snapshot is None:
+                errors["default_per_piece_rate_snapshot"] = (
+                    "A default piece-rate snapshot is required."
+                )
+
+        if (
+            self.compensation_type_snapshot
+            == WmsEmployee.CompensationType.FIXED_SALARY
+            and self.production_salary_component != money(0)
+        ):
+            errors["production_salary_component"] = (
+                "Fixed salaries cannot contain a production component."
+            )
 
         original = None
         if self.pk:
@@ -504,6 +602,19 @@ class WmsSalaryDay(ValidatedTenantModel):
                     errors["attendance"] = (
                         "Per-piece salary days do not use attendance."
                     )
+            elif (
+                salary.compensation_type_snapshot
+                == WmsEmployee.CompensationType.HYBRID
+                and self.production_entry_id is None
+            ):
+                if self.eligible_quantity != 0:
+                    errors["eligible_quantity"] = (
+                        "A Hybrid day without production must have zero quantity."
+                    )
+                if self.daily_amount != money(0):
+                    errors["daily_amount"] = (
+                        "A Hybrid day without production must have zero production amount."
+                    )
 
         if self.attendance_id:
             attendance = self.attendance
@@ -634,10 +745,13 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
                 errors["salary_day"] = "Finalized salary snapshots are immutable."
             if (
                 day.salary.compensation_type_snapshot
-                != WmsEmployee.CompensationType.PER_PIECE
+                not in {
+                    WmsEmployee.CompensationType.PER_PIECE,
+                    WmsEmployee.CompensationType.HYBRID,
+                }
             ):
                 errors["salary_day"] = (
-                    "Piece lines are valid only for per-piece salaries."
+                    "Piece lines are valid only for Per Piece and Hybrid salaries."
                 )
         if day is not None and line is not None:
             if day.production_entry_id != line.entry_id:

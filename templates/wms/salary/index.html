@@ -76,6 +76,8 @@
           <th>Compensation</th>
           <th>Status</th>
           <th class="text-end">Eligible quantity</th>
+          <th class="text-end">Fixed component</th>
+          <th class="text-end">Production earnings</th>
           <th class="text-end">Gross salary</th>
           <th></th>
         </tr>
@@ -101,6 +103,18 @@
             </span>
           </td>
           <td class="text-end">{{ salary.total_eligible_quantity }}</td>
+          <td class="text-end">
+            {% if salary.compensation_type_snapshot == "per_piece" %}—{% else %}
+            {{ salary.fixed_salary_component|money_p:salary.currency_precision_snapshot }}
+            {{ salary.currency_display_snapshot }}
+            {% endif %}
+          </td>
+          <td class="text-end">
+            {% if salary.compensation_type_snapshot == "fixed_salary" %}—{% else %}
+            {{ salary.production_salary_component|money_p:salary.currency_precision_snapshot }}
+            {{ salary.currency_display_snapshot }}
+            {% endif %}
+          </td>
           <td class="text-end fw-semibold">
             {{ salary.gross_salary|money_p:salary.currency_precision_snapshot }}
             {{ salary.currency_display_snapshot }}
@@ -111,7 +125,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="7">
+          <td colspan="9">
             <div class="empty-state py-4">
               No salary calculations match these filters.
             </div>

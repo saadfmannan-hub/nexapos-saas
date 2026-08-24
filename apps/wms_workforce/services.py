@@ -379,6 +379,14 @@ def save_assignment(
             reactivating = not assignment.is_active
             target_active = True
 
+    if (
+        reactivating
+        and per_piece_rate is None
+        and assignment.per_piece_rate is not None
+        and employee.compensation_type
+        == WmsEmployee.CompensationType.FIXED_SALARY
+    ):
+        per_piece_rate = assignment.per_piece_rate
     assignment.per_piece_rate = per_piece_rate
     assignment.is_active = target_active
     assignment.updated_by = actor

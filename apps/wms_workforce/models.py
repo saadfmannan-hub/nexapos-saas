@@ -16,6 +16,7 @@ class WmsEmployee(ValidatedTenantModel):
     class CompensationType(models.TextChoices):
         FIXED_SALARY = "fixed_salary", "Fixed Salary"
         PER_PIECE = "per_piece", "Per Piece"
+        HYBRID = "hybrid", "Hybrid (Fixed + Production)"
 
     location = models.ForeignKey(
         WmsLocation,
@@ -69,7 +70,11 @@ class WmsEmployee(ValidatedTenantModel):
             ),
             models.CheckConstraint(
                 condition=models.Q(
-                    compensation_type__in=("fixed_salary", "per_piece")
+                    compensation_type__in=(
+                        "fixed_salary",
+                        "per_piece",
+                        "hybrid",
+                    )
                 ),
                 name="valid_wms_employee_comp_type",
             ),
@@ -97,6 +102,11 @@ class WmsEmployee(ValidatedTenantModel):
                     | models.Q(
                         compensation_type="per_piece",
                         fixed_monthly_salary__isnull=True,
+                        default_per_piece_rate__isnull=False,
+                    )
+                    | models.Q(
+                        compensation_type="hybrid",
+                        fixed_monthly_salary__isnull=False,
                         default_per_piece_rate__isnull=False,
                     )
                 ),
@@ -156,6 +166,18 @@ class WmsEmployee(ValidatedTenantModel):
                         )
                     }
                 )
+        elif self.compensation_type == self.CompensationType.HYBRID:
+            errors = {}
+            if self.fixed_monthly_salary is None:
+                errors["fixed_monthly_salary"] = (
+                    "Fixed monthly salary is required."
+                )
+            if self.default_per_piece_rate is None:
+                errors["default_per_piece_rate"] = (
+                    "Default per-piece rate is required."
+                )
+            if errors:
+                raise ValidationError(errors)
 
         for field_name in ("fixed_monthly_salary", "default_per_piece_rate"):
             value = getattr(self, field_name)
@@ -333,15 +355,39 @@ class WmsEmployeeCategoryAssignment(ValidatedTenantModel):
             self.per_piece_rate is not None
             and self.employee_id
             and self.employee.compensation_type
-            != WmsEmployee.CompensationType.PER_PIECE
+            not in {
+                WmsEmployee.CompensationType.PER_PIECE,
+                WmsEmployee.CompensationType.HYBRID,
+            }
         ):
-            raise ValidationError(
-                {
-                    "per_piece_rate": (
-                        "Category rates are available only for Per Piece employees."
+            original_identity_and_rate = None
+            if self.pk:
+                original_identity_and_rate = (
+                    type(self)
+                    .objects.filter(pk=self.pk)
+                    .values_list(
+                        "business_id",
+                        "employee_id",
+                        "category_id",
+                        "per_piece_rate",
                     )
-                }
+                    .first()
+                )
+            current_identity_and_rate = (
+                self.business_id,
+                self.employee_id,
+                self.category_id,
+                self.per_piece_rate,
             )
+            if original_identity_and_rate != current_identity_and_rate:
+                raise ValidationError(
+                    {
+                        "per_piece_rate": (
+                            "Category rates are available only for Per Piece "
+                            "and Hybrid employees."
+                        )
+                    }
+                )
         if self.is_active and self.employee_id and self.category_id:
             if not self.employee.is_active:
                 raise ValidationError(

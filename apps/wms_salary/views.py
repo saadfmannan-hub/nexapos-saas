@@ -16,6 +16,7 @@ from apps.wms_core.access import (
     first_permitted_wms_route,
     wms_permission_required,
 )
+from apps.wms_workforce.models import WmsEmployee
 
 from . import selectors, services
 from .forms import SalaryCalculationForm
@@ -112,6 +113,7 @@ def salary_detail(request, public_id):
         request.wms_user_access,
         public_id,
     )
+    salary_days = list(salary.days.all())
     return render(
         request,
         "wms/salary/detail.html",
@@ -120,6 +122,18 @@ def salary_detail(request, public_id):
             "salary_month_value": (
                 f"{salary.salary_year:04d}-{salary.salary_month:02d}"
             ),
+            "attendance_days": (
+                salary_days
+                if salary.compensation_type_snapshot
+                in {
+                    WmsEmployee.CompensationType.FIXED_SALARY,
+                    WmsEmployee.CompensationType.HYBRID,
+                }
+                else []
+            ),
+            "production_days": [
+                day for day in salary_days if day.production_entry_id is not None
+            ],
             "can_recalculate_salary": (
                 salary.status == WmsSalary.Status.CALCULATED
                 and request.wms_user_access.has_perm(

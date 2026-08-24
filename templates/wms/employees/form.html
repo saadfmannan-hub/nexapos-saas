@@ -4,12 +4,23 @@
   <div class="card-header"><i class="bi bi-person-badge text-primary"></i> {% if employee %}Edit employee{% else %}Add employee{% endif %}</div>
   <div class="card-body">
     <p class="text-secondary small">
-      Use either Fixed Salary or Per Piece. Leave the unused compensation field blank.
+      Choose Fixed Salary, Per Piece, or Hybrid (Fixed + Production).
+      Hybrid employees require both compensation values.
       This screen stores configuration only and does not calculate salary.
     </p>
     <form method="post">{% csrf_token %}
       {% for field in form %}
-        {% include "components/form_field.html" with field=field %}
+        {% if field.name == "fixed_monthly_salary" %}
+        <div data-compensation-field="fixed"{% if field.errors %} data-has-errors="true"{% endif %}>
+          {% include "components/form_field.html" with field=field %}
+        </div>
+        {% elif field.name == "default_per_piece_rate" %}
+        <div data-compensation-field="production"{% if field.errors %} data-has-errors="true"{% endif %}>
+          {% include "components/form_field.html" with field=field %}
+        </div>
+        {% else %}
+          {% include "components/form_field.html" with field=field %}
+        {% endif %}
       {% endfor %}
       <div class="d-flex gap-2">
         <button class="btn btn-primary" type="submit"><i class="bi bi-check-lg"></i> Save employee</button>
@@ -22,4 +33,40 @@
     </form>
   </div>
 </div>
+<script>
+  (() => {
+    const typeField = document.getElementById("id_compensation_type");
+    const fixedWrapper = document.querySelector('[data-compensation-field="fixed"]');
+    const productionWrapper = document.querySelector('[data-compensation-field="production"]');
+    if (!typeField || !fixedWrapper || !productionWrapper) return;
+
+    const configureField = (wrapper, enabled) => {
+      const input = wrapper.querySelector("input");
+      const label = wrapper.querySelector("label");
+      const hasErrors = wrapper.dataset.hasErrors === "true";
+      wrapper.hidden = !enabled && !hasErrors;
+      wrapper.setAttribute("aria-hidden", wrapper.hidden ? "true" : "false");
+      if (input) {
+        input.disabled = !enabled;
+        input.required = enabled;
+      }
+      if (label) label.classList.toggle("required-star", enabled);
+    };
+
+    const refreshCompensationFields = () => {
+      const type = typeField.value;
+      configureField(
+        fixedWrapper,
+        type === "fixed_salary" || type === "hybrid",
+      );
+      configureField(
+        productionWrapper,
+        type === "per_piece" || type === "hybrid",
+      );
+    };
+
+    typeField.addEventListener("change", refreshCompensationFields);
+    refreshCompensationFields();
+  })();
+</script>
 {% endblock %}

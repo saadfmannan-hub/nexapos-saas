@@ -69,7 +69,7 @@
         <tr>
           <td>{{ assignment.category.name }}{% if assignment.category.code %}<div class="small text-secondary">{{ assignment.category.code }}</div>{% endif %}</td>
           <td>
-            {% if employee.compensation_type == "per_piece" %}
+            {% if employee.compensation_type == "per_piece" or employee.compensation_type == "hybrid" %}
               {% if can_manage_employees %}
               <form class="d-flex gap-2" method="post" action="{% url 'wms:assignment_rate' employee.public_id assignment.public_id %}">{% csrf_token %}
                 <input class="form-control form-control-sm" style="max-width:140px" type="number" step="0.001" min="0"

@@ -432,6 +432,8 @@ LOGICAL_EXPORT_SPECS_WMS = (
             "currency_symbol_snapshot",
             "currency_precision_snapshot",
             "total_eligible_quantity",
+            "fixed_salary_component",
+            "production_salary_component",
             "gross_salary",
             "calculated_at",
             "finalized_at",

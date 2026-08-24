@@ -120,9 +120,8 @@ def salary_report(records, business):
         "final_salary": ZERO,
     }
     for salary in records:
-        is_fixed = salary.compensation_type_snapshot == "fixed_salary"
-        base_salary = salary.fixed_monthly_salary_snapshot if is_fixed else ZERO
-        piece_earnings = salary.gross_salary if not is_fixed else ZERO
+        base_salary = salary.fixed_salary_component
+        piece_earnings = salary.production_salary_component
         calculated_at = business_localtime(
             business,
             value=salary.calculated_at,

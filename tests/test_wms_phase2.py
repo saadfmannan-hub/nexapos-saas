@@ -160,6 +160,226 @@ class WmsPhase2ModelTests(WmsPhase2Base):
         )
         self.assertEqual(employee.default_per_piece_rate, Decimal("0.500"))
 
+    def test_employee_form_enforces_all_compensation_value_matrices(self):
+        def form_data(compensation_type, fixed_salary, piece_rate):
+            return {
+                "location": self.location_a.pk,
+                "employee_code": "FORM-MATRIX",
+                "full_name": "Form Matrix Employee",
+                "mobile": "",
+                "joining_date": "2026-02-01",
+                "compensation_type": compensation_type,
+                "fixed_monthly_salary": fixed_salary,
+                "default_per_piece_rate": piece_rate,
+                "notes": "",
+            }
+
+        valid_cases = (
+            (
+                "fixed salary",
+                WmsEmployee.CompensationType.FIXED_SALARY,
+                "150.000",
+                "",
+                Decimal("150.000"),
+                None,
+            ),
+            (
+                "per piece",
+                WmsEmployee.CompensationType.PER_PIECE,
+                "",
+                "0.500",
+                None,
+                Decimal("0.500"),
+            ),
+            (
+                "hybrid",
+                WmsEmployee.CompensationType.HYBRID,
+                "200.000",
+                "0.500",
+                Decimal("200.000"),
+                Decimal("0.500"),
+            ),
+        )
+        for (
+            label,
+            compensation_type,
+            fixed_salary,
+            piece_rate,
+            expected_fixed,
+            expected_piece,
+        ) in valid_cases:
+            with self.subTest(label=label, validity="valid"):
+                form = WmsEmployeeForm(
+                    self.business_a,
+                    self.access_a,
+                    form_data(compensation_type, fixed_salary, piece_rate),
+                )
+                self.assertTrue(form.is_valid(), form.errors)
+                self.assertEqual(
+                    form.cleaned_data["fixed_monthly_salary"],
+                    expected_fixed,
+                )
+                self.assertEqual(
+                    form.cleaned_data["default_per_piece_rate"],
+                    expected_piece,
+                )
+
+        invalid_cases = (
+            (
+                "fixed salary requires fixed value",
+                WmsEmployee.CompensationType.FIXED_SALARY,
+                "",
+                "",
+                "fixed_monthly_salary",
+            ),
+            (
+                "fixed salary rejects piece value",
+                WmsEmployee.CompensationType.FIXED_SALARY,
+                "150.000",
+                "0.500",
+                "default_per_piece_rate",
+            ),
+            (
+                "per piece requires default rate",
+                WmsEmployee.CompensationType.PER_PIECE,
+                "",
+                "",
+                "default_per_piece_rate",
+            ),
+            (
+                "per piece rejects fixed value",
+                WmsEmployee.CompensationType.PER_PIECE,
+                "150.000",
+                "0.500",
+                "fixed_monthly_salary",
+            ),
+            (
+                "hybrid requires fixed value",
+                WmsEmployee.CompensationType.HYBRID,
+                "",
+                "0.500",
+                "fixed_monthly_salary",
+            ),
+            (
+                "hybrid requires default rate",
+                WmsEmployee.CompensationType.HYBRID,
+                "200.000",
+                "",
+                "default_per_piece_rate",
+            ),
+        )
+        for (
+            label,
+            compensation_type,
+            fixed_salary,
+            piece_rate,
+            error_field,
+        ) in invalid_cases:
+            with self.subTest(label=label, validity="invalid"):
+                form = WmsEmployeeForm(
+                    self.business_a,
+                    self.access_a,
+                    form_data(compensation_type, fixed_salary, piece_rate),
+                )
+                self.assertFalse(form.is_valid())
+                self.assertIn(error_field, form.errors)
+
+    def test_employee_form_mode_transitions_clear_obsolete_values(self):
+        cases = (
+            (
+                "fixed-to-hybrid",
+                WmsEmployee.CompensationType.FIXED_SALARY,
+                Decimal("150.000"),
+                None,
+                WmsEmployee.CompensationType.HYBRID,
+                "200.000",
+                "0.500",
+                Decimal("200.000"),
+                Decimal("0.500"),
+            ),
+            (
+                "per-piece-to-hybrid",
+                WmsEmployee.CompensationType.PER_PIECE,
+                None,
+                Decimal("0.400"),
+                WmsEmployee.CompensationType.HYBRID,
+                "220.000",
+                "0.600",
+                Decimal("220.000"),
+                Decimal("0.600"),
+            ),
+            (
+                "hybrid-to-fixed",
+                WmsEmployee.CompensationType.HYBRID,
+                Decimal("200.000"),
+                Decimal("0.500"),
+                WmsEmployee.CompensationType.FIXED_SALARY,
+                "250.000",
+                "",
+                Decimal("250.000"),
+                None,
+            ),
+            (
+                "hybrid-to-per-piece",
+                WmsEmployee.CompensationType.HYBRID,
+                Decimal("200.000"),
+                Decimal("0.500"),
+                WmsEmployee.CompensationType.PER_PIECE,
+                "",
+                "0.800",
+                None,
+                Decimal("0.800"),
+            ),
+        )
+        for (
+            code,
+            initial_type,
+            initial_fixed,
+            initial_piece,
+            target_type,
+            target_fixed,
+            target_piece,
+            expected_fixed,
+            expected_piece,
+        ) in cases:
+            with self.subTest(transition=code):
+                employee = make_employee(
+                    self.business_a,
+                    self.location_a,
+                    f"MODE-{code.upper()}",
+                    compensation_type=initial_type,
+                    fixed_salary=initial_fixed,
+                    piece_rate=initial_piece,
+                )
+                form = WmsEmployeeForm(
+                    self.business_a,
+                    self.access_a,
+                    {
+                        "location": self.location_a.pk,
+                        "employee_code": employee.employee_code,
+                        "full_name": employee.full_name,
+                        "mobile": employee.mobile,
+                        "joining_date": employee.joining_date.isoformat(),
+                        "compensation_type": target_type,
+                        "fixed_monthly_salary": target_fixed,
+                        "default_per_piece_rate": target_piece,
+                        "notes": employee.notes,
+                    },
+                    instance=employee,
+                )
+                self.assertTrue(form.is_valid(), form.errors)
+
+                saved = services.save_employee(
+                    business=self.business_a,
+                    cleaned_data=form.cleaned_data,
+                    instance=employee,
+                    user=self.owner_a,
+                )
+
+                self.assertEqual(saved.compensation_type, target_type)
+                self.assertEqual(saved.fixed_monthly_salary, expected_fixed)
+                self.assertEqual(saved.default_per_piece_rate, expected_piece)
+
     def test_employee_location_must_be_tenant_valid_and_active_for_new_records(self):
         with self.assertRaises(ValidationError):
             make_employee(
@@ -245,6 +465,70 @@ class WmsPhase2ModelTests(WmsPhase2Base):
                 employee=employee,
                 category=category,
             )
+
+    def test_historical_hybrid_override_survives_fixed_assignment_lifecycle(self):
+        employee = make_employee(
+            self.business_a,
+            self.location_a,
+            "HYBRID-HISTORY",
+            compensation_type=WmsEmployee.CompensationType.HYBRID,
+            fixed_salary=Decimal("200.000"),
+            piece_rate=Decimal("0.500"),
+        )
+        category = make_category(self.business_a, "Historical Hybrid", "HH")
+        assignment = services.save_assignment(
+            business=self.business_a,
+            employee=employee,
+            category=category,
+            per_piece_rate=Decimal("0.700"),
+            user=self.owner_a,
+        )
+
+        employee.compensation_type = WmsEmployee.CompensationType.FIXED_SALARY
+        employee.default_per_piece_rate = None
+        employee.save()
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.per_piece_rate, Decimal("0.700"))
+
+        services.set_assignment_active(
+            business=self.business_a,
+            assignment=assignment,
+            is_active=False,
+            user=self.owner_a,
+        )
+        assignment = services.save_assignment(
+            business=self.business_a,
+            employee=employee,
+            category=category,
+            per_piece_rate=None,
+            user=self.owner_a,
+        )
+        assignment.refresh_from_db()
+        self.assertTrue(assignment.is_active)
+        self.assertEqual(assignment.per_piece_rate, Decimal("0.700"))
+
+        other_employee = make_employee(
+            self.business_a,
+            self.location_a,
+            "FIXED-HISTORY-TARGET",
+            fixed_salary=Decimal("250.000"),
+        )
+        assignment.employee = other_employee
+        with self.assertRaises(ValidationError):
+            assignment.save()
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.employee, employee)
+
+        other_category = make_category(
+            self.business_a,
+            "Historical Hybrid Target",
+            "HHT",
+        )
+        assignment.category = other_category
+        with self.assertRaises(ValidationError):
+            assignment.save()
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.category, category)
 
     def test_assignment_rejects_cross_tenant_and_inactive_records(self):
         employee = make_employee(
@@ -444,6 +728,37 @@ class WmsPhase2ViewTests(WmsPhase2Base):
         self.assertEqual(employee.full_name, "Updated Employee")
         self.assertEqual(employee.created_by, self.owner_a)
         self.assertEqual(employee.updated_by, self.owner_a)
+
+    def test_employee_form_exposes_hybrid_choice_and_ux_markers(self):
+        employee = make_employee(
+            self.business_a,
+            self.location_a,
+            "HYBRID-FORM",
+            compensation_type=WmsEmployee.CompensationType.HYBRID,
+            fixed_salary=Decimal("200.000"),
+            piece_rate=Decimal("0.500"),
+        )
+        response = self.client.get(reverse("wms:employee_edit", args=[employee.public_id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["form"]["compensation_type"].value(),
+            WmsEmployee.CompensationType.HYBRID,
+        )
+        self.assertContains(response, "Hybrid (Fixed + Production)")
+        self.assertContains(response, 'data-compensation-field="fixed"')
+        self.assertContains(response, 'data-compensation-field="production"')
+        content = response.content.decode()
+        self.assertIn(
+            'type === "fixed_salary" || type === "hybrid"',
+            content,
+        )
+        self.assertIn(
+            'type === "per_piece" || type === "hybrid"',
+            content,
+        )
+        self.assertIn("input.disabled = !enabled", content)
+        self.assertIn("input.required = enabled", content)
 
     def test_employee_filters_search_name_code_mobile_location_and_compensation(self):
         response = self.client.get(
@@ -689,6 +1004,97 @@ class WmsPhase2ViewTests(WmsPhase2Base):
         )
         assignment.refresh_from_db()
         self.assertTrue(assignment.is_active)
+
+    def test_hybrid_assignment_override_can_be_added_and_edited(self):
+        employee = make_employee(
+            self.business_a,
+            self.location_a,
+            "HYBRID-RATE-UI",
+            compensation_type=WmsEmployee.CompensationType.HYBRID,
+            fixed_salary=Decimal("200.000"),
+            piece_rate=Decimal("0.500"),
+        )
+        category = make_category(self.business_a, "Hybrid Daraz", "HYB-DRZ")
+
+        response = self.client.post(
+            reverse("wms:assignment_add", args=[employee.public_id]),
+            {
+                "category": category.pk,
+                "per_piece_rate": "0.700",
+            },
+        )
+        self.assertRedirects(
+            response,
+            reverse("wms:employee_detail", args=[employee.public_id]),
+        )
+        assignment = WmsEmployeeCategoryAssignment.objects.get(
+            business=self.business_a,
+            employee=employee,
+            category=category,
+        )
+        self.assertEqual(assignment.per_piece_rate, Decimal("0.700"))
+        self.assertEqual(assignment.effective_per_piece_rate, Decimal("0.700"))
+
+        response = self.client.get(reverse("wms:employee_detail", args=[employee.public_id]))
+        self.assertContains(
+            response,
+            reverse(
+                "wms:assignment_rate",
+                args=[employee.public_id, assignment.public_id],
+            ),
+        )
+        response = self.client.post(
+            reverse(
+                "wms:assignment_rate",
+                args=[employee.public_id, assignment.public_id],
+            ),
+            {"per_piece_rate": "0.850"},
+        )
+        self.assertRedirects(
+            response,
+            reverse("wms:employee_detail", args=[employee.public_id]),
+        )
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.per_piece_rate, Decimal("0.850"))
+        self.assertEqual(assignment.effective_per_piece_rate, Decimal("0.850"))
+
+    def test_fixed_employee_cannot_acquire_category_rate(self):
+        category = make_category(self.business_a, "Fixed Protection", "FIX-PROT")
+        response = self.client.post(
+            reverse("wms:assignment_add", args=[self.employee_a.public_id]),
+            {
+                "category": category.pk,
+                "per_piece_rate": "0.700",
+            },
+        )
+        self.assertRedirects(
+            response,
+            reverse("wms:employee_detail", args=[self.employee_a.public_id]),
+        )
+        assignment = WmsEmployeeCategoryAssignment.objects.get(
+            business=self.business_a,
+            employee=self.employee_a,
+            category=category,
+        )
+        self.assertIsNone(assignment.per_piece_rate)
+
+        response = self.client.post(
+            reverse(
+                "wms:assignment_rate",
+                args=[self.employee_a.public_id, assignment.public_id],
+            ),
+            {"per_piece_rate": "0.900"},
+        )
+        self.assertRedirects(
+            response,
+            reverse("wms:employee_detail", args=[self.employee_a.public_id]),
+        )
+        assignment.refresh_from_db()
+        self.assertIsNone(assignment.per_piece_rate)
+
+        assignment.per_piece_rate = Decimal("0.900")
+        with self.assertRaises(ValidationError):
+            assignment.save()
 
     def test_view_only_role_sees_navigation_but_not_manage_actions(self):
         core_role = Role.objects.create(
