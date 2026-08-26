@@ -97,6 +97,16 @@ class RecurringExpenseTemplate(TenantModel):
 
 
 class Expense(TenantModel):
+    PAYMENT_MEDIUM_CHOICES = (
+        ("cash_register", "Cash – Register"),
+        ("cash_non_register", "Cash – Non-register"),
+        ("card", "Card"),
+        ("bank", "Bank Transfer"),
+        ("online", "Online"),
+        ("other", "Other"),
+        ("unspecified", "Unspecified"),
+    )
+
     class Status(models.TextChoices):
         DRAFT = "draft", _("Draft")
         SUBMITTED = "submitted", _("Submitted")
@@ -186,6 +196,22 @@ class Expense(TenantModel):
     def source_display(self):
         return "Fixed" if self.recurring_template_id else "Current"
 
+    @property
+    def payment_medium_key(self):
+        if not self.payment_method_id:
+            return "unspecified"
+        kind = self.payment_method.kind
+        if kind == "cash":
+            return "cash_register" if self.shift_id else "cash_non_register"
+        if kind in {"card", "bank", "online", "other"}:
+            return kind
+        return "other"
+
+    @property
+    def payment_medium_display(self):
+        labels = dict(self.PAYMENT_MEDIUM_CHOICES)
+        return labels[self.payment_medium_key]
+
     def clean(self):
         super().clean()
         errors = {}
@@ -195,6 +221,18 @@ class Expense(TenantModel):
         if self.business_id and self.category_id:
             if self.category.business_id != self.business_id:
                 errors["category"] = "Select a category from this business."
+        if self.business_id and self.payment_method_id:
+            if self.payment_method.business_id != self.business_id:
+                errors["payment_method"] = (
+                    "Select a payment medium from this business."
+                )
+        if self.shift_id:
+            if self.business_id and self.shift.business_id != self.business_id:
+                errors["shift"] = "Select a register shift from this business."
+            elif self.branch_id and self.shift.branch_id != self.branch_id:
+                errors["shift"] = "The register shift must match the expense branch."
+            if not self.payment_method_id or self.payment_method.kind != "cash":
+                errors["shift"] = "Only cash expenses can be linked to a register shift."
         if self.recurring_template_id and self.business_id:
             if self.recurring_template.business_id != self.business_id:
                 errors["recurring_template"] = (

@@ -1,0 +1,66 @@
+{% load money_tags %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4 landscape; margin: 9mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 7.5pt; color: #1e293b; }
+  h1 { font-size: 15pt; margin: 0 0 2px; }
+  h2 { font-size: 10pt; margin: 10px 0 4px; }
+  .muted { color: #64748b; margin-bottom: 8px; }
+  .summary { width: 100%; border-collapse: separate; border-spacing: 4px; margin: 0 -4px; }
+  .summary td { width: 25%; border: 0.5pt solid #cbd5e1; padding: 6px; }
+  .summary strong { display: block; color: #64748b; font-size: 7pt; }
+  .summary span { display: block; font-size: 10pt; font-weight: bold; margin-top: 2px; }
+  table.data { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.data th { background: #0f172a; color: #fff; text-align: left; padding: 3px; }
+  table.data td { padding: 2.5px 3px; border-bottom: 0.5pt solid #cbd5e1; }
+  table.data tfoot td { font-weight: bold; border-top: 1pt solid #0f172a; }
+  .num { text-align: right; }
+  .nowrap { white-space: nowrap; }
+  tr { page-break-inside: avoid; }
+  .two-col { width: 100%; }
+  .two-col > tbody > tr > td { width: 50%; vertical-align: top; padding-right: 5px; }
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+<h1>{{ business.name }} — Monthly Expense Report</h1>
+<div class="muted">
+  Selected month: {{ data.month_label }}
+  {% if data.applied_filters %} · Filters: {{ data.applied_filters|join:", " }}{% else %} · Filters: All{% endif %}
+  · Generated {% now "Y-m-d H:i" %}
+</div>
+
+<table class="summary"><tr>
+  <td><strong>Total Expenses</strong><span>{{ data.total_expenses|money_p:data.money_precision }}</span></td>
+  <td><strong>Transaction Count</strong><span>{{ data.transaction_count }}</span></td>
+  <td><strong>Average Expense</strong><span>{{ data.average_expense|money_p:data.money_precision }}</span></td>
+  <td><strong>Highest Expense Day</strong><span>{% if data.highest_expense_day %}{{ data.highest_expense_day.date|date:"Y-m-d" }} — {{ data.highest_expense_day.total|money_p:data.money_precision }}{% else %}—{% endif %}</span></td>
+</tr></table>
+
+<table class="two-col"><tr><td>
+  <h2>Payment Medium Breakdown</h2>
+  <table class="data"><thead><tr><th>Paid Via</th><th class="num">Count</th><th class="num">Total</th></tr></thead><tbody>
+  {% for item in data.payment_breakdown %}<tr><td>{{ item.label }}</td><td class="num">{{ item.count }}</td><td class="num">{{ item.total|money_p:data.money_precision }}</td></tr>{% endfor %}
+  </tbody><tfoot><tr><td>Total</td><td class="num">{{ data.transaction_count }}</td><td class="num">{{ data.total_expenses|money_p:data.money_precision }}</td></tr></tfoot></table>
+</td><td>
+  <h2>Category Breakdown</h2>
+  <table class="data"><thead><tr><th>Category</th><th class="num">Count</th><th class="num">Total</th><th class="num">Average</th><th class="num">Share</th></tr></thead><tbody>
+  {% for row in data.rows %}<tr><td>{{ row.0 }}</td><td class="num">{{ row.1 }}</td><td class="num">{{ row.2|money_p:data.money_precision }}</td><td class="num">{{ row.3|money_p:data.money_precision }}</td><td class="num">{{ row.4 }}</td></tr>{% endfor %}
+  </tbody></table>
+</td></tr></table>
+
+<h2>Day-wise Monthly Breakdown</h2>
+<table class="data"><thead><tr><th>Date</th><th class="num">Transactions</th><th class="num">Cash</th><th class="num">Card</th><th class="num">Bank / Online</th><th class="num">Other</th><th class="num">Daily Total</th></tr></thead><tbody>
+{% for day in data.daily_breakdown %}<tr><td class="nowrap">{{ day.date|date:"Y-m-d" }}</td><td class="num">{{ day.count }}</td><td class="num">{{ day.cash|money_p:data.money_precision }}</td><td class="num">{{ day.card|money_p:data.money_precision }}</td><td class="num">{{ day.bank_online|money_p:data.money_precision }}</td><td class="num">{{ day.other|money_p:data.money_precision }}</td><td class="num">{{ day.total|money_p:data.money_precision }}</td></tr>{% endfor %}
+</tbody><tfoot><tr><td>Month Total</td><td class="num">{{ data.transaction_count }}</td><td colspan="4"></td><td class="num">{{ data.total_expenses|money_p:data.money_precision }}</td></tr></tfoot></table>
+
+{% if data.transactions %}
+<h2 class="page-break">Expense Transactions</h2>
+<table class="data"><thead><tr><th>Date</th><th>Expense / Payee</th><th>Category</th><th>Branch</th><th>Paid Via</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+{% for item in data.transactions %}<tr><td class="nowrap">{{ item.date|date:"Y-m-d" }}</td><td>{{ item.number }}{% if item.payee %} — {{ item.payee }}{% endif %}</td><td>{{ item.category }}</td><td>{{ item.branch }}</td><td>{{ item.paid_via }}</td><td class="num">{{ item.amount|money_p:data.money_precision }}</td><td>{{ item.status }}</td></tr>{% endfor %}
+</tbody></table>
+{% endif %}
+</body>
+</html>

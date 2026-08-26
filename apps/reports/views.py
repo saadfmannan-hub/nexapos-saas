@@ -1,3 +1,4 @@
+import calendar
 from datetime import date as date_cls
 from datetime import timedelta
 from decimal import Decimal
@@ -91,6 +92,48 @@ def _parse_filters(request):
     valid_statuses = {value for value, _label in SupplierPayment.ChequeStatus.choices}
     f["cheque_status"] = cheque_status if cheque_status in valid_statuses else None
     return f
+
+
+def _parse_expense_analysis_filters(request, filters):
+    from apps.expenses.models import Expense, ExpenseCategory
+
+    raw_month = request.GET.get("month", "").strip()
+    if raw_month:
+        try:
+            month_start = date_cls.fromisoformat(f"{raw_month}-01")
+        except ValueError as exc:
+            raise Http404 from exc
+    else:
+        raw_start = filters.get("date_from")
+        try:
+            month_start = date_cls.fromisoformat(str(raw_start)).replace(day=1)
+        except (TypeError, ValueError):
+            month_start = business_localdate(request.business).replace(day=1)
+    month_end = month_start.replace(
+        day=calendar.monthrange(month_start.year, month_start.month)[1]
+    )
+    filters["month"] = month_start.strftime("%Y-%m")
+    filters["month_start"] = month_start
+    filters["month_end"] = month_end
+
+    category = request.GET.get("category", "")
+    if category and not category.isdigit():
+        raise Http404
+    category_id = int(category) if category.isdigit() else None
+    if category_id and not ExpenseCategory.objects.for_business(
+        request.business
+    ).filter(pk=category_id).exists():
+        raise Http404
+    filters["expense_category_id"] = category_id
+
+    medium = request.GET.get("method", "").strip().lower()
+    valid_media = {value for value, _label in Expense.PAYMENT_MEDIUM_CHOICES}
+    filters["expense_payment_medium"] = medium if medium in valid_media else None
+
+    status = request.GET.get("status", "").strip().lower()
+    valid_statuses = {value for value, _label in Expense.Status.choices}
+    filters["expense_status"] = status if status in valid_statuses else None
+    return filters
 
 
 # ---------------------------------------------------------------------------
@@ -1066,6 +1109,8 @@ def _run_report(request, key):
         action=AccessAction.READ,
     )
     filters = _parse_filters(request)
+    if key == "expense_analysis":
+        filters = _parse_expense_analysis_filters(request, filters)
     filters["allowed_branch_ids"] = request.membership.allowed_branch_ids
     if key in {"sales_detailed", "current_stock", "low_stock", "stock_movements"}:
         filters["tailoring_enabled"] = evaluate_access(
@@ -1083,6 +1128,7 @@ def _run_report(request, key):
 def report_view(request, key):
     from apps.branches.models import Branch, Warehouse
     from apps.catalog.models import Brand, Product
+    from apps.expenses.models import Expense, ExpenseCategory
     from apps.suppliers.models import Supplier, SupplierPayment
 
     export = request.GET.get("export", "")
@@ -1096,15 +1142,58 @@ def report_view(request, key):
             action=AccessAction.READ,
         )
     title, data, filters = _run_report(request, key)
+    if key == "expense_analysis":
+        applied_filters = []
+        if filters.get("branch_id"):
+            branch_name = (
+                Branch.objects.for_business(request.business)
+                .filter(pk=filters["branch_id"])
+                .values_list("name", flat=True)
+                .first()
+            )
+            if branch_name:
+                applied_filters.append(f"Branch: {branch_name}")
+        if filters.get("expense_category_id"):
+            category_name = (
+                ExpenseCategory.objects.for_business(request.business)
+                .filter(pk=filters["expense_category_id"])
+                .values_list("name", flat=True)
+                .first()
+            )
+            if category_name:
+                applied_filters.append(f"Category: {category_name}")
+        if filters.get("expense_payment_medium"):
+            applied_filters.append(
+                "Payment Medium: "
+                + dict(Expense.PAYMENT_MEDIUM_CHOICES)[
+                    filters["expense_payment_medium"]
+                ]
+            )
+        if filters.get("expense_status"):
+            applied_filters.append(
+                "Status: "
+                + dict(Expense.Status.choices)[filters["expense_status"]]
+            )
+        data["applied_filters"] = applied_filters
     if export:
         audit.log("report.exported", request=request, module="reports",
                   description=f"Exported report '{key}' as {export}.")
-        label = f"{filters.get('date_from') or ''} → {filters.get('date_to') or ''}"
+        label = (
+            data.get("month_label", "")
+            if key == "expense_analysis"
+            else f"{filters.get('date_from') or ''} → {filters.get('date_to') or ''}"
+        )
         if export == "csv":
             return exports.export_csv(key, data)
         if export == "xlsx":
+            if key == "expense_analysis":
+                return exports.export_expense_analysis_xlsx(title, data)
             return exports.export_xlsx(key, data)
         if export == "pdf":
+            if key == "expense_analysis":
+                return exports.export_expense_analysis_pdf(
+                    title, data, request.business
+                )
             return exports.export_pdf(title, data, request.business, label)
         messages.error(request, "Unknown export format.")
         return redirect("reports:view", key=key)
@@ -1132,6 +1221,16 @@ def report_view(request, key):
         "supplier_cheque_statuses": (
             SupplierPayment.ChequeStatus.choices
             if key == "supplier_payments_cheques" else []
+        ),
+        "expense_categories": (
+            ExpenseCategory.objects.for_business(request.business).order_by("name")
+            if key == "expense_analysis" else []
+        ),
+        "expense_payment_media": (
+            Expense.PAYMENT_MEDIUM_CHOICES if key == "expense_analysis" else []
+        ),
+        "expense_statuses": (
+            Expense.Status.choices if key == "expense_analysis" else []
         ),
         "products": (
             Product.objects.for_business(request.business)

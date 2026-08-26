@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django import forms
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum
@@ -11,17 +14,50 @@ from django.views.decorators.http import require_POST
 from apps.audit import services as audit
 from apps.branches.forms import TenantStyledModelForm
 from apps.branches.models import Branch
-from apps.core.date_ranges import date_range_querystring, resolve_date_range
+from apps.core.date_ranges import (
+    business_date_bounds,
+    business_localtime,
+    date_range_querystring,
+    resolve_date_range,
+)
 from apps.core.mixins import get_tenant_object
 from apps.registers import services as register_services
 from apps.subscriptions.access import AccessAction
 from apps.subscriptions.decorators import module_permission_required
 
 from .models import Expense, ExpenseCategory, RecurringExpenseTemplate
-from .services import next_expense_number
+from .services import (
+    filter_by_payment_medium,
+    matching_open_drawer_shift,
+    next_expense_number,
+    save_manual_expense,
+    set_expense_status,
+)
+
+
+class HistoricalShiftChoiceField(forms.ModelChoiceField):
+    def label_from_instance(self, shift):
+        opened = business_localtime(
+            shift.business, value=shift.opened_at
+        ).strftime("%Y-%m-%d %H:%M")
+        return (
+            f"{opened} — {shift.register.name} — "
+            f"{shift.cashier.full_name} — {shift.get_status_display()}"
+        )
 
 
 class ExpenseForm(TenantStyledModelForm):
+    paid_from_drawer = forms.BooleanField(
+        required=False,
+        label="Paid from current cash drawer",
+    )
+    historical_shift = HistoricalShiftChoiceField(
+        queryset=register_services.Shift.objects.none(),
+        required=False,
+        label="Register shift / drawer",
+        empty_label="Cash – Non-register (no shift)",
+    )
+
     class Meta:
         model = Expense
         fields = ["expense_date", "branch", "category", "payee", "supplier",
@@ -32,12 +68,24 @@ class ExpenseForm(TenantStyledModelForm):
             "description": forms.Textarea(attrs={"rows": 2}),
         }
 
-    def __init__(self, business, *args, membership=None, **kwargs):
+    def __init__(
+        self,
+        business,
+        *args,
+        membership=None,
+        user=None,
+        correction_only=False,
+        **kwargs,
+    ):
         super().__init__(business, *args, **kwargs)
+        from apps.registers.models import Shift
         from apps.sales.models import PaymentMethod
         from apps.suppliers.models import Supplier
 
-        branches = Branch.objects.for_business(business).filter(is_active=True)
+        branches = Branch.objects.for_business(business).filter(
+            Q(is_active=True)
+            | Q(pk=self.instance.branch_id if self.instance.pk else None)
+        )
         if membership is not None and membership.allowed_branch_ids is not None:
             branches = branches.filter(id__in=membership.allowed_branch_ids)
         self.fields["branch"].queryset = branches
@@ -47,20 +95,152 @@ class ExpenseForm(TenantStyledModelForm):
             self.fields["branch"].disabled = True
         elif self.instance.pk and len(branch_choices) == 1:
             self.fields["branch"].disabled = True
-        self.fields["category"].queryset = ExpenseCategory.objects.for_business(business).filter(is_active=True)
-        self.fields["supplier"].queryset = Supplier.objects.for_business(business).filter(is_active=True)
-        self.fields["supplier"].required = False
-        self.fields["payment_method"].queryset = (
-            PaymentMethod.objects.for_business(business).filter(is_active=True)
-            .exclude(kind__in=["customer_credit", "store_credit"])
+        self.fields["category"].queryset = (
+            ExpenseCategory.objects.for_business(business)
+            .filter(
+                Q(is_active=True)
+                | Q(pk=self.instance.category_id if self.instance.pk else None)
+            )
         )
-        self.fields["payment_method"].required = False
+        self.fields["supplier"].queryset = (
+            Supplier.objects.for_business(business)
+            .filter(
+                Q(is_active=True)
+                | Q(pk=self.instance.supplier_id if self.instance.pk else None)
+            )
+        )
+        self.fields["supplier"].required = False
+        current_method_id = (
+            self.instance.payment_method_id if self.instance.pk else None
+        )
+        self.fields["payment_method"].queryset = (
+            PaymentMethod.objects.for_business(business).filter(
+                Q(pk=current_method_id)
+                | (
+                    Q(is_active=True)
+                    & ~Q(kind__in=["customer_credit", "store_credit"])
+                )
+            )
+        )
+        self.fields["payment_method"].label = "Payment Medium / Paid Via"
+        self.fields["payment_method"].required = not self.instance.pk
+
+        branch_id = None
+        if self.is_bound:
+            raw_branch = self.data.get(self.add_prefix("branch"), "")
+            if str(raw_branch).isdigit():
+                branch_id = int(raw_branch)
+            elif self.instance.pk:
+                branch_id = self.instance.branch_id
+            else:
+                initial_branch = self.initial.get("branch")
+                branch_id = getattr(initial_branch, "pk", initial_branch)
+        elif self.instance.pk:
+            branch_id = self.instance.branch_id
+        else:
+            initial_branch = self.initial.get("branch")
+            branch_id = getattr(initial_branch, "pk", initial_branch)
+
+        branch = branches.filter(pk=branch_id).first() if branch_id else None
+        current_shift = None
+        if user is not None:
+            current_shift = matching_open_drawer_shift(
+                business=business,
+                user=user,
+                branch=branch,
+                membership=membership,
+            )
+            if not self.instance.pk and branch is None:
+                from apps.registers.services import get_open_shift
+
+                open_shift = get_open_shift(
+                    business, user, membership=membership
+                )
+                if open_shift and branches.filter(pk=open_shift.branch_id).exists():
+                    self.initial["branch"] = open_shift.branch_id
+                    branch = open_shift.branch
+                    current_shift = open_shift
+        self.current_drawer_shift = current_shift
+
+        if correction_only:
+            self.fields.pop("paid_from_drawer")
+            for name, field in self.fields.items():
+                if name not in {"payment_method", "historical_shift"}:
+                    field.disabled = True
+            candidates = Shift.objects.none()
+            if self.instance.pk and self.instance.branch_id:
+                start = self.instance.expense_date - timedelta(days=2)
+                end = self.instance.expense_date + timedelta(days=2)
+                opened_after, opened_before = business_date_bounds(
+                    business,
+                    start,
+                    end,
+                )
+                candidates = (
+                    Shift.objects.for_business(business)
+                    .filter(branch_id=self.instance.branch_id)
+                    .filter(
+                        Q(
+                            opened_at__gte=opened_after,
+                            opened_at__lt=opened_before,
+                        )
+                        | Q(pk=self.instance.shift_id)
+                    )
+                    .select_related("register", "cashier", "branch")
+                    .order_by("-opened_at", "-pk")
+                )
+            self.fields["historical_shift"].queryset = candidates
+            self.fields["historical_shift"].initial = self.instance.shift_id
+            self.fields["historical_shift"].help_text = (
+                "Choose only the documented shift that funded this cash expense. "
+                "Leaving this empty records cash as non-register cash."
+            )
+        else:
+            self.fields.pop("historical_shift")
+            self.fields["paid_from_drawer"].initial = bool(
+                self.instance.pk
+                and current_shift
+                and self.instance.shift_id == current_shift.pk
+            )
+            if current_shift:
+                self.fields["paid_from_drawer"].help_text = (
+                    f"Current drawer: {current_shift.register.name} — "
+                    f"{current_shift.cashier.full_name}. Applies only when "
+                    "Payment Medium is Cash."
+                )
+            else:
+                self.fields["paid_from_drawer"].disabled = True
+                self.fields["paid_from_drawer"].help_text = (
+                    "No matching open drawer exists for this branch. A cash "
+                    "expense will be recorded as Cash – Non-register."
+                )
 
     def clean_amount(self):
         amount = self.cleaned_data["amount"]
         if amount <= 0:
             raise forms.ValidationError("Amount must be positive.")
         return amount
+
+    def _post_clean(self):
+        # The service owns drawer-link validation and stale-link clearing.
+        # Avoid validating the persisted link against a newly selected
+        # non-cash method or branch before the service can authorize the
+        # closed-shift reconciliation change.
+        payment_method = self.cleaned_data.get("payment_method")
+        branch = self.cleaned_data.get("branch")
+        payment_changed_away_from_cash = (
+            "payment_method" in self.cleaned_data
+            and (
+                payment_method is None
+                or payment_method.kind != "cash"
+            )
+        )
+        if self.instance.shift_id and (
+            payment_changed_away_from_cash
+            or (branch and branch.pk != self.instance.shift.branch_id)
+        ):
+            self.instance.shift = None
+        super()._post_clean()
 
 
 class ExpenseCategoryForm(TenantStyledModelForm):
@@ -195,6 +375,21 @@ def _recurring_templates_for_request(request, queryset=None):
     return queryset
 
 
+def _add_service_errors(form, exc):
+    if hasattr(exc, "message_dict"):
+        for field, errors in exc.message_dict.items():
+            target = field
+            if field == "shift" and "historical_shift" in form.fields:
+                target = "historical_shift"
+            if target not in form.fields:
+                target = None
+            for error in errors:
+                form.add_error(target, error)
+        return
+    for error in getattr(exc, "messages", [str(exc)]):
+        form.add_error(None, error)
+
+
 @module_permission_required(
     "expenses", "expenses.view", action=AccessAction.READ
 )
@@ -203,7 +398,7 @@ def expense_list(request):
         _expenses_for_request(request)
         .filter(recurring_template__isnull=True)
         .select_related(
-            "category", "branch", "created_by", "payment_method",
+            "category", "branch", "created_by", "payment_method", "shift",
         )
     )
     q = request.GET.get("q", "").strip()
@@ -219,6 +414,12 @@ def expense_list(request):
     branch_id = request.GET.get("branch", "")
     if branch_id.isdigit():
         qs = qs.filter(branch_id=branch_id)
+    payment_medium = request.GET.get("method", "").strip().lower()
+    valid_payment_media = {value for value, _label in Expense.PAYMENT_MEDIUM_CHOICES}
+    if payment_medium in valid_payment_media:
+        qs = filter_by_payment_medium(qs, payment_medium)
+    else:
+        payment_medium = ""
     date_from, date_to = resolve_date_range(request.GET, request.business)
     qs = qs.filter(
         expense_date__gte=date_from,
@@ -247,6 +448,12 @@ def expense_list(request):
         "can_manage": request.membership.has_perm("expenses.manage"),
         "fixed_templates": fixed_templates,
         "branches": _branches_for_request(request),
+        "payment_medium": payment_medium,
+        "payment_medium_choices": Expense.PAYMENT_MEDIUM_CHOICES,
+        "can_correct_history": (
+            request.membership.has_perm("expenses.approve")
+            and request.membership.has_perm("shifts.approve")
+        ),
     })
 
 
@@ -255,6 +462,7 @@ def expense_list(request):
 )
 def expense_create(request, public_id=None):
     instance = None
+    correction_only = False
     if public_id:
         instance = get_tenant_object(
             _expenses_for_request(request),
@@ -271,14 +479,22 @@ def expense_create(request, public_id=None):
             and instance.status == Expense.Status.APPROVED
         )
         if instance.status not in editable_statuses and not recurring_approved:
-            messages.error(request, "Approved or paid expenses cannot be edited.")
-            return redirect("expenses:list")
+            can_correct_history = (
+                request.membership.has_perm("expenses.approve")
+                and request.membership.has_perm("shifts.approve")
+            )
+            if not can_correct_history:
+                messages.error(request, "Approved or paid expenses cannot be edited.")
+                return redirect("expenses:list")
+            correction_only = True
     form = ExpenseForm(
         request.business,
         request.POST or None,
         request.FILES or None,
         instance=instance,
         membership=request.membership,
+        user=request.user,
+        correction_only=correction_only,
     )
     if request.method == "POST" and form.is_valid():
         expense = form.save(commit=False)
@@ -286,35 +502,86 @@ def expense_create(request, public_id=None):
         if instance is None:
             expense.expense_number = next_expense_number(request.business)
             expense.created_by = request.user
-            expense.shift = register_services.get_open_shift(
-                request.business, request.user)
-        threshold = request.business.settings.expense_approval_threshold
-        needs_approval = (
-            threshold > 0 and expense.amount >= threshold
-            and not request.membership.has_perm("expenses.approve")
-        )
-        expense.status = (Expense.Status.SUBMITTED if needs_approval
-                          else Expense.Status.APPROVED)
-        if not needs_approval:
-            expense.approved_by = request.user
-        expense.save()
-        if needs_approval:
-            from apps.notifications.services import notify_role
-
-            notify_role(request.business, "expenses.approve",
-                        f"Expense {expense.expense_number} needs approval "
-                        f"({expense.amount})",
-                        severity="warning", category="expense_pending",
-                        link="/expenses/")
-            messages.info(request, "Expense submitted for approval.")
+        if correction_only:
+            needs_approval = expense.status == Expense.Status.SUBMITTED
+            requested_shift = form.cleaned_data.get("historical_shift")
+            drawer_requested = requested_shift is not None
         else:
-            messages.success(request, "Expense recorded.")
-        audit.log("expense.saved", request=request, module="expenses", obj=expense,
-                  description=f"Expense {expense.expense_number} "
-                              f"({expense.amount}) saved.")
-        return redirect("expenses:list")
+            threshold = request.business.settings.expense_approval_threshold
+            needs_approval = (
+                threshold > 0 and expense.amount >= threshold
+                and not request.membership.has_perm("expenses.approve")
+            )
+            expense.status = (Expense.Status.SUBMITTED if needs_approval
+                              else Expense.Status.APPROVED)
+            if not needs_approval:
+                expense.approved_by = request.user
+            drawer_requested = form.cleaned_data.get("paid_from_drawer", False)
+            requested_shift = (
+                matching_open_drawer_shift(
+                    business=request.business,
+                    user=request.user,
+                    branch=expense.branch,
+                    membership=request.membership,
+                )
+                if drawer_requested else None
+            )
+            if (
+                not drawer_requested
+                and instance is not None
+                and instance.shift_id
+                and instance.shift.status in ("closed", "approved")
+                and expense.payment_method_id
+                and expense.payment_method.kind == "cash"
+                and expense.branch_id == instance.shift.branch_id
+            ):
+                # An ordinary edit does not expose historical shift choices.
+                # Retain the exact closed drawer unless another submitted
+                # financial field explicitly makes that link invalid.
+                requested_shift = instance.shift
+                drawer_requested = True
+        try:
+            save_manual_expense(
+                expense=expense,
+                business=request.business,
+                user=request.user,
+                membership=request.membership,
+                requested_shift=requested_shift,
+                drawer_requested=drawer_requested,
+                historical_correction=correction_only,
+                request=request,
+            )
+        except ValidationError as exc:
+            _add_service_errors(form, exc)
+        else:
+            if needs_approval:
+                from apps.notifications.services import notify_role
+
+                notify_role(request.business, "expenses.approve",
+                            f"Expense {expense.expense_number} needs approval "
+                            f"({expense.amount})",
+                            severity="warning", category="expense_pending",
+                            link="/expenses/")
+                messages.info(request, "Expense submitted for approval.")
+            elif correction_only:
+                messages.success(
+                    request,
+                    "Expense payment medium and register link corrected.",
+                )
+            else:
+                messages.success(request, "Expense recorded.")
+            audit.log("expense.saved", request=request, module="expenses", obj=expense,
+                      description=f"Expense {expense.expense_number} "
+                                  f"({expense.amount}) saved.")
+            return redirect("expenses:list")
     return render(request, "expenses/form.html",
-                  {"form": form, "expense": instance, "active_nav": "expenses"})
+                  {
+                      "form": form,
+                      "expense": instance,
+                      "active_nav": "expenses",
+                      "correction_only": correction_only,
+                      "current_drawer_shift": form.current_drawer_shift,
+                  })
 
 
 @require_POST
@@ -326,22 +593,37 @@ def expense_action(request, public_id, action):
         _expenses_for_request(request), request.business, public_id=public_id
     )
     if action == "approve" and expense.status == Expense.Status.SUBMITTED:
-        expense.status = Expense.Status.APPROVED
-        expense.approved_by = request.user
-        expense.save(update_fields=["status", "approved_by", "updated_at"])
+        expense = set_expense_status(
+            expense=expense,
+            status=Expense.Status.APPROVED,
+            approved_by=request.user,
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
         messages.success(request, "Expense approved.")
     elif action == "reject" and expense.status == Expense.Status.SUBMITTED:
-        expense.status = Expense.Status.REJECTED
-        expense.approved_by = request.user
-        expense.save(update_fields=["status", "approved_by", "updated_at"])
+        expense = set_expense_status(
+            expense=expense,
+            status=Expense.Status.REJECTED,
+            approved_by=request.user,
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
         messages.success(request, "Expense rejected.")
     elif action == "cancel" and expense.status in (
         Expense.Status.DRAFT,
         Expense.Status.SUBMITTED,
         Expense.Status.APPROVED,
     ):
-        expense.status = Expense.Status.CANCELLED
-        expense.save(update_fields=["status", "updated_at"])
+        expense = set_expense_status(
+            expense=expense,
+            status=Expense.Status.CANCELLED,
+            user=request.user,
+            membership=request.membership,
+            request=request,
+        )
         messages.success(request, "Expense cancelled.")
     audit.log(f"expense.{action}", request=request, module="expenses",
               obj=expense,

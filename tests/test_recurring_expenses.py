@@ -340,7 +340,7 @@ class RecurringExpenseViewTests(RecurringExpenseTestMixin, TenantTestCase):
             "supplier": "",
             "amount": "25.000",
             "tax_amount": "0.000",
-            "payment_method": "",
+            "payment_method": str(self.cash_a.pk),
             "reference": "MANUAL",
             "description": "Variable expense",
         }

@@ -1598,9 +1598,11 @@ def _fixed_expense_occurrences(business, f):
                 occurrences.append({
                     "number": f"REC-{month:%Y%m}-{template.pk}",
                     "date": due_date,
+                    "category_id": template.category_id,
                     "category": template.category.name,
                     "source": "Fixed",
                     "payee": template.name,
+                    "branch_id": branch.pk,
                     "branch": branch.name,
                     "amount": template.default_amount,
                     "status": Expense.Status.APPROVED.label,
@@ -1904,57 +1906,198 @@ def cash_flow(business, f):
 
 def expense_analysis(business, f):
     from apps.expenses.models import Expense
+    from apps.expenses.services import filter_by_payment_medium
 
-    qs = Expense.objects.for_business(business).exclude(
-        status__in=["rejected", "cancelled"])
-    if f.get("date_from"):
-        qs = qs.filter(expense_date__gte=f["date_from"])
-    if f.get("date_to"):
-        qs = qs.filter(expense_date__lte=f["date_to"])
+    def as_date(value):
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return parse_date(str(value)) if value else None
+
+    date_from = as_date(f.get("month_start") or f.get("date_from"))
+    date_to = as_date(f.get("month_end") or f.get("date_to"))
+    status = f.get("expense_status")
+    payment_medium = f.get("expense_payment_medium")
+    category_id = f.get("expense_category_id")
+
+    qs = Expense.objects.for_business(business)
+    if status:
+        qs = qs.filter(status=status)
+    else:
+        qs = qs.exclude(status__in=["rejected", "cancelled"])
+    if date_from:
+        qs = qs.filter(expense_date__gte=date_from)
+    if date_to:
+        qs = qs.filter(expense_date__lte=date_to)
     if f.get("branch_id"):
         qs = qs.filter(branch_id=f["branch_id"])
     allowed_branch_ids = f.get("allowed_branch_ids")
     if allowed_branch_ids is not None:
         qs = qs.filter(branch_id__in=allowed_branch_ids)
-    data = list(qs.values("category__name").annotate(
-        count=Count("id"), total=Sum("amount"), avg=Avg("amount")
-    ))
-    by_category = {
-        row["category__name"]: {
-            "count": row["count"],
-            "total": row["total"] or ZERO,
-        }
-        for row in data
-    }
-    for occurrence in _fixed_expense_occurrences(business, f):
+    if category_id:
+        qs = qs.filter(category_id=category_id)
+    if payment_medium:
+        qs = filter_by_payment_medium(qs, payment_medium)
+
+    records = []
+    for expense in qs.select_related(
+        "category", "branch", "payment_method", "shift", "supplier"
+    ).order_by("expense_date", "expense_number"):
+        records.append({
+            "number": expense.expense_number,
+            "date": expense.expense_date,
+            "category_id": expense.category_id,
+            "category": expense.category.name,
+            "source": expense.source_display,
+            "payee": (
+                expense.payee
+                or (expense.supplier.name if expense.supplier else "")
+                or expense.description
+            ),
+            "branch_id": expense.branch_id,
+            "branch": expense.branch.name,
+            "payment_medium": expense.payment_medium_key,
+            "paid_via": expense.payment_medium_display,
+            "amount": _money(expense.amount),
+            "status": expense.get_status_display(),
+        })
+
+    occurrence_filters = dict(f)
+    occurrence_filters["date_from"] = date_from
+    occurrence_filters["date_to"] = date_to
+    for occurrence in _fixed_expense_occurrences(business, occurrence_filters):
+        if category_id and occurrence["category_id"] != category_id:
+            continue
+        if status and status != Expense.Status.APPROVED:
+            continue
+        if payment_medium and payment_medium != "unspecified":
+            continue
+        records.append({
+            **occurrence,
+            "payment_medium": "unspecified",
+            "paid_via": "Unspecified",
+            "amount": _money(occurrence["amount"]),
+        })
+
+    records.sort(key=lambda row: (row["date"], row["number"]))
+    by_category = {}
+    for record in records:
         category = by_category.setdefault(
-            occurrence["category"], {"count": 0, "total": ZERO}
+            record["category"], {"count": 0, "total": ZERO}
         )
         category["count"] += 1
-        category["total"] += occurrence["amount"]
-    data = sorted(
+        category["total"] += record["amount"]
+    category_data = sorted(
         (
             {
                 "category__name": name,
                 "count": values["count"],
-                "total": values["total"],
-                "avg": values["total"] / values["count"],
+                "total": _money(values["total"]),
+                "avg": _money(values["total"] / values["count"]),
             }
             for name, values in by_category.items()
         ),
         key=lambda row: row["total"],
         reverse=True,
     )
-    grand = sum((r["total"] or ZERO) for r in data)
+    grand = _money(sum((record["amount"] for record in records), ZERO))
     rows = []
-    for r in data:
+    for r in category_data:
         share = (r["total"] / grand * 100) if grand else ZERO
         rows.append([r["category__name"], r["count"], r["total"],
-                     round(r["avg"] or 0, 3), f"{share:.1f}%"])
-    return {"columns": ["Category", "Count", "Total", "Average", "Share"],
-            "rows": rows,
-            "totals": ["TOTAL", sum(r[1] for r in rows), grand, "", "100%"]
-                      if rows else None}
+                     r["avg"], f"{share:.1f}%"])
+
+    medium_labels = dict(Expense.PAYMENT_MEDIUM_CHOICES)
+    payment_totals = {
+        key: {"key": key, "label": label, "count": 0, "total": ZERO}
+        for key, label in Expense.PAYMENT_MEDIUM_CHOICES
+    }
+    by_day = {}
+    for record in records:
+        medium = payment_totals[record["payment_medium"]]
+        medium["count"] += 1
+        medium["total"] += record["amount"]
+        daily = by_day.setdefault(record["date"], {
+            "transactions": [], "cash": ZERO, "card": ZERO,
+            "bank_online": ZERO, "other": ZERO, "total": ZERO,
+        })
+        daily["transactions"].append(record)
+        if record["payment_medium"] in {"cash_register", "cash_non_register"}:
+            daily["cash"] += record["amount"]
+        elif record["payment_medium"] == "card":
+            daily["card"] += record["amount"]
+        elif record["payment_medium"] in {"bank", "online"}:
+            daily["bank_online"] += record["amount"]
+        else:
+            daily["other"] += record["amount"]
+        daily["total"] += record["amount"]
+
+    if date_from and date_to:
+        day_count = (date_to - date_from).days + 1
+        report_days = [date_from + timedelta(days=index) for index in range(day_count)]
+    else:
+        report_days = sorted(by_day)
+    daily_breakdown = []
+    for report_day in report_days:
+        daily = by_day.get(report_day, {
+            "transactions": [], "cash": ZERO, "card": ZERO,
+            "bank_online": ZERO, "other": ZERO, "total": ZERO,
+        })
+        daily_breakdown.append({
+            "date": report_day,
+            "count": len(daily["transactions"]),
+            "cash": _money(daily["cash"]),
+            "card": _money(daily["card"]),
+            "bank_online": _money(daily["bank_online"]),
+            "other": _money(daily["other"]),
+            "total": _money(daily["total"]),
+            "transactions": daily["transactions"],
+        })
+    active_days = [day for day in daily_breakdown if day["count"]]
+    highest_day = max(active_days, key=lambda day: day["total"]) if active_days else None
+    transaction_count = len(records)
+    average = _money(grand / transaction_count) if transaction_count else ZERO
+    month_anchor = date_from or (records[0]["date"] if records else None)
+    month_label = month_anchor.strftime("%B %Y") if month_anchor else ""
+    payment_breakdown = []
+    for key, _label in Expense.PAYMENT_MEDIUM_CHOICES:
+        item = payment_totals[key]
+        payment_breakdown.append({
+            **item,
+            "label": medium_labels[key],
+            "total": _money(item["total"]),
+        })
+
+    return {
+        "columns": ["Category", "Count", "Total", "Average", "Share"],
+        "rows": rows,
+        "totals": ["TOTAL", transaction_count, grand, average, "100%"]
+                  if rows else None,
+        "summary": [
+            ("Total Expenses", grand),
+            ("Transaction Count", transaction_count),
+            ("Average Expense", average),
+            (
+                "Highest Expense Day",
+                (
+                    f"{highest_day['date']:%Y-%m-%d} — "
+                    f"{highest_day['total']:.3f}"
+                    if highest_day else "—"
+                ),
+            ),
+        ],
+        "month_label": month_label,
+        "total_expenses": grand,
+        "transaction_count": transaction_count,
+        "average_expense": average,
+        "highest_expense_day": highest_day,
+        "payment_breakdown": payment_breakdown,
+        "daily_breakdown": daily_breakdown,
+        "transactions": records,
+        "money_precision": business.currency_precision,
+        "column_formats": {2: "#,##0.000", 3: "#,##0.000"},
+    }
 
 
 def customer_sales(business, f):
@@ -2013,7 +2156,7 @@ REPORTS = {
     "profit": ("Profit summary (estimated)", profit_summary, "reports.financial"),
     "profit_loss": ("Profit & Loss (estimated)", profit_loss, "reports.financial"),
     "cash_flow": ("Cash flow", cash_flow, "reports.financial"),
-    "expense_analysis": ("Expense analysis", expense_analysis, "reports.financial"),
+    "expense_analysis": ("Monthly Expense Report", expense_analysis, "reports.financial"),
     "customer_sales": ("Sales by customer", customer_sales, "reports.view"),
     "current_stock": ("Current stock & valuation", current_stock, "reports.view"),
     "low_stock": ("Low stock / reorder", low_stock, "reports.view"),

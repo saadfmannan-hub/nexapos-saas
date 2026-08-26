@@ -32,6 +32,7 @@
         <tr><th>Cashier</th><td>{{ shift.cashier.full_name }}</td></tr>
         <tr><th>Opened</th><td>{{ shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
         {% if shift.closed_at %}<tr><th>Closed</th><td>{{ shift.closed_at|date:"Y-m-d H:i" }}</td></tr>{% endif %}
+        {% if shift.closing_notes %}<tr class="z-report-closing-notes"><th>Closing notes</th><td class="text-break">{{ shift.closing_notes|linebreaksbr }}</td></tr>{% endif %}
         <tr><th>Opening cash</th><td>{% money shift.opening_cash %}</td></tr>
         <tr><th>+ Gross cash sales</th><td>{% money totals.gross_cash_sales %}</td></tr>
         <tr><th>+ Cash collections</th><td>{% money totals.customer_collections_cash %}</td></tr>

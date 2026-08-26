@@ -1,5 +1,5 @@
 {% extends "layouts/base.html" %}
-{% load report_tags %}
+{% load money_tags report_tags %}
 {% block title %}{{ title }} — {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="report-print-page {% if key == 'sales_summary' %}report-print-daily-sales{% endif %}">
@@ -20,6 +20,40 @@
 
 <div class="card mb-3 no-print"><div class="card-body py-2">
   <form class="row g-2 align-items-center" method="get">
+    {% if key == "expense_analysis" %}
+    <div class="col-auto">
+      <label class="form-label small mb-1">Month</label>
+      <input type="month" name="month" value="{{ filters.month }}" class="form-control form-control-sm" required>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Branch</label>
+      <select name="branch" class="form-select form-select-sm">
+        <option value="">All branches</option>
+        {% for b in branches %}<option value="{{ b.id }}" {% if filters.branch_id == b.id %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Category</label>
+      <select name="category" class="form-select form-select-sm">
+        <option value="">All categories</option>
+        {% for category in expense_categories %}<option value="{{ category.id }}" {% if filters.expense_category_id == category.id %}selected{% endif %}>{{ category.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Payment Medium</label>
+      <select name="method" class="form-select form-select-sm">
+        <option value="">All payment media</option>
+        {% for value, label in expense_payment_media %}<option value="{{ value }}" {% if filters.expense_payment_medium == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="col-auto">
+      <label class="form-label small mb-1">Status</label>
+      <select name="status" class="form-select form-select-sm">
+        <option value="">Financially effective</option>
+        {% for value, label in expense_statuses %}<option value="{{ value }}" {% if filters.expense_status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    {% else %}
     <div class="col-auto">
       {% if key == "supplier_payments_cheques" or key == "fabric_history" %}<label class="form-label small mb-1">From Date</label>{% endif %}
       <input type="date" name="from" value="{{ filters.date_from|default:'' }}" class="form-control form-control-sm" aria-label="From Date">
@@ -92,11 +126,61 @@
       </select>
     </div>{% endif %}
     {% endif %}
+    {% endif %}
     <div class="col-auto"><button class="btn btn-sm btn-primary">Apply</button>
       <a href="{% url 'reports:view' key %}" class="btn btn-sm btn-outline-secondary">Reset</a></div>
   </form>
 </div></div>
 
+{% if key == "expense_analysis" %}
+<style>
+  .expense-summary-card .display-value { font-size: 1.25rem; font-weight: 700; }
+  @media print {
+    .expense-day-details details > div { display: block !important; }
+    .expense-day-details summary { font-weight: 700; }
+  }
+</style>
+<div class="small text-secondary mb-3">Selected month: <strong>{{ data.month_label }}</strong></div>
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3"><div class="card expense-summary-card h-100"><div class="card-body"><div class="small text-secondary">Total Expenses</div><div class="display-value">{% money data.total_expenses %}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card expense-summary-card h-100"><div class="card-body"><div class="small text-secondary">Transaction Count</div><div class="display-value">{{ data.transaction_count }}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card expense-summary-card h-100"><div class="card-body"><div class="small text-secondary">Average Expense</div><div class="display-value">{% money data.average_expense %}</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="card expense-summary-card h-100"><div class="card-body"><div class="small text-secondary">Highest Expense Day</div><div class="display-value">{% if data.highest_expense_day %}{{ data.highest_expense_day.date|date:"Y-m-d" }}<div class="small">{% money data.highest_expense_day.total %}</div>{% else %}—{% endif %}</div></div></div></div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-5">
+    <div class="card h-100"><div class="card-header">Payment Medium Breakdown</div><div class="table-responsive">
+      <table class="table table-sm mb-0"><thead><tr><th>Paid Via</th><th class="text-end">Count</th><th class="text-end">Total</th></tr></thead><tbody>
+      {% for item in data.payment_breakdown %}<tr><td>{{ item.label }}</td><td class="text-end">{{ item.count }}</td><td class="text-end">{% money item.total %}</td></tr>{% endfor %}
+      </tbody><tfoot><tr class="table-light fw-bold"><td>Total</td><td class="text-end">{{ data.transaction_count }}</td><td class="text-end">{% money data.total_expenses %}</td></tr></tfoot></table>
+    </div></div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card h-100"><div class="card-header">Category Breakdown</div><div class="table-responsive">
+      <table class="table table-sm mb-0"><thead><tr><th>Category</th><th class="text-end">Count</th><th class="text-end">Total</th><th class="text-end">Average</th><th class="text-end">Share</th></tr></thead><tbody>
+      {% for row in data.rows %}<tr><td>{{ row.0 }}</td><td class="text-end">{{ row.1 }}</td><td class="text-end">{% money row.2 %}</td><td class="text-end">{% money row.3 %}</td><td class="text-end">{{ row.4 }}</td></tr>{% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No expenses for this month.</td></tr>{% endfor %}
+      </tbody>{% if data.totals %}<tfoot><tr class="table-light fw-bold"><td>Total</td><td class="text-end">{{ data.totals.1 }}</td><td class="text-end">{% money data.totals.2 %}</td><td class="text-end">{% money data.totals.3 %}</td><td class="text-end">{{ data.totals.4 }}</td></tr></tfoot>{% endif %}</table>
+    </div></div>
+  </div>
+</div>
+
+<div class="card mb-3"><div class="card-header">Day-wise Monthly Breakdown</div><div class="table-responsive">
+  <table class="table table-sm table-hover mb-0"><thead><tr><th>Date</th><th class="text-end">Transactions</th><th class="text-end">Cash</th><th class="text-end">Card</th><th class="text-end">Bank / Online</th><th class="text-end">Other</th><th class="text-end">Daily Total</th></tr></thead><tbody>
+  {% for day in data.daily_breakdown %}<tr><td class="text-nowrap">{{ day.date|date:"Y-m-d" }}</td><td class="text-end">{{ day.count }}</td><td class="text-end">{% money day.cash %}</td><td class="text-end">{% money day.card %}</td><td class="text-end">{% money day.bank_online %}</td><td class="text-end">{% money day.other %}</td><td class="text-end fw-semibold">{% money day.total %}</td></tr>{% endfor %}
+  </tbody><tfoot><tr class="table-light fw-bold"><td>Month Total</td><td class="text-end">{{ data.transaction_count }}</td><td colspan="4"></td><td class="text-end">{% money data.total_expenses %}</td></tr></tfoot></table>
+</div></div>
+
+<div class="card expense-day-details"><div class="card-header">Daily Transaction Detail</div><div class="card-body">
+  {% for day in data.daily_breakdown %}{% if day.transactions %}
+  <details class="mb-2"><summary>{{ day.date|date:"Y-m-d" }} — {{ day.count }} transaction{{ day.count|pluralize }} — {% money day.total %}</summary>
+    <div class="table-responsive mt-2"><table class="table table-sm"><thead><tr><th>Expense / Payee</th><th>Category</th><th>Branch</th><th>Paid Via</th><th class="text-end">Amount</th><th>Status</th></tr></thead><tbody>
+    {% for item in day.transactions %}<tr><td><span class="fw-semibold">{{ item.number }}</span>{% if item.payee %}<div class="small text-secondary">{{ item.payee }}</div>{% endif %}</td><td>{{ item.category }}</td><td>{{ item.branch }}</td><td>{{ item.paid_via }}</td><td class="text-end">{% money item.amount %}</td><td>{{ item.status }}</td></tr>{% endfor %}
+    </tbody></table></div>
+  </details>
+  {% endif %}{% empty %}<div class="text-secondary">No transactions for this month.</div>{% endfor %}
+</div></div>
+{% else %}
 <div class="card report-card"><div class="table-responsive report-table-wrap">
   <table class="table table-sm table-hover mb-0 report-table report-table-{{ key }} {% if data.columns|length > 8 %}report-table-wide{% endif %}">
     {% if key == "sales_summary" %}
@@ -140,5 +224,6 @@
   </span>
   {% endif %}
 </div></div>
+{% endif %}
 </div>
 {% endblock %}

@@ -1,4 +1,5 @@
 {% extends "layouts/base.html" %}
+{% load money_tags %}
 {% block title %}Expenses &mdash; {{ PRODUCT_NAME }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -37,6 +38,12 @@
           {% for b in branches %}<option value="{{ b.id }}" {% if request.GET.branch == b.id|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}
         </select>
       </div>
+      <div class="col-6 col-md-4 col-lg">
+        <select name="method" class="form-select form-select-sm" aria-label="Payment Medium">
+          <option value="">All payment media</option>
+          {% for value, label in payment_medium_choices %}<option value="{{ value }}" {% if payment_medium == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+      </div>
       <div class="col-6 col-md-4 col-lg"><input type="date" name="from" value="{{ date_from }}" class="form-control form-control-sm" aria-label="From date"></div>
       <div class="col-6 col-md-4 col-lg"><input type="date" name="to" value="{{ date_to }}" class="form-control form-control-sm" aria-label="To date"></div>
       <div class="col-12 col-md-auto col-lg-auto text-nowrap"><button class="btn btn-sm btn-primary">Filter</button>
@@ -47,12 +54,12 @@
   <div class="card">
     <div class="card-header d-flex justify-content-between flex-wrap gap-2">
       <span>Current Expenses</span>
-      <span class="small text-secondary">Filtered total: <strong>{{ total }} {{ current_business.currency_display }}</strong></span>
+      <span class="small text-secondary">Filtered total: <strong>{% money total %} {{ current_business.currency_display }}</strong></span>
     </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
         <thead><tr><th>Date</th><th>Expense Name / Payee</th><th>Category</th><th>Branch</th>
-          <th class="text-end">Amount</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
+          <th>Paid Via</th><th class="text-end">Amount</th><th>Status</th><th class="text-end">Actions</th></tr></thead>
         <tbody>
           {% for e in page_obj %}
           <tr>
@@ -60,7 +67,8 @@
             <td class="small">{% if e.payee %}{{ e.payee }}{% elif e.supplier %}{{ e.supplier.name }}{% elif e.description %}{{ e.description }}{% else %}-{% endif %}</td>
             <td>{{ e.category.name }}</td>
             <td class="small">{{ e.branch.name }}</td>
-            <td class="text-end fw-semibold text-nowrap">{{ e.amount }} {{ current_business.currency_display }}</td>
+            <td class="small text-nowrap">{{ e.payment_medium_display }}</td>
+            <td class="text-end fw-semibold text-nowrap">{% money e.amount %} {{ current_business.currency_display }}</td>
             <td><span class="badge badge-status bs-{{ e.status }}">{{ e.get_status_display }}</span></td>
             <td class="text-end text-nowrap">
               {% if e.attachment %}<a class="btn btn-sm btn-outline-secondary" href="{{ e.attachment.url }}" target="_blank" title="Receipt"><i class="bi bi-paperclip"></i></a>{% endif %}
@@ -72,12 +80,14 @@
                 <button class="btn btn-sm btn-outline-danger">Reject</button></form>
               {% elif e.status == "draft" or e.status == "submitted" %}
               <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:edit' e.public_id %}" title="Edit expense"><i class="bi bi-pencil"></i></a>
+              {% elif can_correct_history %}
+              <a class="btn btn-sm btn-outline-secondary" href="{% url 'expenses:edit' e.public_id %}" title="Correct payment medium / drawer"><i class="bi bi-cash-coin"></i></a>
               {% endif %}
               {% endif %}
             </td>
           </tr>
           {% empty %}
-          <tr><td colspan="7"><div class="empty-state"><i class="bi bi-wallet2 d-block mb-2"></i>No current expenses recorded.</div></td></tr>
+          <tr><td colspan="8"><div class="empty-state"><i class="bi bi-wallet2 d-block mb-2"></i>No current expenses recorded.</div></td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -108,7 +118,7 @@
             <td class="fw-semibold">{{ item.name }}</td>
             <td>{{ item.branch.name|default:"Legacy - branch required" }}</td>
             <td>{{ item.category.name }}</td>
-            <td class="text-end fw-semibold text-nowrap">{{ item.default_amount }} {{ current_business.currency_display }}</td>
+            <td class="text-end fw-semibold text-nowrap">{% money item.default_amount %} {{ current_business.currency_display }}</td>
             <td class="text-center">{{ item.due_day }}</td>
             <td class="small text-nowrap">{{ item.start_date }}</td>
             <td class="small text-nowrap">{{ item.end_date|default:"-" }}</td>
