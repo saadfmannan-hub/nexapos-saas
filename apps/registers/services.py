@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError, Q, Sum
 from django.utils import timezone
 
@@ -493,19 +493,41 @@ def open_shift(*, business, register, cashier, opening_cash, notes="",
     ).exists():
         raise ShiftError("You already have an open shift on another register.")
     opening_cash = _cash_decimal(opening_cash, "opening cash amount")
-    shift = Shift.objects.create(
-        business=business,
-        register=register,
-        branch=register.branch,
-        cashier=cashier,
-        opened_at=timezone.now(),
-        opening_cash=opening_cash,
-        opening_notes=notes,
-    )
+    try:
+        # Keep this savepoint inside the register lock. The conditional unique
+        # constraint remains the final guard if two requests race before one
+        # transaction can observe the other's open shift.
+        with transaction.atomic():
+            shift = Shift.objects.create(
+                business=business,
+                register=register,
+                branch=register.branch,
+                cashier=cashier,
+                opened_at=timezone.now(),
+                opening_cash=opening_cash,
+                opening_notes=notes,
+            )
+    except IntegrityError as exc:
+        if Shift.objects.for_business(business).filter(
+            register=register, status=Shift.Status.OPEN
+        ).exists():
+            raise ShiftError("This register already has an open shift.") from exc
+        raise
     audit.log("shift.opened", business=business, user=cashier, request=request,
               module="registers", obj=shift,
               description=f"Shift opened on {register} with {opening_cash} opening cash.")
     return shift
+
+
+def shift_duration_label(shift, *, now=None):
+    """Return a stable, minute-level duration for live and historical shifts."""
+    end = shift.closed_at or now or timezone.now()
+    elapsed_seconds = max(0, int((end - shift.opened_at).total_seconds()))
+    total_minutes = elapsed_seconds // 60
+    hours, minutes = divmod(total_minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
 
 
 def shift_totals(shift):

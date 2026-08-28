@@ -29,8 +29,13 @@
   <div class="col-lg-5">
     <div class="card"><div class="card-header">Cash summary</div><div class="card-body">
       <table class="table table-sm mb-0">
+        <tr><th>Register</th><td>{{ shift.register.name }}</td></tr>
         <tr><th>Cashier</th><td>{{ shift.cashier.full_name }}</td></tr>
+        <tr><th>Branch</th><td>{{ shift.branch.name }}</td></tr>
         <tr><th>Opened</th><td>{{ shift.opened_at|date:"Y-m-d H:i" }}</td></tr>
+        <tr><th>Duration</th><td>{{ duration_label }}</td></tr>
+        <tr><th>Shift status</th><td><span class="badge badge-status bs-{{ shift.status }}">{{ shift.get_status_display }}</span></td></tr>
+        {% if shift.opening_notes %}<tr><th>Opening notes</th><td class="text-break">{{ shift.opening_notes|linebreaksbr }}</td></tr>{% endif %}
         {% if shift.closed_at %}<tr><th>Closed</th><td>{{ shift.closed_at|date:"Y-m-d H:i" }}</td></tr>{% endif %}
         {% if shift.closing_notes %}<tr class="z-report-closing-notes"><th>Closing notes</th><td class="text-break">{{ shift.closing_notes|linebreaksbr }}</td></tr>{% endif %}
         <tr><th>Opening cash</th><td>{% money shift.opening_cash %}</td></tr>
@@ -53,7 +58,7 @@
         <tr><th>Bank transfer</th><td class="text-end">{% money totals.bank_sales %}</td></tr>
         <tr><th>Customer credit</th><td class="text-end">{% money totals.credit_sales %}</td></tr>
         <tr><th>Store credit</th><td class="text-end">{% money totals.store_credit_used %}</td></tr>
-        <tr><th>Other</th><td class="text-end">{% money totals.other_sales %}</td></tr>
+        <tr><th>Online / other</th><td class="text-end">{% money totals.other_sales %}</td></tr>
       </table>
     </div></div>
   </div>
@@ -74,6 +79,43 @@
         </tbody>
       </table></div>
     </div>
+
+    <div class="card mt-3"><div class="card-header">Refunds in this shift</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Return</th><th>Invoice</th><th>Customer</th><th>Method</th><th class="text-end">Amount</th></tr></thead>
+        <tbody>
+          {% for refund in refunds %}
+          <tr>
+            <td>{{ refund.return_number }}</td>
+            <td><a href="{% url 'sales:detail' refund.sale.public_id %}">{{ refund.sale.invoice_number }}</a></td>
+            <td class="small">{{ refund.customer.full_name }}</td>
+            <td>{{ refund.get_refund_method_display }}</td>
+            <td class="text-end">{% money refund.refund_amount %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-3">No refunds in this shift yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+
+    {% if can_view_expenses %}
+    <div class="card mt-3"><div class="card-header">Expense activity linked to this shift</div>
+      <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Expense</th><th>Date</th><th>Category</th><th>Paid via</th><th>Status</th><th class="text-end">Amount</th></tr></thead>
+        <tbody>
+          {% for expense in expenses %}
+          <tr>
+            <td>{{ expense.expense_number }}</td>
+            <td class="small">{{ expense.expense_date|date:"Y-m-d" }}</td>
+            <td>{{ expense.category.name }}</td>
+            <td>{{ expense.payment_medium_display }}</td>
+            <td><span class="badge badge-status bs-{{ expense.status }}">{{ expense.get_status_display }}</span></td>
+            <td class="text-end">{% money expense.amount %}</td>
+          </tr>
+          {% empty %}<tr><td colspan="6" class="text-center text-secondary py-3">No register expense activity in this shift yet</td></tr>{% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

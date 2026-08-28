@@ -2,13 +2,13 @@ from django.contrib import messages
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Exists, OuterRef
+from django.db.models import Exists, OuterRef, Prefetch
 from django.http import Http404
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from apps.audit import services as audit
-from apps.core.date_ranges import date_range_querystring, resolve_date_range
+from apps.core.date_ranges import business_localtime, date_range_querystring, resolve_date_range
 from apps.core.mixins import get_tenant_object
 from apps.subscriptions import services as subscriptions
 from apps.subscriptions.decorators import module_permission_required
@@ -80,6 +80,7 @@ def shift_list(request):
             branch__usage_type=Branch.UsageType.SALES_BRANCH,
         )
         .select_related("branch")
+        .exclude(shifts__status=Shift.Status.OPEN)
     )
     # All active branches for the business; restricted only when the
     # member is explicitly branch-limited (owners/admins see everything).
@@ -93,8 +94,30 @@ def shift_list(request):
         branches = branches.filter(id__in=allowed)
 
     page_obj = None
+    open_shifts = []
     date_from, date_to = resolve_date_range(request.GET, request.business)
     if can_open_shifts:
+        visible_shifts = _shifts_for_request(
+            request,
+            Shift.objects.select_related("register", "branch", "cashier"),
+        )
+        if not request.membership.has_perm("shifts.approve"):
+            visible_shifts = visible_shifts.filter(cashier=request.user)
+        open_shifts = list(
+            visible_shifts.filter(status=Shift.Status.OPEN).order_by("opened_at", "pk")
+        )
+        live_now = business_localtime(request.business)
+        live_totals_by_shift_id = {}
+        for open_shift in open_shifts:
+            open_shift.live_totals = services.shift_totals(open_shift)
+            live_totals_by_shift_id[open_shift.pk] = open_shift.live_totals
+            open_shift.duration_label = services.shift_duration_label(
+                open_shift,
+                now=live_now,
+            )
+        if my_shift is not None:
+            my_shift.live_totals = live_totals_by_shift_id[my_shift.pk]
+
         shifts = _shifts_for_request(
             request,
             Shift.objects.select_related("register", "branch", "cashier", "approved_by"),
@@ -105,13 +128,33 @@ def shift_list(request):
         if not request.membership.has_perm("shifts.approve"):
             shifts = shifts.filter(cashier=request.user)
         page_obj = Paginator(shifts, 25).get_page(request.GET.get("page"))
+        for history_shift in page_obj.object_list:
+            if history_shift.status == Shift.Status.OPEN:
+                history_shift.history_expected_cash = live_totals_by_shift_id[
+                    history_shift.pk
+                ]["expected_cash"]
+            else:
+                history_shift.history_expected_cash = history_shift.expected_cash
 
     managed_registers = CashRegister.objects.none()
     register_usage = None
     if can_manage_registers:
+        open_shift_prefetch = (
+            Shift.objects.for_business(request.business)
+            .filter(status=Shift.Status.OPEN)
+            .select_related("cashier", "branch")
+            .order_by("-opened_at", "-pk")
+        )
         managed_registers = (
             CashRegister.objects.for_business(request.business)
             .select_related("branch")
+            .prefetch_related(
+                Prefetch(
+                    "shifts",
+                    queryset=open_shift_prefetch,
+                    to_attr="current_open_shifts",
+                )
+            )
             .annotate(
                 has_shifts=Exists(Shift.objects.filter(register=OuterRef("pk"))),
                 has_sales=Exists(Sale.objects.filter(register=OuterRef("pk"))),
@@ -120,6 +163,12 @@ def shift_list(request):
         )
         if allowed is not None:
             managed_registers = managed_registers.filter(branch_id__in=allowed)
+        managed_registers = list(managed_registers)
+        for managed_register in managed_registers:
+            managed_register.current_open_shift = next(
+                iter(managed_register.current_open_shifts),
+                None,
+            )
         current, limit, allowed_by_plan = subscriptions.limit_state(
             request.business, "pos_terminals"
         )
@@ -139,6 +188,7 @@ def shift_list(request):
         "register_usage": register_usage,
         "can_open_shifts": can_open_shifts,
         "can_manage_registers": can_manage_registers,
+        "open_shifts": open_shifts,
     })
 
 
@@ -172,7 +222,9 @@ def shift_open(request):
 
 @module_permission_required("pos_core", "shifts.open")
 def shift_detail(request, public_id):
+    from apps.expenses.models import Expense
     from apps.sales import financials
+    from apps.sales.models import SaleReturn
 
     shift = _shift_for_request(
         request,
@@ -194,8 +246,27 @@ def shift_detail(request, public_id):
         sale.display_net_total = financials.financial_summary_for_sale(
             sale
         ).net_sales
+    can_view_expenses = request.membership.has_perm("expenses.view")
+    expenses = []
+    if can_view_expenses:
+        expenses = list(
+            Expense.objects.for_business(request.business)
+            .filter(shift=shift)
+            .select_related("category", "payment_method")
+            .order_by("-created_at", "-pk")[:100]
+        )
+    refunds = list(
+        SaleReturn.objects.for_business(request.business)
+        .filter(shift=shift)
+        .select_related("sale", "customer")
+        .order_by("-created_at", "-pk")[:100]
+    )
+    duration_label = services.shift_duration_label(shift)
     return render(request, "registers/shift_detail.html", {
         "shift": shift, "totals": totals, "sales": sales,
+        "expenses": expenses, "refunds": refunds,
+        "duration_label": duration_label,
+        "can_view_expenses": can_view_expenses,
         "active_nav": "registers",
         "can_approve": request.membership.has_perm("shifts.approve"),
         "can_reopen": request.membership.has_perm("shifts.reopen"),
