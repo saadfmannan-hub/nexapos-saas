@@ -1,0 +1,44 @@
+{% extends "layouts/base.html" %}
+{% block title %}Family profile — {{ PRODUCT_NAME }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-lg-7">
+  <div class="card">
+    <div class="card-header">
+      {% if family_member %}Edit {{ family_member.name }}{% else %}Add family / wearer{% endif %}
+      <div class="small text-secondary mt-1">Customer: {{ customer.full_name }}</div>
+    </div>
+    <div class="card-body">
+      {% if form.non_field_errors %}<div class="alert alert-danger py-2">{{ form.non_field_errors }}</div>{% endif %}
+      <form method="post">{% csrf_token %}
+        <div class="row">
+          <div class="col-md-8">{% include "components/form_field.html" with field=form.name %}</div>
+          <div class="col-md-4">{% include "components/form_field.html" with field=form.relation %}</div>
+        </div>
+        {% if form.more_option_fields %}
+        <div class="border rounded p-3 mb-3">
+          <h2 class="h6 mb-3">Measurements</h2>
+          <div class="row">
+            {% for name in form.more_option_fields %}
+              {% for field in form %}
+                {% if field.name == name %}
+                  <div class="col-md-6">{% include "components/form_field.html" with field=field %}</div>
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+        <button class="btn btn-primary">Save profile</button>
+        <a href="{% url 'customers:detail' customer.public_id %}" class="btn btn-outline-secondary">Cancel</a>
+      </form>
+      {% if family_member and family_member.is_active %}
+      <hr>
+      <form method="post" action="{% url 'customers:family_deactivate' customer.public_id family_member.public_id %}">
+        {% csrf_token %}
+        <button class="btn btn-outline-danger btn-sm" type="submit">Deactivate profile</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div></div>
+{% endblock %}

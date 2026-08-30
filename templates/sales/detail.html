@@ -42,6 +42,7 @@
             <td>
               {{ item.product_name }}
               {% if show_tailoring and item.is_tailoring_line %}
+                {% if item.family_member %}<div class="small mt-1"><span class="badge text-bg-light border text-dark">Wearer: {{ item.family_member.name }} · {{ item.family_member.get_relation_display }}</span></div>{% endif %}
                 <div class="small text-secondary">Garment: <span class="fw-semibold text-body">{{ item.garment_classification_label }}</span></div>
                 <div class="small text-secondary">Collection: <span class="fw-semibold text-body">{{ item.collection_type_label }}</span></div>
                 {% if item.customer_supplied_fabric %}

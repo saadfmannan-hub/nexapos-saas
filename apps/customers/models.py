@@ -105,6 +105,47 @@ class Customer(TenantModel):
         super().delete(*args, **kwargs)
 
 
+class CustomerFamilyMember(TenantModel):
+    """An optional wearer profile owned by one named customer."""
+
+    class Relation(models.TextChoices):
+        SON = "son", _("Son")
+        BROTHER = "brother", _("Brother")
+        FATHER = "father", _("Father")
+
+    customer = models.ForeignKey(
+        Customer,
+        on_delete=models.CASCADE,
+        related_name="family_members",
+    )
+    name = models.CharField(max_length=160)
+    relation = models.CharField(max_length=10, choices=Relation.choices)
+    more_options = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+        indexes = [
+            models.Index(
+                fields=["business", "customer", "is_active"],
+                name="cust_family_active_idx",
+            ),
+            models.Index(
+                fields=["business", "customer", "relation", "name"],
+                name="cust_family_relation_idx",
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(relation__in=["son", "brother", "father"]),
+                name="customer_family_relation_valid",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_relation_display()})"
+
+
 class CustomerPayment(TenantModel):
     """A collection against the customer's outstanding balance."""
 

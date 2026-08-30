@@ -20,7 +20,7 @@ from apps.core.date_ranges import (
 from apps.core.mixins import get_tenant_object
 from apps.core.money import D, money
 from apps.customers import services as customer_services
-from apps.customers.models import Customer
+from apps.customers.models import Customer, CustomerFamilyMember
 from apps.inventory.models import StockLevel
 from apps.registers import services as register_services
 from apps.subscriptions import services as subscriptions
@@ -703,7 +703,8 @@ def pos_customers(request):
         ).allowed
     )
     results = [{
-        "id": c.id, "name": c.full_name, "mobile": c.mobile,
+        "id": c.id, "public_id": str(c.public_id),
+        "name": c.full_name, "mobile": c.mobile,
         "balance": str(c.balance) if credit_access else "0",
         "store_credit": str(c.store_credit) if credit_access else "0",
         "credit_limit": str(c.credit_limit) if credit_access else "0",
@@ -766,10 +767,48 @@ def pos_quick_customer(request):
             status=400,
         )
     return JsonResponse({"ok": True, "customer": {
-        "id": customer.id, "name": customer.full_name, "mobile": customer.mobile,
+        "id": customer.id, "public_id": str(customer.public_id),
+        "name": customer.full_name, "mobile": customer.mobile,
         "balance": "0", "store_credit": "0", "credit_limit": "0", "is_walk_in": False,
         "more_options": [],
     }})
+
+
+@module_permission_required("tailoring", "sales.create")
+def pos_customer_family(request, customer_public_id):
+    from apps.branches.models import Branch
+
+    try:
+        branch = Branch.objects.for_business(request.business).get(
+            pk=request.GET.get("branch_id"),
+            is_active=True,
+            usage_type=Branch.UsageType.SALES_BRANCH,
+        )
+    except (Branch.DoesNotExist, TypeError, ValueError, OverflowError):
+        raise Http404 from None
+    if not request.membership.can_access_branch(branch):
+        raise Http404
+    try:
+        customer = Customer.objects.for_business(request.business).get(
+            public_id=customer_public_id,
+            home_branch=branch,
+            is_active=True,
+            is_walk_in=False,
+        )
+    except Customer.DoesNotExist:
+        raise Http404 from None
+    results = [
+        {
+            "public_id": str(member.public_id),
+            "name": member.name,
+            "relation": member.relation,
+            "relation_label": member.get_relation_display(),
+        }
+        for member in CustomerFamilyMember.objects.for_business(
+            request.business
+        ).filter(customer=customer, is_active=True).order_by("name")
+    ]
+    return JsonResponse({"results": results})
 
 
 @require_POST
@@ -942,6 +981,7 @@ def pos_checkout(request):
             "customer_supplied_fabric": raw.get(
                 "customer_supplied_fabric", False
             ),
+            "family_member_id": raw.get("family_member_id"),
         }
         # Key presence is significant: legacy service integrations that omit
         # it keep their historical compatibility path, while POS/held carts
@@ -1339,7 +1379,7 @@ def sale_detail(request, public_id):
         request.business, public_id=public_id,
     )
     items = _invoice_display_items(list(
-        sale.items.select_related("product__unit", "variant")
+        sale.items.select_related("product__unit", "variant", "family_member")
     ))
     return_records = list(sale.returns.prefetch_related(
         _return_items_prefetch(request.business)
@@ -1504,7 +1544,9 @@ def _invoice_status_label(sale):
 def _ordered_tailoring_items(sale):
     return [
         item
-        for item in sale.items.select_related("product__unit", "variant").order_by("id")
+        for item in sale.items.select_related(
+            "product__unit", "variant", "family_member"
+        ).order_by("id")
         if item.is_tailoring_line
     ]
 
@@ -1546,6 +1588,7 @@ def _job_card_data(
         "vip": ("VIP", "vip"),
     }
     tailoring = sale_item.tailoring_details if sale_item is not None else {}
+    wearer = sale_item.family_member if sale_item is not None else None
     legacy_priority = str(tailoring.get("priority") or "").strip().lower()
     priority_key = sale.priority
     if priority_key == Sale.Priority.NORMAL and legacy_priority in priority_options:
@@ -1571,8 +1614,9 @@ def _job_card_data(
         "tailoring": tailoring,
         "business": sale.business,
         "more_options": customer_services.more_option_values(
-            request.business, sale.customer
+            request.business, wearer or sale.customer
         ),
+        "wearer": wearer,
         "job_card_number": f"JC-{sale.invoice_number}-{sequence:02d}",
         "job_card_sequence": sequence,
         "job_card_total": total,
@@ -1822,7 +1866,9 @@ def sale_item_workshop_job_card_pdf(request, public_id, item_id):
         public_id=public_id,
     )
     sale_item = get_tenant_object(
-        SaleItem.objects.select_related("sale", "product__unit", "variant"),
+        SaleItem.objects.select_related(
+            "sale", "product__unit", "variant", "family_member"
+        ),
         request.business,
         pk=item_id,
         sale=sale,

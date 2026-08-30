@@ -243,6 +243,19 @@
               </button>
               <div class="border rounded p-2 mt-2 bg-light" x-show="line.expanded" x-cloak>
                 <div class="row g-2 pos-tailoring-fields">
+                  <div class="col-12" x-show="!customer.is_walk_in">
+                    <label class="form-label small mb-1">Wearer</label>
+                    <select class="form-select form-select-sm" x-model="line.family_member_id"
+                            @focus="loadFamilyMembers()" @change="line.family_error = ''">
+                      <option value="">Main Customer</option>
+                      <template x-for="member in familyMembers" :key="member.public_id">
+                        <option :value="member.public_id" x-text="member.name + ' · ' + member.relation_label"></option>
+                      </template>
+                    </select>
+                    <div class="small text-secondary mt-1" x-show="familyLoading">Loading family profiles…</div>
+                    <div class="small text-danger mt-1" x-show="familyError" x-text="familyError"></div>
+                    <div class="small text-danger mt-1" x-show="line.family_error" x-text="line.family_error"></div>
+                  </div>
                   <div class="col-6">
                     <label class="form-label small mb-1">Design Type</label>
                     <select class="form-select form-select-sm" x-model="line.tailoring_details.design_type">
@@ -456,9 +469,10 @@ function pos() {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
     cart: [], invoiceDiscount: 0, notes: '', priority: 'normal', deliveryDate: '',
     busy: false, payError: '',
-    customer: {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []},
+    customer: {id: {{ walk_in.id|default:"null" }}, public_id: "{{ walk_in.public_id|default:'' }}", name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, is_walk_in: true, more_options: []},
     customerSearch: '', customerResults: [], newCustomer: {name:'', mobile:''},
-    recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]'),
+    recentCustomers: JSON.parse(localStorage.getItem('pos_recent_customers') || '[]').filter(c => c.public_id),
+    familyMembers: [], familyLoading: false, familyError: '', familyLoadedCustomerId: null,
     payments: [], lastSale: {}, heldSales: [], heldCount: {{ held_sales|length }},
     resumedHeldId: null, checkoutToken: '',
 
@@ -523,6 +537,7 @@ function pos() {
                            customer_supplied_fabric: p.customer_fabric_only === true,
                            fabric_meter_used: '', meter_error: '',
                            garment_classification: '',
+                           family_member_id: '', family_error: '',
                            collection_type: (p.is_meter_tailoring || p.is_legacy_tailoring) ? 'normal' : '',
                            validation_error: '', collection_error: '',
                            expanded: false, tailoring_details: this.blankTailoringDetails()});
@@ -571,6 +586,8 @@ function pos() {
         fabric_meter_used: '',
         meter_error: '',
         garment_classification: '',
+        family_member_id: '',
+        family_error: '',
         collection_type: 'normal',
         validation_error: '',
         collection_error: '',
@@ -585,6 +602,7 @@ function pos() {
       let firstInvalid = -1;
       this.cart.forEach((line, index) => {
         line.validation_error = '';
+        line.family_error = '';
         line.collection_error = '';
         line.meter_error = '';
         line.customer_fabric_only = (
@@ -649,6 +667,8 @@ function pos() {
         tailoring_details: line.is_tailoring_workflow
           ? {...this.blankTailoringDetails(), ...(line.tailoring_details || {})}
           : {},
+        ...(line.is_tailoring_workflow && !this.customer.is_walk_in && line.family_member_id
+          ? {family_member_id: line.family_member_id} : {}),
       }));
     },
     lineParts(l, invoiceShare = 0) {
@@ -714,9 +734,46 @@ function pos() {
     },
     selectCustomer(c) {
       this.customer = c;
+      this.resetFamilyMembers(true);
       if (!c.is_walk_in) {
         this.recentCustomers = [c, ...this.recentCustomers.filter(r => r.id !== c.id)].slice(0, 5);
         localStorage.setItem('pos_recent_customers', JSON.stringify(this.recentCustomers));
+      }
+    },
+    resetFamilyMembers(clearLines = true) {
+      this.familyMembers = [];
+      this.familyError = '';
+      this.familyLoading = false;
+      this.familyLoadedCustomerId = null;
+      if (clearLines) {
+        this.cart.forEach(line => {
+          line.family_member_id = '';
+          line.family_error = '';
+        });
+      }
+    },
+    async loadFamilyMembers() {
+      if (this.customer.is_walk_in || !this.customer.public_id) return;
+      if (this.familyLoadedCustomerId === this.customer.public_id || this.familyLoading) return;
+      this.familyLoading = true;
+      this.familyError = '';
+      try {
+        const base = "{% url 'sales:pos_customers' %}";
+        const r = await fetch(base + encodeURIComponent(this.customer.public_id) + '/family/?branch_id={{ branch.id }}');
+        if (!r.ok) throw new Error('Unable to load family profiles.');
+        const data = await r.json();
+        this.familyMembers = data.results || [];
+        this.familyLoadedCustomerId = this.customer.public_id;
+        const activeIds = new Set(this.familyMembers.map(member => member.public_id));
+        this.cart.forEach(line => {
+          if (line.family_member_id && !activeIds.has(line.family_member_id)) {
+            line.family_member_id = '';
+          }
+        });
+      } catch (error) {
+        this.familyError = error.message || 'Unable to load family profiles.';
+      } finally {
+        this.familyLoading = false;
       }
     },
     quickDiscount(pct) {
@@ -741,7 +798,7 @@ function pos() {
       const r = await fetch("{% url 'sales:pos_quick_customer' %}",
         {method: 'POST', body, headers: {'X-CSRFToken': '{{ csrf_token }}'}});
       const data = await r.json();
-      if (data.ok) { this.customer = data.customer; this.newCustomer = {name:'', mobile:''}; }
+      if (data.ok) { this.selectCustomer(data.customer); this.newCustomer = {name:'', mobile:''}; }
       else alert(data.error);
     },
 
@@ -823,6 +880,9 @@ function pos() {
           this.cart[index].meter_error = message;
         } else if (field.endsWith('.collection_type')) {
           this.cart[index].collection_error = message;
+        } else if (field.endsWith('.family_member_id')) {
+          this.cart[index].family_error = message;
+          this.cart[index].expanded = true;
         } else {
           this.cart[index].validation_error = message;
         }
@@ -835,7 +895,8 @@ function pos() {
       this.cart = []; this.invoiceDiscount = 0; this.notes = ''; this.payments = [];
       this.priority = 'normal'; this.deliveryDate = ''; this.resumedHeldId = null;
       this.checkoutToken = this.newCheckoutToken();
-      this.customer = {id: {{ walk_in.id|default:"null" }}, name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, more_options: []};
+      this.customer = {id: {{ walk_in.id|default:"null" }}, public_id: "{{ walk_in.public_id|default:'' }}", name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, is_walk_in: true, more_options: []};
+      this.resetFamilyMembers(false);
       this.$refs.barcode.focus();
     },
     clearCart() { if (!this.cart.length || confirm('Clear the current cart?')) this.newSale(); },
@@ -899,6 +960,8 @@ function pos() {
         line.meter_error = '';
         line.discount_amount = 0;
         line.garment_classification = String(line.garment_classification || '').toLowerCase();
+        line.family_member_id = line.is_tailoring_workflow ? String(line.family_member_id || '') : '';
+        line.family_error = '';
         const collectionType = String(line.collection_type || '').toLowerCase();
         line.collection_type = line.is_tailoring_workflow && ['normal', 'premium'].includes(collectionType)
           ? collectionType : (line.is_tailoring_workflow ? 'normal' : '');
@@ -916,7 +979,11 @@ function pos() {
           line.tailoring_details = this.blankTailoringDetails();
         }
       });
-      if (h.cart.customer) this.customer = h.cart.customer;
+      if (h.cart.customer) {
+        this.customer = h.cart.customer;
+        this.resetFamilyMembers(false);
+        this.loadFamilyMembers();
+      }
       this.invoiceDiscount = h.cart.invoice_discount || 0;
       this.notes = h.cart.notes || '';
       this.deliveryDate = h.cart.delivery_date || '';

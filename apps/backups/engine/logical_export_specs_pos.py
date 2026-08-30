@@ -175,6 +175,19 @@ LOGICAL_EXPORT_SPECS_POS = (
         ),
     ),
     _tenant_spec(
+        model_label="customers.CustomerFamilyMember",
+        component_key="pos.customers",
+        scalar_fields=("name", "relation", "is_active"),
+        relation_fields=(relation("customer", "customers.Customer"),),
+        json_fields=(
+            json_field(
+                "more_options",
+                policy=JsonPolicy.INDEXED_STRING_MAP,
+                allowed_values=_CUSTOMER_MORE_OPTION_KEYS,
+            ),
+        ),
+    ),
+    _tenant_spec(
         model_label="customers.CustomerPayment",
         component_key="pos.customers",
         scalar_fields=(
@@ -510,6 +523,11 @@ LOGICAL_EXPORT_SPECS_POS = (
             relation("product", "catalog.Product"),
             relation("variant", "catalog.ProductVariant", nullable=True),
             relation("stock_warehouse", "branches.Warehouse", nullable=True),
+            relation(
+                "family_member",
+                "customers.CustomerFamilyMember",
+                nullable=True,
+            ),
         ),
         json_fields=(
             json_field(

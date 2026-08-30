@@ -17,7 +17,7 @@ from apps.subscriptions.access import (
     require_actor_access,
 )
 
-from .models import Customer, CustomerGroup, CustomerPayment
+from .models import Customer, CustomerFamilyMember, CustomerGroup, CustomerPayment
 
 # Export column order ↔ model field mapping (reused by export + import template)
 BASE_EXPORT_COLUMNS = [
@@ -145,6 +145,281 @@ def more_option_values(business, customer):
         if value:
             options.append({"label": option["label"], "value": value})
     return options
+
+
+def clean_family_more_options(business, raw_values):
+    """Validate a family profile against the business's configured fields."""
+    if raw_values is None:
+        return {}
+    if not isinstance(raw_values, dict):
+        raise ValidationError({"more_options": "Measurements must be an object."})
+
+    allowed_keys = {
+        str(option["key"]) for option in business.settings.more_option_labels
+    }
+    unexpected = sorted(str(key) for key in raw_values if str(key) not in allowed_keys)
+    if unexpected:
+        raise ValidationError({
+            "more_options": (
+                "Unconfigured measurement field(s): " + ", ".join(unexpected)
+            )
+        })
+
+    cleaned = {}
+    for raw_key, raw_value in raw_values.items():
+        key = str(raw_key)
+        if isinstance(raw_value, (dict, list, tuple, set)):
+            raise ValidationError({
+                "more_options": f"Measurement {key} must be a single value."
+            })
+        if raw_value is None:
+            continue
+        if not isinstance(raw_value, (str, int, float, bool)):
+            raise ValidationError({
+                "more_options": f"Measurement {key} must be a single value."
+            })
+        value = str(raw_value).strip()
+        if len(value) > 255:
+            raise ValidationError({
+                "more_options": f"Measurement {key} cannot exceed 255 characters."
+            })
+        if value:
+            cleaned[key] = value
+    return cleaned
+
+
+def _family_access_context(
+    *, business, user, membership=None, request=None, scope_allowed=True
+):
+    return require_actor_access(
+        user,
+        business,
+        "tailoring",
+        permission_code="customers.manage",
+        action=AccessAction.WRITE,
+        membership=membership,
+        request=request,
+        scope_allowed=scope_allowed,
+    )
+
+
+def _canonical_family_customer(
+    *, business, customer, user, membership=None, request=None
+):
+    context = _family_access_context(
+        business=business,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    canonical = (
+        Customer.objects.select_for_update()
+        .filter(pk=getattr(customer, "pk", None), business=business)
+        .first()
+    )
+    allowed_branch_ids = context.membership.allowed_branch_ids
+    if (
+        canonical is None
+        or canonical.is_walk_in
+        or (
+            allowed_branch_ids is not None
+            and canonical.home_branch_id not in allowed_branch_ids
+        )
+    ):
+        _family_access_context(
+            business=business,
+            user=user,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    return context, canonical
+
+
+def _clean_family_fields(*, business, name, relation, more_options):
+    name = str(name or "").strip()
+    if not name:
+        raise ValidationError({"name": "Enter the family member's name."})
+    if len(name) > CustomerFamilyMember._meta.get_field("name").max_length:
+        raise ValidationError({"name": "Name cannot exceed 160 characters."})
+    relation = str(relation or "").strip().lower()
+    if relation not in dict(CustomerFamilyMember.Relation.choices):
+        raise ValidationError({"relation": "Select a valid relation."})
+    return name, relation, clean_family_more_options(business, more_options)
+
+
+@transaction.atomic
+def create_customer_family_member(
+    *,
+    business,
+    customer,
+    name,
+    relation,
+    more_options,
+    user,
+    membership=None,
+    request=None,
+):
+    context, customer = _canonical_family_customer(
+        business=business,
+        customer=customer,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    name, relation, more_options = _clean_family_fields(
+        business=business,
+        name=name,
+        relation=relation,
+        more_options=more_options,
+    )
+    family_member = CustomerFamilyMember.objects.create(
+        business=business,
+        customer=customer,
+        name=name,
+        relation=relation,
+        more_options=more_options,
+    )
+    audit.log(
+        "customer_family.created",
+        business=business,
+        user=user,
+        request=request,
+        module="customers",
+        obj=family_member,
+        description=f"Family profile '{family_member.name}' created.",
+        new_values={
+            "customer": str(customer.public_id),
+            "name": name,
+            "relation": relation,
+            "more_options": more_options,
+            "is_active": True,
+        },
+    )
+    return family_member
+
+
+@transaction.atomic
+def update_customer_family_member(
+    *,
+    business,
+    customer,
+    family_member,
+    name,
+    relation,
+    more_options,
+    user,
+    membership=None,
+    request=None,
+):
+    context, customer = _canonical_family_customer(
+        business=business,
+        customer=customer,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    canonical = (
+        CustomerFamilyMember.objects.select_for_update()
+        .filter(
+            pk=getattr(family_member, "pk", None),
+            business=business,
+            customer=customer,
+        )
+        .first()
+    )
+    if canonical is None:
+        _family_access_context(
+            business=business,
+            user=user,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    name, relation, more_options = _clean_family_fields(
+        business=business,
+        name=name,
+        relation=relation,
+        more_options=more_options,
+    )
+    old_values = {
+        "name": canonical.name,
+        "relation": canonical.relation,
+        "more_options": canonical.more_options or {},
+        "is_active": canonical.is_active,
+    }
+    canonical.name = name
+    canonical.relation = relation
+    canonical.more_options = more_options
+    canonical.save(update_fields=["name", "relation", "more_options", "updated_at"])
+    audit.log(
+        "customer_family.updated",
+        business=business,
+        user=user,
+        request=request,
+        module="customers",
+        obj=canonical,
+        description=f"Family profile '{canonical.name}' updated.",
+        old_values=old_values,
+        new_values={
+            "name": canonical.name,
+            "relation": canonical.relation,
+            "more_options": canonical.more_options,
+            "is_active": canonical.is_active,
+        },
+    )
+    return canonical
+
+
+@transaction.atomic
+def deactivate_customer_family_member(
+    *,
+    business,
+    customer,
+    family_member,
+    user,
+    membership=None,
+    request=None,
+):
+    context, customer = _canonical_family_customer(
+        business=business,
+        customer=customer,
+        user=user,
+        membership=membership,
+        request=request,
+    )
+    canonical = (
+        CustomerFamilyMember.objects.select_for_update()
+        .filter(
+            pk=getattr(family_member, "pk", None),
+            business=business,
+            customer=customer,
+        )
+        .first()
+    )
+    if canonical is None:
+        _family_access_context(
+            business=business,
+            user=user,
+            membership=context.membership,
+            request=request,
+            scope_allowed=False,
+        )
+    if canonical.is_active:
+        canonical.is_active = False
+        canonical.save(update_fields=["is_active", "updated_at"])
+        audit.log(
+            "customer_family.deactivated",
+            business=business,
+            user=user,
+            request=request,
+            module="customers",
+            obj=canonical,
+            description=f"Family profile '{canonical.name}' deactivated.",
+            old_values={"is_active": True},
+            new_values={"is_active": False},
+        )
+    return canonical
 
 
 def export_columns(business, *, include_credit=True):

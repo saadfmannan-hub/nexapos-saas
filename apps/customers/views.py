@@ -18,8 +18,8 @@ from apps.subscriptions.access import AccessAction, evaluate_access, require_acc
 from apps.subscriptions.decorators import module_permission_required
 
 from . import services
-from .forms import CustomerForm, CustomerPaymentForm
-from .models import CustomerPayment
+from .forms import CustomerFamilyMemberForm, CustomerForm, CustomerPaymentForm
+from .models import CustomerFamilyMember, CustomerPayment
 
 
 def _qs_without_page(request):
@@ -275,6 +275,32 @@ def customer_detail(request, public_id):
         action=AccessAction.WRITE,
     ).allowed
     payment_form = CustomerPaymentForm(request.business) if can_collect else None
+    family_read = evaluate_access(
+        request,
+        "tailoring",
+        permission_code="customers.view",
+        action=AccessAction.READ,
+    ).allowed
+    family_manage = (
+        not customer.is_walk_in
+        and evaluate_access(
+            request,
+            "tailoring",
+            permission_code="customers.manage",
+            action=AccessAction.WRITE,
+        ).allowed
+    )
+    family_members = []
+    if family_read and not customer.is_walk_in:
+        family_members = list(
+            CustomerFamilyMember.objects.for_business(request.business)
+            .filter(customer=customer)
+            .order_by("-is_active", "name")
+        )
+        for family_member in family_members:
+            family_member.display_more_options = services.more_option_values(
+                request.business, family_member
+            )
     return render(request, "customers/detail.html", {
         "customer": customer, "sales": recent_sales, "stats": stats,
         "payments": payments[:25], "returns": returns[:20],
@@ -283,7 +309,103 @@ def customer_detail(request, public_id):
         "credit_access": credit_access,
         "credit_balance_access": credit_balance_access,
         "more_options": services.more_option_values(request.business, customer),
+        "family_members": family_members,
+        "family_read": family_read,
+        "family_manage": family_manage,
     })
+
+
+@module_permission_required(
+    "tailoring", "customers.manage", action=AccessAction.WRITE
+)
+def customer_family_form(request, customer_public_id, family_public_id=None):
+    customer = get_tenant_object(
+        _customer_queryset(request),
+        request.business,
+        public_id=customer_public_id,
+    )
+    if customer.is_walk_in:
+        raise Http404
+    family_member = None
+    if family_public_id is not None:
+        family_member = get_tenant_object(
+            CustomerFamilyMember.objects.for_business(request.business).filter(
+                customer=customer
+            ),
+            request.business,
+            public_id=family_public_id,
+        )
+    form = CustomerFamilyMemberForm(
+        request.business,
+        request.POST or None,
+        instance=family_member,
+    )
+    if request.method == "POST" and form.is_valid():
+        service_kwargs = {
+            "business": request.business,
+            "customer": customer,
+            "name": form.cleaned_data["name"],
+            "relation": form.cleaned_data["relation"],
+            "more_options": form.cleaned_more_options(),
+            "user": request.user,
+            "membership": request.membership,
+            "request": request,
+        }
+        try:
+            if family_member is None:
+                services.create_customer_family_member(**service_kwargs)
+            else:
+                services.update_customer_family_member(
+                    family_member=family_member,
+                    **service_kwargs,
+                )
+        except ValidationError as exc:
+            if hasattr(exc, "message_dict"):
+                for field, field_messages in exc.message_dict.items():
+                    target = field if field in form.fields else None
+                    for message in field_messages:
+                        form.add_error(target, message)
+            else:
+                for message in exc.messages:
+                    form.add_error(None, message)
+        else:
+            messages.success(request, "Family profile saved.")
+            return redirect("customers:detail", public_id=customer.public_id)
+    return render(request, "customers/family_form.html", {
+        "form": form,
+        "customer": customer,
+        "family_member": family_member,
+        "active_nav": "customers",
+    })
+
+
+@require_POST
+@module_permission_required(
+    "tailoring", "customers.manage", action=AccessAction.WRITE
+)
+def customer_family_deactivate(request, customer_public_id, family_public_id):
+    customer = get_tenant_object(
+        _customer_queryset(request),
+        request.business,
+        public_id=customer_public_id,
+    )
+    family_member = get_tenant_object(
+        CustomerFamilyMember.objects.for_business(request.business).filter(
+            customer=customer
+        ),
+        request.business,
+        public_id=family_public_id,
+    )
+    services.deactivate_customer_family_member(
+        business=request.business,
+        customer=customer,
+        family_member=family_member,
+        user=request.user,
+        membership=request.membership,
+        request=request,
+    )
+    messages.success(request, "Family profile deactivated.")
+    return redirect("customers:detail", public_id=customer.public_id)
 
 
 @require_POST

@@ -6,6 +6,7 @@ movements, customer balance changes and an invoice number.
 """
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
@@ -17,6 +18,7 @@ from apps.catalog.models import Product, ProductVariant
 from apps.core.date_ranges import business_localdate
 from apps.core.money import D, money, qty
 from apps.customers import services as customer_services
+from apps.customers.models import CustomerFamilyMember
 from apps.inventory import services as inventory
 from apps.inventory.models import StockLevel
 from apps.subscriptions import services as subscriptions
@@ -913,6 +915,28 @@ def complete_sale(
     if not items:
         raise SaleError("Cannot complete a sale with no items.")
 
+    family_public_ids = {}
+    for index, line in enumerate(items):
+        raw_family_member_id = line.get("family_member_id")
+        if raw_family_member_id in (None, ""):
+            continue
+        field_name = f"items.{index}.family_member_id"
+        if customer.is_walk_in:
+            message = "A walk-in sale cannot use a family profile."
+            raise SaleError(message, errors={field_name: message})
+        try:
+            family_public_ids[index] = UUID(str(raw_family_member_id))
+        except (TypeError, ValueError, AttributeError):
+            message = "Select a valid family member."
+            raise SaleError(message, errors={field_name: message}) from None
+    family_members = {
+        member.public_id: member
+        for member in CustomerFamilyMember.objects.select_for_update()
+        .for_business(business)
+        .filter(public_id__in=set(family_public_ids.values()))
+        .order_by("pk")
+    }
+
     # Lock every product in a stable order before evaluating its Meter shape.
     # Product edits use the same row lock, so a checkout cannot race a unit or
     # Standard/Variant transition and write stock using stale semantics.
@@ -1002,6 +1026,20 @@ def complete_sale(
             product.is_legacy_tailoring
             and (customer_supplied_fabric or not meter_key_present)
         )
+        family_member = None
+        family_public_id = family_public_ids.get(index)
+        if family_public_id is not None:
+            family_member = family_members.get(family_public_id)
+            family_field = f"{field_prefix}.family_member_id"
+            if family_member is None or family_member.customer_id != customer.id:
+                message = "Select a family member belonging to this customer."
+                raise SaleError(message, errors={family_field: message})
+            if not family_member.is_active:
+                message = "The selected family member is inactive."
+                raise SaleError(message, errors={family_field: message})
+            if not (is_meter_tailoring or is_legacy_tailoring):
+                message = "A family member can only be selected for a tailoring garment."
+                raise SaleError(message, errors={family_field: message})
         if customer_supplied_fabric and not (
             is_meter_tailoring or is_legacy_tailoring
         ):
@@ -1137,6 +1175,7 @@ def complete_sale(
             "fabric_meter_used": fabric_meter_used,
             "customer_supplied_fabric": customer_supplied_fabric,
             "tailoring_details": tailoring_details,
+            "family_member": family_member,
         })
 
     if has_tailoring_items and delivery_date is None:
@@ -1321,6 +1360,7 @@ def complete_sale(
         SaleItem.objects.create(
             business=business,
             sale=sale,
+            family_member=line.get("family_member"),
             product=product,
             variant=variant,
             stock_warehouse=stock_warehouse if product.is_stocked else None,

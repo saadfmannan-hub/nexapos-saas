@@ -226,7 +226,7 @@
 </head>
 <body>
 {% for card in job_cards %}
-{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options job_card_number=card.job_card_number job_card_sequence_label=card.job_card_sequence_label workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date sale_local_datetime=card.sale_local_datetime print_header=card.print_header %}
+{% with sale=card.sale items=card.items job_item=card.job_item tailoring=card.tailoring business=card.business more_options=card.more_options wearer=card.wearer job_card_number=card.job_card_number job_card_sequence_label=card.job_card_sequence_label workshop_copy_number=card.workshop_copy_number copy_type=card.copy_type priority_label=card.priority_label priority_class=card.priority_class job_delivery_date=card.job_delivery_date sale_local_datetime=card.sale_local_datetime print_header=card.print_header %}
 <div class="sheet">
   <table class="header">
     <tr>
@@ -295,6 +295,14 @@
             <div class="value">{{ sale.customer.mobile|default:"No phone number" }}</div>
           </td>
         </tr>
+        {% if wearer %}
+        <tr>
+          <td colspan="2">
+            <div class="label">Wearer</div>
+            <div class="value">{{ wearer.name }} · {{ wearer.get_relation_display }}</div>
+          </td>
+        </tr>
+        {% endif %}
       </table>
     </div>
   </div>

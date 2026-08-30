@@ -10,6 +10,11 @@ urlpatterns = [
     path("pos/barcode/", views.pos_barcode, name="pos_barcode"),
     path("pos/customers/", views.pos_customers, name="pos_customers"),
     path("pos/customers/quick/", views.pos_quick_customer, name="pos_quick_customer"),
+    path(
+        "pos/customers/<uuid:customer_public_id>/family/",
+        views.pos_customer_family,
+        name="pos_customer_family",
+    ),
     path("pos/checkout/", views.pos_checkout, name="pos_checkout"),
     path("pos/hold/", views.pos_hold, name="pos_hold"),
     path("pos/held/", views.pos_held_list, name="pos_held_list"),

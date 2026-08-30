@@ -270,6 +270,14 @@ class SaleItem(TenantModel):
         PREMIUM = "premium", _("Premium")
 
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="items")
+    family_member = models.ForeignKey(
+        "customers.CustomerFamilyMember",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="sale_items",
+        help_text="Optional wearer for this tailoring line; null means the main customer.",
+    )
     product = models.ForeignKey(
         "catalog.Product", on_delete=models.PROTECT, related_name="sale_items"
     )

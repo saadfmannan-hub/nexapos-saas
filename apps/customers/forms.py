@@ -3,7 +3,7 @@ from django import forms
 from apps.branches.forms import TenantStyledModelForm
 from apps.branches.models import Branch
 
-from .models import Customer, CustomerGroup
+from .models import Customer, CustomerFamilyMember, CustomerGroup
 
 
 class CustomerForm(TenantStyledModelForm):
@@ -112,6 +112,38 @@ class CustomerForm(TenantStyledModelForm):
                     "A customer with this mobile number already exists."
                 )
         return mobile
+
+
+class CustomerFamilyMemberForm(TenantStyledModelForm):
+    MORE_OPTION_PREFIX = "more_option_"
+
+    class Meta:
+        model = CustomerFamilyMember
+        fields = ["name", "relation"]
+
+    def __init__(self, business, *args, **kwargs):
+        super().__init__(business, *args, **kwargs)
+        self.more_option_fields = []
+        current_values = self.instance.more_options or {}
+        for option in business.settings.more_option_labels:
+            field_name = f"{self.MORE_OPTION_PREFIX}{option['key']}"
+            self.fields[field_name] = forms.CharField(
+                label=option["label"],
+                required=False,
+                max_length=255,
+                initial=current_values.get(option["key"], ""),
+                widget=forms.TextInput(attrs={"class": "form-control"}),
+            )
+            self.more_option_fields.append(field_name)
+
+    def cleaned_more_options(self):
+        return {
+            name.removeprefix(self.MORE_OPTION_PREFIX): self.cleaned_data.get(
+                name, ""
+            ).strip()
+            for name in self.more_option_fields
+            if self.cleaned_data.get(name, "").strip()
+        }
 
 
 class CustomerPaymentForm(forms.Form):

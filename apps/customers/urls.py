@@ -10,6 +10,21 @@ urlpatterns = [
     path("export/", views.customer_export, name="export"),
     path("import/", views.customer_import, name="import"),
     path("import/template/", views.customer_import_template, name="import_template"),
+    path(
+        "<uuid:customer_public_id>/family/new/",
+        views.customer_family_form,
+        name="family_create",
+    ),
+    path(
+        "<uuid:customer_public_id>/family/<uuid:family_public_id>/edit/",
+        views.customer_family_form,
+        name="family_edit",
+    ),
+    path(
+        "<uuid:customer_public_id>/family/<uuid:family_public_id>/deactivate/",
+        views.customer_family_deactivate,
+        name="family_deactivate",
+    ),
     path("<uuid:public_id>/", views.customer_detail, name="detail"),
     path("<uuid:public_id>/edit/", views.customer_form, name="edit"),
     path("<uuid:public_id>/payment/", views.customer_payment, name="payment"),

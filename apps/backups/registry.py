@@ -385,6 +385,7 @@ _DEFINITIONS = (
         included_model_labels=(
             "customers.CustomerGroup",
             "customers.Customer",
+            "customers.CustomerFamilyMember",
             "customers.CustomerPayment",
         ),
         required_component_keys=("shared.tenant_identity", "shared.locations"),
