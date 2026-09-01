@@ -35,13 +35,14 @@
     </div>
     {% if is_correction %}
     <p class="text-secondary small">
-      Employee, location, date, and category assignments remain fixed.
+      Employee, location, date, linked order, and operation remain fixed.
       Every correction requires a reason and is written to the audit trail.
     </p>
     {% else %}
     <p class="text-secondary small">
-      Enter each operation quantity separately. Daily Total Pieces is the
-      completed-piece count and is not automatically summed from the categories.
+      Add one row for each Workshop Order and operation. Only eligible In Process
+      orders at this employee's location are available. Daily Total Pieces remains
+      independent from the operation rows.
     </p>
     {% endif %}
     <form method="post">{% csrf_token %}
@@ -55,7 +56,8 @@
       {% include "components/form_field.html" with field=form.production_date %}
       {% endif %}
       {% include "components/form_field.html" with field=form.daily_total_pieces %}
-      <h3 class="h6 mt-4">Category quantities</h3>
+      {% if is_correction %}
+      <h3 class="h6 mt-4">Workshop Order operation quantities</h3>
       <div class="row g-2 mb-3">
         {% for field in form.quantity_fields %}
         <div class="col-md-6">
@@ -63,6 +65,51 @@
         </div>
         {% endfor %}
       </div>
+      {% else %}
+      <h3 class="h6 mt-4">Production rows</h3>
+      {{ line_formset.management_form }}
+      {% if line_formset.non_form_errors %}<div class="alert alert-danger">{{ line_formset.non_form_errors }}</div>{% endif %}
+      <div id="production-rows" class="vstack gap-3 mb-3">
+        {% for row_form in line_formset %}
+        <div class="card border production-row">
+          <div class="card-body row g-2 align-items-start">
+            <div class="col-lg-5">
+              <label class="form-label" for="{{ row_form.order.id_for_label }}">Workshop Order</label>
+              <input class="form-control form-control-sm mb-1" type="search" data-order-filter placeholder="Search order reference">
+              {{ row_form.order }}{{ row_form.order.errors }}
+            </div>
+            <div class="col-lg-4">
+              {% include "components/form_field.html" with field=row_form.assignment %}
+            </div>
+            <div class="col-lg-2">
+              {% include "components/form_field.html" with field=row_form.quantity %}
+            </div>
+            <div class="col-lg-1 pt-lg-4">
+              <button class="btn btn-sm btn-outline-danger" type="button" data-remove-row aria-label="Remove production row">Remove</button>
+            </div>
+            {% if row_form.non_field_errors %}<div class="col-12 text-danger small">{{ row_form.non_field_errors }}</div>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <button class="btn btn-sm btn-outline-primary mb-3" id="add-production-row" type="button">
+        <i class="bi bi-plus-circle"></i> Add Row
+      </button>
+      <template id="empty-production-row">
+        <div class="card border production-row">
+          <div class="card-body row g-2 align-items-start">
+            <div class="col-lg-5">
+              <label class="form-label" for="{{ line_formset.empty_form.order.id_for_label }}">Workshop Order</label>
+              <input class="form-control form-control-sm mb-1" type="search" data-order-filter placeholder="Search order reference">
+              {{ line_formset.empty_form.order }}
+            </div>
+            <div class="col-lg-4">{% include "components/form_field.html" with field=line_formset.empty_form.assignment %}</div>
+            <div class="col-lg-2">{% include "components/form_field.html" with field=line_formset.empty_form.quantity %}</div>
+            <div class="col-lg-1 pt-lg-4"><button class="btn btn-sm btn-outline-danger" type="button" data-remove-row>Remove</button></div>
+          </div>
+        </div>
+      </template>
+      {% endif %}
       {% include "components/form_field.html" with field=form.notes %}
       {% if is_correction %}
       {% include "components/form_field.html" with field=form.correction_reason %}
@@ -85,4 +132,39 @@
     {% endif %}
   </div>
 </div>
+{% if not is_correction and line_formset %}
+<script>
+(() => {
+  const rows = document.getElementById('production-rows');
+  const total = document.getElementById('id_rows-TOTAL_FORMS');
+  const template = document.getElementById('empty-production-row');
+  const bindRow = (row) => {
+    const filter = row.querySelector('[data-order-filter]');
+    const select = row.querySelector('[data-order-select]');
+    if (filter && select) {
+      filter.addEventListener('input', () => {
+        const query = filter.value.trim().toLowerCase();
+        Array.from(select.options).forEach((option, index) => {
+          if (index === 0 || option.selected) return;
+          option.hidden = Boolean(query) && !option.text.toLowerCase().includes(query);
+        });
+      });
+    }
+    row.querySelector('[data-remove-row]')?.addEventListener('click', () => {
+      if (rows.querySelectorAll('.production-row').length > 1) row.remove();
+    });
+  };
+  rows.querySelectorAll('.production-row').forEach(bindRow);
+  document.getElementById('add-production-row')?.addEventListener('click', () => {
+    const index = Number(total.value);
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = template.innerHTML.replaceAll('__prefix__', String(index)).trim();
+    const row = wrapper.firstElementChild;
+    rows.appendChild(row);
+    total.value = String(index + 1);
+    bindRow(row);
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}

@@ -219,7 +219,7 @@ def _piece_breakdown(
     lines = list(
         WmsProductionEntryLine.objects.for_business(business)
         .select_for_update()
-        .select_related("entry", "assignment", "category")
+        .select_related("entry", "order", "assignment", "category")
         .filter(entry_id__in=entry_ids)
         .order_by(
             "entry__production_date",
@@ -266,6 +266,12 @@ def _piece_breakdown(
             {
                 "production_line": line,
                 "assignment_public_id_snapshot": assignment.public_id,
+                "order_public_id_snapshot": (
+                    line.order.public_id if line.order_id else None
+                ),
+                "order_reference_snapshot": (
+                    line.order.order_reference if line.order_id else None
+                ),
                 "category_name_snapshot": line.category_name_snapshot,
                 "category_code_snapshot": line.category_code_snapshot,
                 "rate_source": rate_source,

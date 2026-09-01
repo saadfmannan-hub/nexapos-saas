@@ -110,12 +110,22 @@ def _employee_detail_context(request, employee, *, assignment_form=None):
             request.business,
             employee,
         )
+    can_view_production = request.wms_user_access.has_perm("wms.production.view")
     return {
         "employee": employee,
         "active_assignments": assignments.filter(is_active=True),
         "inactive_assignments": assignments.filter(is_active=False),
         "assignment_form": assignment_form,
         "can_manage_employees": can_manage,
+        "can_view_production": can_view_production,
+        "recent_production_lines": (
+            selectors.recent_production_lines_for_employee(
+                request.wms_user_access,
+                employee,
+            )
+            if can_view_production
+            else ()
+        ),
         "active_nav": "wms",
         "wms_active_nav": "employees",
     }

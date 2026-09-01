@@ -11,7 +11,11 @@ from apps.subscriptions.access import AccessAction
 from apps.wms_core.access import wms_permission_required
 
 from . import selectors, services
-from .forms import ProductionCorrectionForm, ProductionEntryForm
+from .forms import (
+    ProductionCorrectionForm,
+    ProductionEntryForm,
+    ProductionLineFormSet,
+)
 
 
 def _querystring_without(request, *keys):
@@ -128,16 +132,41 @@ def production_entry_create(request):
         selected_employee=selected_employee,
     )
     selected_employee = form.selected_employee
-    if request.method == "POST" and form.is_valid():
+    line_formset = None
+    if selected_employee is not None:
+        line_formset = ProductionLineFormSet(
+            request.POST or None,
+            prefix="rows",
+            form_kwargs={
+                "business": request.business,
+                "user_access": request.wms_user_access,
+                "employee": selected_employee,
+            },
+        )
+    if (
+        request.method == "POST"
+        and form.is_valid()
+        and line_formset is not None
+        and line_formset.is_valid()
+    ):
         try:
             entry = services.create_production_entry(
                 business=request.business,
+                user_access=request.wms_user_access,
                 location=form.cleaned_data["location"],
                 employee=form.cleaned_data["employee"],
                 production_date=form.cleaned_data["production_date"],
                 daily_total_pieces=form.cleaned_data["daily_total_pieces"],
                 notes=form.cleaned_data["notes"],
-                assignment_quantities=form.assignment_quantities(),
+                production_rows=[
+                    {
+                        "order": row.cleaned_data["order"],
+                        "assignment": row.cleaned_data["assignment"],
+                        "quantity": row.cleaned_data["quantity"],
+                    }
+                    for row in line_formset.forms
+                    if row.cleaned_data
+                ],
                 request=request,
             )
         except ValidationError as exc:
@@ -161,6 +190,7 @@ def production_entry_create(request):
                     request.wms_user_access
                 )
             ),
+            "line_formset": line_formset,
             "active_nav": "wms",
             "wms_active_nav": "production",
         },
@@ -182,6 +212,7 @@ def production_entry_correct(request, public_id):
         try:
             entry = services.correct_production_entry(
                 business=request.business,
+                user_access=request.wms_user_access,
                 entry=entry,
                 daily_total_pieces=form.cleaned_data["daily_total_pieces"],
                 notes=form.cleaned_data["notes"],

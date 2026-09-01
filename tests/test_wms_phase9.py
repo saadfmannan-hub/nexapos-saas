@@ -55,7 +55,12 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
             user_access=access,
             location=location,
             received_date=received_date or self.today,
-            references=[reference],
+            order_rows=[
+                {
+                    "order_reference": reference,
+                    "eligible_piece_count": 10000,
+                }
+            ],
             notes="Phase 9 dashboard order.",
             user=user,
         )[0]
@@ -149,16 +154,27 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
         total,
         quantity=None,
     ):
+        production_order = self.production_order
+        if production_order.location_id != employee.location_id:
+            production_order = self.create_order(
+                f"P9-PRODUCTION-{employee.employee_code}",
+                location=employee.location,
+            )
         return production_services.create_production_entry(
             business=employee.business,
+            user_access=self.access_a,
             location=employee.location,
             employee=employee,
             production_date=production_date or self.today,
             daily_total_pieces=total,
             notes="Phase 9 dashboard production.",
-            assignment_quantities={
-                str(assignment.public_id): (total if quantity is None else quantity)
-            },
+            production_rows=[
+                {
+                    "order": production_order,
+                    "assignment": assignment,
+                    "quantity": total if quantity is None else quantity,
+                }
+            ],
             user=employee.business.owner,
         )
 
@@ -217,7 +233,7 @@ class WmsPhase9DashboardTests(WmsPhase7Base):
                 dashboard["orders"]["in_progress"],
                 dashboard["orders"]["finished_today"],
             ),
-            (3, 2, 2),
+            (3, 3, 2),
         )
         self.assertEqual(dashboard["alterations"]["pending"], 1)
         self.assertEqual(dashboard["production"]["total_today"], 21)

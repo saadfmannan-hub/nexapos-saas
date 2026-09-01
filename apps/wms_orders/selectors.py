@@ -7,6 +7,7 @@ from apps.wms_core.selectors import (
     historical_locations_for_access,
     locations_for_access,
 )
+from apps.wms_production.models import WmsProductionEntryLine
 
 from .models import WmsWorkshopOrder, WmsWorkshopOrderStatusHistory
 
@@ -54,6 +55,35 @@ def get_workshop_order_for_access(user_access, public_id):
     return get_object_or_404(
         workshop_orders_for_access(user_access),
         public_id=public_id,
+    )
+
+
+def production_lines_for_order_access(user_access, order):
+    """Return normal-production history for an accessible Workshop Order."""
+
+    location_ids = historical_locations_for_access(user_access).values("pk")
+    return (
+        WmsProductionEntryLine.objects.for_business(user_access.business)
+        .filter(
+            order=order,
+            order__business=user_access.business,
+            order__location_id__in=location_ids,
+            entry__business=user_access.business,
+            entry__location_id=order.location_id,
+            entry__location_id__in=location_ids,
+            entry__employee__business=user_access.business,
+            category__business=user_access.business,
+            quantity__gt=0,
+        )
+        .select_related("entry__employee", "category")
+        .order_by(
+            "-entry__production_date",
+            "-entry__created_at",
+            "entry__employee__full_name",
+            "category__display_order",
+            "category_name_snapshot",
+            "pk",
+        )
     )
 
 

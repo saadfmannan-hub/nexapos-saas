@@ -3,6 +3,7 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Sum
 from django.db.models.functions import Lower
 
 from apps.wms_core.models import ValidatedTenantModel, WmsLocation
@@ -23,6 +24,7 @@ class WmsWorkshopOrder(ValidatedTenantModel):
         related_name="workshop_orders",
     )
     order_reference = models.CharField(max_length=80)
+    eligible_piece_count = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -73,6 +75,13 @@ class WmsWorkshopOrder(ValidatedTenantModel):
                 ),
                 name="valid_wms_order_finished_date",
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(eligible_piece_count__isnull=True)
+                    | models.Q(eligible_piece_count__gt=0)
+                ),
+                name="valid_wms_order_piece_count",
+            ),
         ]
         indexes = [
             models.Index(
@@ -119,6 +128,7 @@ class WmsWorkshopOrder(ValidatedTenantModel):
                     "received_date",
                     "status",
                     "finished_date",
+                    "eligible_piece_count",
                 )
                 .first()
             )
@@ -134,6 +144,16 @@ class WmsWorkshopOrder(ValidatedTenantModel):
             ):
                 errors["location"] = (
                     "Inactive WMS locations cannot receive new orders."
+                )
+            if (
+                self.created_at is None
+                and (
+                    not self.eligible_piece_count
+                    or self.eligible_piece_count <= 0
+                )
+            ):
+                errors["eligible_piece_count"] = (
+                    "Eligible PCS must be a whole number greater than zero."
                 )
         else:
             if (
@@ -163,6 +183,35 @@ class WmsWorkshopOrder(ValidatedTenantModel):
                 not in (self.Status.IN_PROCESS, self.Status.FINISHED_READY)
             ):
                 errors["status"] = "Only the approved finish transition is allowed."
+            original_piece_count = original["eligible_piece_count"]
+            if (
+                self.eligible_piece_count is not None
+                and self.eligible_piece_count <= 0
+            ):
+                errors["eligible_piece_count"] = (
+                    "Eligible PCS must be a whole number greater than zero."
+                )
+            if (
+                self.eligible_piece_count is not None
+                and self.eligible_piece_count != original_piece_count
+            ):
+                from apps.wms_production.models import WmsProductionEntryLine
+
+                largest_recorded = (
+                    WmsProductionEntryLine.objects.for_business(self.business)
+                    .filter(order_id=self.pk)
+                    .values("category_id")
+                    .annotate(total=Sum("quantity"))
+                    .order_by("-total")
+                    .values_list("total", flat=True)
+                    .first()
+                    or 0
+                )
+                if self.eligible_piece_count < largest_recorded:
+                    errors["eligible_piece_count"] = (
+                        "Eligible PCS cannot be below already recorded "
+                        f"production ({largest_recorded} PCS for one operation)."
+                    )
 
         if (
             self.status == self.Status.IN_PROCESS

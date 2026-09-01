@@ -25,6 +25,7 @@ class WmsWorkshopOrderAdmin(admin.ModelAdmin):
         "order_reference",
         "location",
         "status",
+        "eligible_piece_count",
         "received_date",
         "finished_date",
     )
@@ -34,6 +35,7 @@ class WmsWorkshopOrderAdmin(admin.ModelAdmin):
         "business",
         "location",
         "order_reference",
+        "eligible_piece_count",
         "status",
         "received_date",
         "finished_date",

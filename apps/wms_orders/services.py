@@ -37,11 +37,51 @@ def _normalized_references(references):
     return values
 
 
+def _normalized_order_rows(order_rows):
+    normalized = []
+    references = []
+    for row in order_rows:
+        if isinstance(row, dict):
+            reference = row.get("order_reference")
+            piece_count = row.get("eligible_piece_count")
+        else:
+            try:
+                reference, piece_count = row
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "Each order must contain a reference and PCS."
+                ) from exc
+        reference = normalize_order_reference(reference)
+        if not reference:
+            raise ValidationError("Every order requires a reference.")
+        if (
+            isinstance(piece_count, bool)
+            or not isinstance(piece_count, int)
+            or piece_count <= 0
+        ):
+            raise ValidationError(
+                f"Eligible PCS for {reference} must be a whole number greater than zero."
+            )
+        references.append(reference)
+        normalized.append((reference, piece_count))
+    duplicates = sorted(
+        {value for value in references if references.count(value) > 1}
+    )
+    if duplicates:
+        raise ValidationError(
+            f"Duplicate references in this batch: {', '.join(duplicates)}."
+        )
+    if not normalized:
+        raise ValidationError("Enter at least one workshop order.")
+    return normalized
+
+
 def _order_state(order, *, previous_status=""):
     return {
         "business_public_id": str(order.business.public_id),
         "location_public_id": str(order.location.public_id),
         "order_reference": order.order_reference,
+        "eligible_piece_count": order.eligible_piece_count,
         "previous_status": previous_status,
         "new_status": order.status,
         "received_date": order.received_date.isoformat(),
@@ -60,13 +100,14 @@ def create_order_batch(
     user_access,
     location,
     received_date,
-    references,
+    order_rows,
     notes="",
     user=None,
     request=None,
 ):
     actor = _actor(user, request)
-    references = _normalized_references(references)
+    order_rows = _normalized_order_rows(order_rows)
+    references = [reference for reference, _piece_count in order_rows]
     try:
         location = (
             WmsLocation.objects.for_business(business)
@@ -102,11 +143,12 @@ def create_order_batch(
     orders = []
     try:
         with transaction.atomic():
-            for reference in references:
+            for reference, piece_count in order_rows:
                 order = WmsWorkshopOrder(
                     business=business,
                     location=location,
                     order_reference=reference,
+                    eligible_piece_count=piece_count,
                     status=WmsWorkshopOrder.Status.IN_PROCESS,
                     received_date=received_date,
                     notes=notes,
@@ -163,12 +205,67 @@ def create_order_batch(
             "business_public_id": str(business.public_id),
             "location_public_id": str(location.public_id),
             "order_references": references,
+            "orders": [
+                {
+                    "order_reference": reference,
+                    "eligible_piece_count": piece_count,
+                }
+                for reference, piece_count in order_rows
+            ],
             "new_status": WmsWorkshopOrder.Status.IN_PROCESS,
             "received_date": received_date.isoformat(),
             "batch_count": len(orders),
         },
     )
     return orders
+
+
+@transaction.atomic
+def update_order_piece_count(
+    *,
+    business,
+    user_access,
+    order,
+    eligible_piece_count,
+    user=None,
+    request=None,
+):
+    actor = _actor(user, request)
+    if (
+        isinstance(eligible_piece_count, bool)
+        or not isinstance(eligible_piece_count, int)
+        or eligible_piece_count <= 0
+    ):
+        raise ValidationError("Eligible PCS must be a whole number greater than zero.")
+    try:
+        order = (
+            WmsWorkshopOrder.objects.for_business(business)
+            .select_for_update()
+            .select_related("location__branch")
+            .get(pk=order.pk)
+        )
+    except WmsWorkshopOrder.DoesNotExist as exc:
+        raise ValidationError("The workshop order belongs to another business.") from exc
+    if not user_access.can_access_location(order.location):
+        raise ValidationError("The workshop order is outside your allowed scope.")
+    if order.status != WmsWorkshopOrder.Status.IN_PROCESS:
+        raise ValidationError("Eligible PCS can be changed only while an order is In Process.")
+    old_values = _order_state(order)
+    order.eligible_piece_count = eligible_piece_count
+    order.updated_by = actor
+    order.save(update_fields=["eligible_piece_count", "updated_by", "updated_at"])
+    audit.log(
+        "wms.order_piece_count_updated",
+        business=business,
+        user=actor,
+        request=request,
+        module="wms",
+        obj=order,
+        description=f"Eligible PCS updated for workshop order '{order.order_reference}'.",
+        old_values=old_values,
+        new_values=_order_state(order),
+    )
+    return order
 
 
 @transaction.atomic

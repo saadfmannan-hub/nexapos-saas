@@ -1510,6 +1510,40 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
             ):
                 raise TenantIsolationViolation()
 
+            order = django_apps.get_model("wms_orders.WmsWorkshopOrder")
+            line_order = _quote_identifier(line._meta.get_field("order").column)
+            order_table = _quote_identifier(order._meta.db_table)
+            order_pk = _quote_identifier(order._meta.pk.column)
+            order_public = _quote_identifier(order._meta.get_field("public_id").column)
+            order_reference = _quote_identifier(
+                order._meta.get_field("order_reference").column
+            )
+            order_business = _quote_identifier(order._meta.get_field("business").column)
+            order_row = reader.first(
+                f"SELECT target.{order_public}, target.{order_reference}, "
+                f"target.{order_business}, source.{line_order} "
+                f"FROM {line_table} AS source "
+                f"LEFT JOIN {order_table} AS target "
+                f"ON source.{line_order} = target.{order_pk} "
+                f"WHERE source.{line_pk} = ?",
+                (raw_production_line,),
+            )
+            if order_row is None or len(order_row) != 4:
+                raise TenantIsolationViolation()
+            if order_row[3] is None:
+                if (
+                    fields.get("order_public_id_snapshot") is not None
+                    or fields.get("order_reference_snapshot") is not None
+                ):
+                    raise TenantIsolationViolation()
+            elif (
+                order_row[2] != context.business_id
+                or canonical_uuid(order_row[0])
+                != fields.get("order_public_id_snapshot")
+                or order_row[1] != fields.get("order_reference_snapshot")
+            ):
+                raise TenantIsolationViolation()
+
     @staticmethod
     def _validate_stock_movement_reference(*, reader, context, fields):
         reference_type = fields.get("reference_type")

@@ -6,11 +6,12 @@ from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.shortcuts import redirect, render
 
+from apps.core.date_ranges import business_localtime
 from apps.subscriptions.access import AccessAction
 from apps.wms_core.access import wms_permission_required
 
 from . import selectors, services
-from .forms import FinishOrdersBatchForm, NewOrdersBatchForm
+from .forms import FinishOrdersBatchForm, NewOrdersBatchForm, OrderPieceCountForm
 from .models import WmsWorkshopOrder
 
 
@@ -29,6 +30,37 @@ def _optional_date(request):
         except ValueError:
             pass
     return None
+
+
+def _order_production_context(user_access, order):
+    production_history = list(
+        selectors.production_lines_for_order_access(
+            user_access,
+            order,
+        )
+    )
+    progress_by_category = {}
+    for line in production_history:
+        progress = progress_by_category.setdefault(
+            line.category_id,
+            {
+                "operation": line.category.name,
+                "display_order": line.category.display_order,
+                "completed_pieces": 0,
+            },
+        )
+        progress["completed_pieces"] += line.quantity
+    production_progress = sorted(
+        progress_by_category.values(),
+        key=lambda item: (
+            item["display_order"],
+            item["operation"].casefold(),
+        ),
+    )
+    return {
+        "production_progress": production_progress,
+        "production_history": production_history,
+    }
 
 
 @wms_permission_required("wms.orders.view", action=AccessAction.READ)
@@ -85,17 +117,47 @@ def order_detail(request, public_id):
         request.wms_user_access,
         public_id,
     )
+    production_context = _order_production_context(
+        request.wms_user_access,
+        order,
+    )
     return render(
         request,
         "wms/orders/detail.html",
         {
             "order": order,
+            **production_context,
             "can_finish_orders": (
                 request.wms_user_access.has_perm("wms.orders.finish")
                 and order.status == WmsWorkshopOrder.Status.IN_PROCESS
             ),
+            "can_manage_orders": request.wms_user_access.has_perm(
+                "wms.orders.manage"
+            ),
             "active_nav": "wms",
             "wms_active_nav": "orders",
+        },
+    )
+
+
+@wms_permission_required("wms.orders.view", action=AccessAction.READ)
+def order_print(request, public_id):
+    order = selectors.get_workshop_order_for_access(
+        request.wms_user_access,
+        public_id,
+    )
+    production_context = _order_production_context(
+        request.wms_user_access,
+        order,
+    )
+    return render(
+        request,
+        "wms/orders/print.html",
+        {
+            "business": request.business,
+            "order": order,
+            "printed_at": business_localtime(request.business),
+            **production_context,
         },
     )
 
@@ -114,7 +176,7 @@ def order_create_batch(request):
                 user_access=request.wms_user_access,
                 location=form.cleaned_data["location"],
                 received_date=form.cleaned_data["received_date"],
-                references=form.cleaned_data["references"],
+                order_rows=form.cleaned_data["orders"],
                 notes=form.cleaned_data["notes"],
                 request=request,
             )
@@ -132,6 +194,42 @@ def order_create_batch(request):
         {
             "form": form,
             "is_finish": False,
+            "active_nav": "wms",
+            "wms_active_nav": "orders",
+        },
+    )
+
+
+@wms_permission_required("wms.orders.manage", action=AccessAction.WRITE)
+def order_piece_count_update(request, public_id):
+    order = selectors.get_workshop_order_for_access(
+        request.wms_user_access,
+        public_id,
+    )
+    form = OrderPieceCountForm(
+        request.POST or None,
+        initial={"eligible_piece_count": order.eligible_piece_count},
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            services.update_order_piece_count(
+                business=request.business,
+                user_access=request.wms_user_access,
+                order=order,
+                eligible_piece_count=form.cleaned_data["eligible_piece_count"],
+                request=request,
+            )
+        except ValidationError as exc:
+            form.add_error(None, "; ".join(exc.messages))
+        else:
+            messages.success(request, "Workshop Order PCS updated.")
+            return redirect("wms:order_detail", public_id=order.public_id)
+    return render(
+        request,
+        "wms/orders/piece_count_form.html",
+        {
+            "order": order,
+            "form": form,
             "active_nav": "wms",
             "wms_active_nav": "orders",
         },

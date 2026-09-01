@@ -531,9 +531,9 @@ _DEFINITIONS = (
             "wms_production.WmsProductionEntry",
             "wms_production.WmsProductionEntryLine",
         ),
-        required_component_keys=("wms.workforce",),
-        export_order=230,
-        import_order=230,
+        required_component_keys=("wms.workforce", "wms.orders"),
+        export_order=240,
+        import_order=240,
         scope_eligibility=WMS_SCOPES,
     ),
     ComponentDefinition(
@@ -544,8 +544,8 @@ _DEFINITIONS = (
             "wms_orders.WmsWorkshopOrderStatusHistory",
         ),
         required_component_keys=("wms.core", "wms.workforce"),
-        export_order=240,
-        import_order=240,
+        export_order=230,
+        import_order=230,
         scope_eligibility=WMS_SCOPES,
     ),
     ComponentDefinition(

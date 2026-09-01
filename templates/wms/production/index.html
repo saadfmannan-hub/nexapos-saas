@@ -18,7 +18,7 @@
       <div class="col-md-6 col-lg-2">
         <label class="form-label" for="production-filter-q">Search</label>
         <input class="form-control form-control-sm" id="production-filter-q" type="search" name="q" value="{{ q }}"
-               placeholder="Employee name or code">
+               placeholder="Employee or order reference">
       </div>
       <div class="col-md-6 col-lg-2">
         <label class="form-label" for="production-filter-date">Date</label>
@@ -78,7 +78,7 @@
           <th>Date</th>
           <th>Employee</th>
           <th>Location</th>
-          <th>Category quantities</th>
+          <th>Order / operation quantities</th>
           <th class="text-end">Daily Total Pieces</th>
           <th></th>
         </tr>
@@ -105,7 +105,8 @@
           <td>
             {% for line in entry.lines.all %}
             <span class="badge text-bg-light border me-1 mb-1">
-              {{ line.category_name_snapshot }}: {{ line.quantity }}
+              {% if line.order %}{{ line.order.order_reference }}{% else %}Legacy / Not recorded{% endif %}
+              · {{ line.category_name_snapshot }}: {{ line.quantity }}
             </span>
             {% endfor %}
           </td>

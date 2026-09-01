@@ -245,6 +245,56 @@ def export_xlsx(*, report, business, metadata):
             sheet.cell(row=header_row, column=column).column_letter
         ].width = max(width, 12)
 
+    detail = report.get("detail_export")
+    if detail is not None:
+        detail_sheet = workbook.create_sheet(detail["sheet_name"][:31])
+        for column, value in enumerate(detail["columns"], start=1):
+            cell = detail_sheet.cell(
+                row=1,
+                column=column,
+                value=_formula_safe(value),
+            )
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="334155")
+            cell.alignment = Alignment(horizontal="center")
+        for row_index, values in enumerate(detail["rows"], start=2):
+            for column, value in enumerate(values, start=1):
+                detail_sheet.cell(
+                    row=row_index,
+                    column=column,
+                    value=_formula_safe(value),
+                )
+        detail_last_row = max(len(detail["rows"]) + 1, 1)
+        for index, number_format in detail.get("column_formats", {}).items():
+            for row_index in range(2, detail_last_row + 1):
+                detail_sheet.cell(
+                    row=row_index,
+                    column=index + 1,
+                ).number_format = number_format
+        detail_sheet.freeze_panes = "A2"
+        if detail["columns"]:
+            last_letter = detail_sheet.cell(
+                row=1,
+                column=len(detail["columns"]),
+            ).column_letter
+            detail_sheet.auto_filter.ref = f"A1:{last_letter}{detail_last_row}"
+        for column in range(1, len(detail["columns"]) + 1):
+            values = [
+                detail_sheet.cell(row=row, column=column).value
+                for row in range(1, detail_last_row + 1)
+            ]
+            width = min(
+                max(
+                    (len(str(value)) for value in values if value is not None),
+                    default=10,
+                )
+                + 2,
+                40,
+            )
+            detail_sheet.column_dimensions[
+                detail_sheet.cell(row=1, column=column).column_letter
+            ].width = max(width, 12)
+
     safe_name = slugify(report["filename"]) or "wms-report"
     response = HttpResponse(
         content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

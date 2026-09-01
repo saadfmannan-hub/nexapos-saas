@@ -11,6 +11,7 @@ from openpyxl import load_workbook
 
 from apps.wms_alterations.models import WmsAlteration
 from apps.wms_attendance import services as attendance_services
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_production import services as production_services
 from apps.wms_reports import selectors
 from apps.wms_salary.models import WmsSalary
@@ -80,7 +81,7 @@ class WmsPhase8ReportTests(WmsPhase7Base):
                 response = self.client.get(reverse(f"wms:{page_name}"))
                 self.assertEqual(response.status_code, 200)
         response = self.client.get(reverse("wms:report_index"))
-        self.assertContains(response, "Daily Finished Pieces")
+        self.assertContains(response, "Daily Finished / Ready PCS")
         self.assertContains(response, "Monthly Salary")
         self.assertContains(response, reverse("wms:report_salary"))
 
@@ -101,6 +102,13 @@ class WmsPhase8ReportTests(WmsPhase7Base):
         self.assertEqual(report["grand_total"], 9)
         self.assertEqual(len(report["rows"]), 1)
         self.assertEqual(report["rows"][0]["total"], 9)
+        self.assertEqual(len(report["detail_rows"]), 2)
+        self.assertTrue(
+            all(
+                row["order_reference"] == self.production_order.order_reference
+                for row in report["detail_rows"]
+            )
+        )
         totals = {
             category["name"]: report["category_totals"][index]
             for index, category in enumerate(report["categories"])
@@ -109,6 +117,18 @@ class WmsPhase8ReportTests(WmsPhase7Base):
             totals,
             {"Default Category": 4, "Override Category": 3},
         )
+        export = self.client.get(
+            reverse("wms:report_daily_production_export"),
+            {"report_date": "2026-07-12"},
+        )
+        workbook = load_workbook(BytesIO(export.content), read_only=True)
+        self.assertIn("Order Detail", workbook.sheetnames)
+        detail_values = [
+            value
+            for row in workbook["Order Detail"].iter_rows(values_only=True)
+            for value in row
+        ]
+        self.assertIn(self.production_order.order_reference, detail_values)
         self.assertNotContains(response, "20</td>", html=False)
 
         filtered = self.client.get(
@@ -320,14 +340,28 @@ class WmsPhase8ReportTests(WmsPhase7Base):
             employee=self.employee_b,
             category=category_b,
         )
+        order_b = WmsWorkshopOrder.objects.create(
+            business=self.business_b,
+            location=self.location_b,
+            order_reference="P8-TENANT-B",
+            eligible_piece_count=100,
+            received_date=self.report_date,
+        )
         production_services.create_production_entry(
             business=self.business_b,
+            user_access=self.access_b,
             location=self.location_b,
             employee=self.employee_b,
             production_date=self.report_date,
             daily_total_pieces=99,
             notes="Tenant B only",
-            assignment_quantities={str(self.employee_b.category_assignments.get().public_id): 99},
+            production_rows=[
+                {
+                    "order": order_b,
+                    "assignment": self.employee_b.category_assignments.get(),
+                    "quantity": 99,
+                }
+            ],
             user=self.owner_b,
         )
         page_cases = (
@@ -409,14 +443,28 @@ class WmsPhase8ReportTests(WmsPhase7Base):
             employee=location_two_employee,
             category=category,
         )
+        location_two_order = WmsWorkshopOrder.objects.create(
+            business=self.business_a,
+            location=self.location_a2,
+            order_reference="P8-LOCATION-TWO",
+            eligible_piece_count=100,
+            received_date=self.report_date,
+        )
         production_services.create_production_entry(
             business=self.business_a,
+            user_access=self.access_a,
             location=self.location_a2,
             employee=location_two_employee,
             production_date=self.report_date,
             daily_total_pieces=22,
             notes="Allowed location production",
-            assignment_quantities={str(assignment.public_id): 22},
+            production_rows=[
+                {
+                    "order": location_two_order,
+                    "assignment": assignment,
+                    "quantity": 22,
+                }
+            ],
             user=self.owner_a,
         )
         self.create_report_production(daily_total=11)
@@ -575,4 +623,4 @@ class WmsPhase8ReportTests(WmsPhase7Base):
                 report_date=self.report_date,
             )
         self.assertEqual(report["grand_total"], 9)
-        self.assertLessEqual(len(captured), 3)
+        self.assertLessEqual(len(captured), 4)

@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from apps.wms_core.models import ValidatedTenantModel, WmsLocation
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_workforce.models import (
     WmsEmployee,
     WmsEmployeeCategoryAssignment,
@@ -139,6 +140,13 @@ class WmsProductionEntryLine(ValidatedTenantModel):
         on_delete=models.PROTECT,
         related_name="lines",
     )
+    order = models.ForeignKey(
+        WmsWorkshopOrder,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="production_lines",
+    )
     assignment = models.ForeignKey(
         WmsEmployeeCategoryAssignment,
         on_delete=models.PROTECT,
@@ -163,14 +171,6 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             "category_name_snapshot",
         ]
         constraints = [
-            models.UniqueConstraint(
-                fields=["business", "entry", "assignment"],
-                name="uniq_wms_prod_entry_assignment",
-            ),
-            models.UniqueConstraint(
-                fields=["business", "entry", "category"],
-                name="uniq_wms_prod_entry_category",
-            ),
             models.CheckConstraint(
                 condition=models.Q(quantity__gte=0),
                 name="nonnegative_wms_prod_quantity",
@@ -184,6 +184,14 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             models.Index(
                 fields=["business", "assignment"],
                 name="wms_prod_line_assign_idx",
+            ),
+            models.Index(
+                fields=["business", "order", "category"],
+                name="wms_prod_order_category_idx",
+            ),
+            models.Index(
+                fields=["business", "order"],
+                name="wms_prod_order_idx",
             ),
         ]
 
@@ -206,6 +214,12 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             errors["entry"] = "The production entry belongs to another business."
         if (
             self.business_id
+            and self.order_id
+            and self.order.business_id != self.business_id
+        ):
+            errors["order"] = "The workshop order belongs to another business."
+        if (
+            self.business_id
             and self.assignment_id
             and self.assignment.business_id != self.business_id
         ):
@@ -224,25 +238,41 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             original = (
                 type(self)
                 .objects.filter(pk=self.pk)
-                .values("entry_id", "assignment_id", "category_id")
+                .values("entry_id", "order_id", "assignment_id", "category_id")
                 .first()
             )
         identity_changed = original is not None and (
             original["entry_id"] != self.entry_id
+            or original["order_id"] != self.order_id
             or original["assignment_id"] != self.assignment_id
             or original["category_id"] != self.category_id
         )
         if identity_changed:
-            errors["assignment"] = (
+            errors["order"] = (
                 "Production line identity cannot be changed after creation."
             )
+        if original is None and not self.order_id and self.created_at is None:
+            errors["order"] = "A Workshop Order is required for new production."
         if (
             original is None
             and self.entry_id
+            and self.order_id
             and self.assignment_id
             and self.category_id
         ):
-            if self.assignment.employee_id != self.entry.employee_id:
+            if self.order.location_id != self.entry.location_id:
+                errors["order"] = (
+                    "The Workshop Order location must match the production entry."
+                )
+            elif self.order.status != WmsWorkshopOrder.Status.IN_PROCESS:
+                errors["order"] = (
+                    "Only In Process Workshop Orders can receive new production."
+                )
+            elif not self.order.eligible_piece_count:
+                errors["order"] = (
+                    "The Workshop Order requires eligible PCS before production."
+                )
+            elif self.assignment.employee_id != self.entry.employee_id:
                 errors["assignment"] = (
                     "The category assignment must belong to the entry employee."
                 )
@@ -258,6 +288,10 @@ class WmsProductionEntryLine(ValidatedTenantModel):
                 errors["category"] = (
                     "Inactive categories cannot receive new production."
                 )
+            elif self.quantity is not None and self.quantity <= 0:
+                errors["quantity"] = (
+                    "Production PCS must be a whole number greater than zero."
+                )
         if errors:
             raise ValidationError(errors)
 
@@ -266,4 +300,10 @@ class WmsProductionEntryLine(ValidatedTenantModel):
         return super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.entry} — {self.category_name_snapshot}: {self.quantity}"
+        order_reference = (
+            self.order.order_reference if self.order_id else "Legacy / Not recorded"
+        )
+        return (
+            f"{self.entry} — {order_reference} — "
+            f"{self.category_name_snapshot}: {self.quantity}"
+        )

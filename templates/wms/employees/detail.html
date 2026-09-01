@@ -140,6 +140,27 @@
 </div>
 {% endif %}
 
+{% if can_view_production %}
+<div class="card mb-3">
+  <div class="card-header">Recent production history</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0">
+      <thead><tr><th>Date</th><th>Workshop Order</th><th>Operation</th><th class="text-end">PCS</th></tr></thead>
+      <tbody>
+        {% for line in recent_production_lines %}
+        <tr>
+          <td>{{ line.entry.production_date|date:"M d, Y" }}</td>
+          <td>{% if line.order %}{{ line.order.order_reference }}{% else %}<span class="text-secondary">Legacy / Not recorded</span>{% endif %}</td>
+          <td>{{ line.category_name_snapshot }}</td>
+          <td class="text-end fw-semibold">{{ line.quantity }}</td>
+        </tr>
+        {% empty %}<tr><td colspan="4"><div class="empty-state py-3">No production history.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-header">Record history</div>
   <div class="card-body small text-secondary">

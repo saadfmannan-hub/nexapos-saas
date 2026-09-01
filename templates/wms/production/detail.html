@@ -32,13 +32,16 @@
   </div>
   <div class="col-md-8">
     <div class="card h-100">
-      <div class="card-header">Category quantities</div>
+      <div class="card-header">Workshop Order production rows</div>
       <div class="table-responsive">
         <table class="table mb-0">
-          <thead><tr><th>Category</th><th class="text-end">Quantity</th></tr></thead>
+          <thead><tr><th>Workshop Order</th><th>Operation</th><th>Employee</th><th class="text-end">PCS</th></tr></thead>
           <tbody>
             {% for line in entry.lines.all %}
             <tr>
+              <td class="fw-semibold">
+                {% if line.order %}{{ line.order.order_reference }}{% else %}<span class="text-secondary">Legacy / Not recorded</span>{% endif %}
+              </td>
               <td>
                 {{ line.category_name_snapshot }}
                 {% if line.category_code_snapshot %}
@@ -48,6 +51,7 @@
                 <span class="badge text-bg-warning">Historical</span>
                 {% endif %}
               </td>
+              <td>{{ entry.employee.full_name }}</td>
               <td class="text-end fw-semibold">{{ line.quantity }}</td>
             </tr>
             {% endfor %}

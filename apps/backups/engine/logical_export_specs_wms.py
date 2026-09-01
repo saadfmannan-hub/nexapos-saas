@@ -300,6 +300,11 @@ LOGICAL_EXPORT_SPECS_WMS = (
                 "category",
                 "wms_workforce.WmsProductionCategory",
             ),
+            relation(
+                "order",
+                "wms_orders.WmsWorkshopOrder",
+                nullable=True,
+            ),
         ),
         omitted_fields=_INTERNAL_ID_OMISSION,
     ),
@@ -312,6 +317,7 @@ LOGICAL_EXPORT_SPECS_WMS = (
         scalar_fields=(
             *_COMMON_SCALARS,
             "order_reference",
+            "eligible_piece_count",
             "status",
             "received_date",
             "finished_date",
@@ -517,6 +523,8 @@ LOGICAL_EXPORT_SPECS_WMS = (
         scalar_fields=(
             *_COMMON_SCALARS,
             "assignment_public_id_snapshot",
+            "order_public_id_snapshot",
+            "order_reference_snapshot",
             "category_name_snapshot",
             "category_code_snapshot",
             "rate_source",
@@ -535,6 +543,10 @@ LOGICAL_EXPORT_SPECS_WMS = (
         scalar_policies=(
             (
                 "assignment_public_id_snapshot",
+                ScalarPolicy.VALIDATED_UUID_SNAPSHOT,
+            ),
+            (
+                "order_public_id_snapshot",
                 ScalarPolicy.VALIDATED_UUID_SNAPSHOT,
             ),
         ),

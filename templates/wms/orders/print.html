@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workshop Order {{ order.order_reference }}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #eef2f7;
+      color: #172033;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 10pt;
+      line-height: 1.4;
+    }
+    .print-toolbar {
+      max-width: 210mm;
+      margin: 12px auto;
+      padding: 0 12mm;
+      text-align: right;
+    }
+    .print-button {
+      border: 1px solid #64748b;
+      border-radius: 5px;
+      background: #fff;
+      color: #172033;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      padding: 8px 14px;
+    }
+    .document {
+      max-width: 210mm;
+      min-height: 270mm;
+      margin: 0 auto 18px;
+      padding: 12mm;
+      background: #fff;
+      box-shadow: 0 3px 18px rgb(15 23 42 / 12%);
+    }
+    .document-header {
+      border-bottom: 2px solid #172033;
+      margin-bottom: 7mm;
+      padding-bottom: 4mm;
+    }
+    .brand-line {
+      display: flex;
+      justify-content: space-between;
+      gap: 8mm;
+      color: #475569;
+      font-size: 9pt;
+      font-weight: 700;
+    }
+    .product-name {
+      color: #172033;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 3mm 0 0;
+      color: #172033;
+      font-size: 17pt;
+      line-height: 1.2;
+    }
+    .order-reference {
+      margin-top: 1mm;
+      font-size: 22pt;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+    .header-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8mm;
+      margin-top: 2mm;
+      color: #475569;
+      font-size: 9pt;
+    }
+    .status {
+      display: inline-block;
+      border: 1px solid #94a3b8;
+      border-radius: 999px;
+      color: #172033;
+      font-weight: 700;
+      padding: 1mm 3mm;
+    }
+    section { margin-top: 7mm; }
+    h2 {
+      border-bottom: 1px solid #cbd5e1;
+      margin: 0 0 2.5mm;
+      padding-bottom: 1.5mm;
+      color: #172033;
+      font-size: 11pt;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .details {
+      display: grid;
+      grid-template-columns: 38mm 1fr 38mm 1fr;
+      gap: 2mm 4mm;
+      margin: 0;
+    }
+    .details dt { color: #64748b; font-weight: 700; }
+    .details dd { margin: 0; font-weight: 600; }
+    .notes {
+      margin-top: 4mm;
+      border-left: 3px solid #cbd5e1;
+      padding-left: 3mm;
+      white-space: normal;
+    }
+    .notes-label { color: #64748b; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    th {
+      border-bottom: 1.5px solid #94a3b8;
+      background: #eef2f7;
+      color: #172033;
+      font-size: 8.5pt;
+      padding: 1.8mm 2mm;
+      text-align: left;
+    }
+    td {
+      border-bottom: .5px solid #dbe3ec;
+      padding: 1.7mm 2mm;
+      vertical-align: top;
+    }
+    tr {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .number { text-align: right; white-space: nowrap; }
+    .empty { color: #64748b; font-style: italic; }
+    .status-history { margin: 0; padding: 0; list-style: none; }
+    .status-history li {
+      border-bottom: .5px solid #dbe3ec;
+      padding: 2mm 0;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .status-history strong { display: block; }
+    .history-meta { color: #64748b; font-size: 8.5pt; }
+    .document-footer {
+      border-top: 1px solid #cbd5e1;
+      margin-top: 9mm;
+      padding-top: 2.5mm;
+      color: #64748b;
+      font-size: 8pt;
+      text-align: center;
+    }
+    @media print {
+      body { background: #fff; }
+      .no-print { display: none !important; }
+      .document {
+        max-width: none;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        box-shadow: none;
+      }
+      section { page-break-inside: auto; }
+      h1, h2, .document-header { page-break-inside: avoid; }
+      * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body{% if request.GET.autoprint %} onload="window.print()"{% endif %}>
+  <div class="print-toolbar no-print">
+    <button class="print-button" type="button" onclick="window.print()">Print / Save PDF</button>
+  </div>
+
+  <main class="document">
+    <header class="document-header">
+      <div class="brand-line">
+        <span class="product-name">Nexa WMS</span>
+        <span>{{ business.name }}</span>
+      </div>
+      <h1>Workshop Order Production Record</h1>
+      <div class="order-reference">{{ order.order_reference }}</div>
+      <div class="header-meta">
+        <span class="status">{{ order.get_status_display }}</span>
+        <span>Generated {{ printed_at|date:"D, d M Y" }} at {{ printed_at|date:"h:i A" }}</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>Order Details</h2>
+      <dl class="details">
+        <dt>WMS Location</dt>
+        <dd>{{ order.location.branch.name }}</dd>
+        <dt>Received Date</dt>
+        <dd>{{ order.received_date|date:"M d, Y" }}</dd>
+        <dt>Eligible PCS</dt>
+        <dd>{{ order.eligible_piece_count|default_if_none:"Not recorded" }}</dd>
+        {% if order.finished_date %}
+        <dt>Finished Date</dt>
+        <dd>{{ order.finished_date|date:"M d, Y" }}</dd>
+        {% endif %}
+      </dl>
+      <div class="notes">
+        <div class="notes-label">Notes</div>
+        <div>{{ order.notes|default:"No notes."|linebreaksbr }}</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Production Progress</h2>
+      {% if production_progress %}
+      <table>
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th class="number">Completed PCS</th>
+            <th class="number">Eligible Order PCS</th>
+            <th class="number">Progress</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for progress in production_progress %}
+          <tr>
+            <td>{{ progress.operation }}</td>
+            <td class="number">{{ progress.completed_pieces }}</td>
+            <td class="number">{{ order.eligible_piece_count|default_if_none:"—" }}</td>
+            <td class="number">
+              {% if order.eligible_piece_count %}
+              {{ progress.completed_pieces }} / {{ order.eligible_piece_count }} PCS
+              {% else %}
+              {{ progress.completed_pieces }} PCS recorded
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">No production recorded yet.</div>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Production History</h2>
+      {% if production_history %}
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Employee</th>
+            <th>Operation</th>
+            <th class="number">PCS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for line in production_history %}
+          <tr>
+            <td>{{ line.entry.production_date|date:"M d, Y" }}</td>
+            <td>{{ line.entry.employee.full_name }}</td>
+            <td>{{ line.category_name_snapshot }}</td>
+            <td class="number">{{ line.quantity }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty">No production history.</div>
+      {% endif %}
+    </section>
+
+    <section>
+      <h2>Status History</h2>
+      {% if order.status_history.all %}
+      <ol class="status-history">
+        {% for history in order.status_history.all %}
+        <li>
+          <strong>
+            {% if history.previous_status %}
+            {{ history.get_previous_status_display }} → {{ history.get_new_status_display }}
+            {% else %}
+            Created → {{ history.get_new_status_display }}
+            {% endif %}
+          </strong>
+          <span class="history-meta">
+            {{ history.changed_at|date:"M d, Y H:i" }}
+            {% if history.changed_by %} · {{ history.changed_by.full_name|default:history.changed_by.email }}{% endif %}
+          </span>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <div class="empty">No status history.</div>
+      {% endif %}
+    </section>
+
+    <footer class="document-footer">
+      Nexa WMS · Workshop Order {{ order.order_reference }}
+    </footer>
+  </main>
+</body>
+</html>

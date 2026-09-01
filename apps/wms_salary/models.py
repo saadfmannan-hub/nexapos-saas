@@ -672,6 +672,17 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
         related_name="salary_piece_lines",
     )
     assignment_public_id_snapshot = models.UUIDField(editable=False)
+    order_public_id_snapshot = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    order_reference_snapshot = models.CharField(  # noqa: DJ001
+        max_length=80,
+        null=True,
+        blank=True,
+        editable=False,
+    )
     category_name_snapshot = models.CharField(max_length=100, editable=False)
     category_code_snapshot = models.CharField(
         max_length=40,
@@ -716,6 +727,19 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
             models.CheckConstraint(
                 condition=models.Q(line_amount__gte=0),
                 name="wms_salary_piece_amt_nonneg",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        order_public_id_snapshot__isnull=True,
+                        order_reference_snapshot__isnull=True,
+                    )
+                    | models.Q(
+                        order_public_id_snapshot__isnull=False,
+                        order_reference_snapshot__isnull=False,
+                    )
+                ),
+                name="wms_salary_order_snapshot_pair",
             ),
         ]
         indexes = [
@@ -766,6 +790,20 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
                 errors["quantity"] = (
                     "Salary quantity must snapshot the production line quantity."
                 )
+            if not self.pk:
+                expected_public_id = (
+                    line.order.public_id if line.order_id else None
+                )
+                expected_reference = (
+                    line.order.order_reference if line.order_id else None
+                )
+                if (
+                    self.order_public_id_snapshot != expected_public_id
+                    or self.order_reference_snapshot != expected_reference
+                ):
+                    errors["order_public_id_snapshot"] = (
+                        "Salary order snapshots must match the production line."
+                    )
         if self.applied_rate is not None and self.applied_rate < 0:
             errors["applied_rate"] = "Applied rate cannot be negative."
         if self.line_amount is not None and self.line_amount < 0:

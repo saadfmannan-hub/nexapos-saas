@@ -13,8 +13,9 @@ from apps.audit.models import AuditLog
 from apps.tenants.services import provision_business
 from apps.wms_core import services as core_services
 from apps.wms_core.models import WmsRole, WmsUserAccess
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_production import services
-from apps.wms_production.forms import ProductionEntryForm
+from apps.wms_production.forms import ProductionEntryForm, ProductionLineFormSet
 from apps.wms_production.models import (
     WmsProductionEntry,
     WmsProductionEntryLine,
@@ -96,7 +97,31 @@ class WmsPhase4Base(TestCase):
         self.access_a = WmsUserAccess.objects.for_business(
             self.business_a
         ).get(membership=self.membership_a)
+        self.access_b = WmsUserAccess.objects.for_business(
+            self.business_b
+        ).get(membership__user=self.owner_b)
+        self.order_a = self.make_order(self.employee_a, "P4-ORDER-A")
+        self.order_b = self.make_order(self.employee_b, "P4-ORDER-B")
         self.client.force_login(self.owner_a)
+
+    def make_order(self, employee, reference):
+        return WmsWorkshopOrder.objects.create(
+            business=employee.business,
+            location=employee.location,
+            order_reference=reference,
+            eligible_piece_count=10000,
+            received_date=self.production_date,
+        )
+
+    def order_for(self, employee):
+        return WmsWorkshopOrder.objects.for_business(employee.business).filter(
+            location=employee.location,
+            status=WmsWorkshopOrder.Status.IN_PROCESS,
+            eligible_piece_count__gt=0,
+        ).first() or self.make_order(
+            employee,
+            f"P4-{employee.employee_code}-{WmsWorkshopOrder.objects.count()}",
+        )
 
     def make_assignment(self, employee, category):
         return WmsEmployeeCategoryAssignment.objects.create(
@@ -133,18 +158,33 @@ class WmsPhase4Base(TestCase):
     ):
         employee = employee or self.employee_a
         location = location or employee.location
+        quantities = (
+            quantities
+            if quantities is not None
+            else self.assignment_quantities(employee)
+        )
+        access = WmsUserAccess.objects.for_business(employee.business).get(
+            membership__user=employee.business.owner
+        )
+        order = self.order_for(employee)
         return services.create_production_entry(
             business=business or employee.business,
+            user_access=access,
             location=location,
             employee=employee,
             production_date=production_date or self.production_date,
             daily_total_pieces=daily_total,
             notes="Daily workshop entry.",
-            assignment_quantities=(
-                quantities
-                if quantities is not None
-                else self.assignment_quantities(employee)
-            ),
+            production_rows=[
+                {
+                    "order": order,
+                    "assignment": employee.category_assignments.get(
+                        public_id=assignment_id
+                    ),
+                    "quantity": quantity,
+                }
+                for assignment_id, quantity in quantities.items()
+            ],
             user=user or employee.business.owner,
         )
 
@@ -164,6 +204,12 @@ class WmsPhase4Base(TestCase):
             if quantities is not None
             else self.assignment_quantities(employee)
         )
+        order = self.order_for(employee)
+        row_fields = {}
+        for index, (assignment_id, quantity) in enumerate(quantities.items()):
+            row_fields[f"rows-{index}-order"] = str(order.public_id)
+            row_fields[f"rows-{index}-assignment"] = assignment_id
+            row_fields[f"rows-{index}-quantity"] = str(quantity)
         return {
             "employee": str(employee.public_id),
             "location": str(location.public_id),
@@ -172,10 +218,11 @@ class WmsPhase4Base(TestCase):
             ).isoformat(),
             "daily_total_pieces": str(daily_total),
             "notes": "Daily workshop entry.",
-            **{
-                f"quantity_{assignment_id}": str(quantity)
-                for assignment_id, quantity in quantities.items()
-            },
+            "rows-TOTAL_FORMS": str(len(quantities)),
+            "rows-INITIAL_FORMS": "0",
+            "rows-MIN_NUM_FORMS": "1",
+            "rows-MAX_NUM_FORMS": "1000",
+            **row_fields,
         }
 
     def correction_payload(
@@ -274,17 +321,18 @@ class WmsPhase4ModelTests(WmsPhase4Base):
         with self.assertRaises(ValidationError):
             self.create_entry(daily_total=-1)
 
-    def test_duplicate_assignment_or_category_line_is_prevented(self):
+    def test_repeated_order_operation_rows_are_allowed(self):
         entry = self.create_entry()
         duplicate = WmsProductionEntryLine(
             business=self.business_a,
             entry=entry,
+            order=self.order_a,
             assignment=self.assignment_a1,
             category=self.category_a1,
             quantity=1,
         )
-        with self.assertRaises(ValidationError):
-            duplicate.save()
+        duplicate.save()
+        self.assertEqual(entry.lines.filter(category=self.category_a1).count(), 2)
 
     def test_daily_total_is_preserved_independently_from_category_sum(self):
         entry = self.create_entry(
@@ -331,6 +379,7 @@ class WmsPhase4ModelTests(WmsPhase4Base):
         }
         corrected = services.correct_production_entry(
             business=self.business_a,
+            user_access=self.access_a,
             entry=entry,
             daily_total_pieces=7,
             notes="Historical correction.",
@@ -389,17 +438,21 @@ class WmsPhase4ModelTests(WmsPhase4Base):
             selected_employee=self.employee_a,
         )
 
-        field_names = {field.name for field in form.quantity_fields}
-        self.assertEqual(
-            field_names,
-            {
-                f"quantity_{self.assignment_a1.public_id}",
-                f"quantity_{self.assignment_a2.public_id}",
+        line_formset = ProductionLineFormSet(
+            prefix="rows",
+            form_kwargs={
+                "business": self.business_a,
+                "user_access": self.access_a,
+                "employee": form.selected_employee,
             },
         )
-        self.assertNotIn(
-            f"quantity_{self.assignment_b.public_id}",
-            field_names,
+        self.assertEqual(
+            set(
+                line_formset.forms[0].fields[
+                    "assignment"
+                ].queryset.values_list("public_id", flat=True)
+            ),
+            {self.assignment_a1.public_id, self.assignment_a2.public_id},
         )
 
 
@@ -459,7 +512,7 @@ class WmsPhase4ViewTests(WmsPhase4Base):
             str(self.business_a.public_id),
         )
         self.assertEqual(audit.new_values["daily_total_pieces"], 10)
-        self.assertEqual(len(audit.new_values["category_quantities"]), 2)
+        self.assertEqual(len(audit.new_values["production_rows"]), 2)
 
     def test_correction_requires_reason_and_audits_old_and_new_values(self):
         entry = self.create_entry()
@@ -531,7 +584,7 @@ class WmsPhase4ViewTests(WmsPhase4Base):
         payload = self.entry_payload()
         payload["employee"] = str(self.employee_b.public_id)
         payload["location"] = str(self.location_b.public_id)
-        payload[f"quantity_{self.assignment_b.public_id}"] = "99"
+        payload["rows-0-assignment"] = str(self.assignment_b.public_id)
         response = self.client.post(
             reverse("wms:production_entry_create"),
             payload,
@@ -556,7 +609,7 @@ class WmsPhase4ViewTests(WmsPhase4Base):
             unassigned,
         )
         payload = self.entry_payload()
-        payload[f"quantity_{forged_assignment.public_id}"] = "100"
+        payload["rows-0-assignment"] = str(forged_assignment.public_id)
 
         response = self.client.post(
             reverse("wms:production_entry_create"),

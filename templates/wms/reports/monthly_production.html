@@ -41,6 +41,19 @@
     </table>
   </div>
 </div>
+<div class="card report-card mt-3">
+  <div class="card-header">Workshop Order detail</div>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover mb-0 wms-report-table">
+      <thead><tr><th>Date</th><th>Employee</th><th>Workshop Order</th><th>Operation</th><th class="text-end">PCS</th></tr></thead>
+      <tbody>
+        {% for row in report.detail_rows %}
+        <tr><td>{{ row.date|date:"M d, Y" }}</td><td>{{ row.employee_name }}<div class="small text-secondary">{{ row.employee_code }}</div></td><td>{{ row.order_reference }}</td><td>{{ row.operation }}</td><td class="text-end fw-semibold">{{ row.quantity }}</td></tr>
+        {% empty %}<tr><td colspan="5"><div class="empty-state py-3">No production detail.</div></td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
 {% else %}
 <div class="empty-state card py-5">Select an employee and month to view daily production.</div>
 {% endif %}

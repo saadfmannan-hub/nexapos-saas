@@ -8,6 +8,7 @@ class WmsProductionEntryLineInline(admin.TabularInline):
     extra = 0
     can_delete = False
     readonly_fields = (
+        "order",
         "assignment",
         "category",
         "category_name_snapshot",
@@ -38,6 +39,24 @@ class WmsProductionEntryAdmin(admin.ModelAdmin):
     )
     inlines = (WmsProductionEntryLineInline,)
 
+    readonly_fields = (
+        "business",
+        "location",
+        "employee",
+        "production_date",
+        "daily_total_pieces",
+        "notes",
+        "is_corrected",
+        "correction_reason",
+        "created_by",
+        "updated_by",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
     def has_delete_permission(self, request, obj=None):
         return False
 
@@ -46,6 +65,7 @@ class WmsProductionEntryAdmin(admin.ModelAdmin):
 class WmsProductionEntryLineAdmin(admin.ModelAdmin):
     list_display = (
         "entry",
+        "order",
         "category_name_snapshot",
         "quantity",
     )
@@ -53,7 +73,27 @@ class WmsProductionEntryLineAdmin(admin.ModelAdmin):
         "entry__employee__employee_code",
         "entry__employee__full_name",
         "category_name_snapshot",
+        "order__order_reference",
     )
+
+    readonly_fields = (
+        "business",
+        "entry",
+        "order",
+        "assignment",
+        "category",
+        "category_name_snapshot",
+        "category_code_snapshot",
+        "quantity",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.method in {"GET", "HEAD"}
 
     def has_delete_permission(self, request, obj=None):
         return False

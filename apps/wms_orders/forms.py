@@ -32,6 +32,50 @@ def normalize_reference_batch(value):
     return references
 
 
+def normalize_order_batch(value):
+    rows = []
+    seen = set()
+    for line_number, raw_line in enumerate((value or "").splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        parts = [part.strip() for part in raw_line.split("|")]
+        if len(parts) != 2:
+            raise forms.ValidationError(
+                f"Line {line_number}: use Order Reference | PCS."
+            )
+        reference = normalize_order_reference(parts[0])
+        if not reference:
+            raise forms.ValidationError(
+                f"Line {line_number}: order reference is required."
+            )
+        try:
+            piece_count = int(parts[1])
+        except (TypeError, ValueError) as exc:
+            raise forms.ValidationError(
+                f"Line {line_number}: PCS must be a whole number."
+            ) from exc
+        if piece_count <= 0:
+            raise forms.ValidationError(
+                f"Line {line_number}: PCS must be greater than zero."
+            )
+        if reference in seen:
+            raise forms.ValidationError(
+                f"Duplicate reference in this batch: {reference}."
+            )
+        seen.add(reference)
+        rows.append(
+            {
+                "order_reference": reference,
+                "eligible_piece_count": piece_count,
+            }
+        )
+    if not rows:
+        raise forms.ValidationError(
+            "Enter at least one order as Order Reference | PCS."
+        )
+    return rows
+
+
 class NewOrdersBatchForm(forms.Form):
     location = forms.ModelChoiceField(
         queryset=WmsLocation.objects.none(),
@@ -41,14 +85,15 @@ class NewOrdersBatchForm(forms.Form):
     received_date = forms.DateField(
         widget=forms.DateInput(attrs={"type": "date"}),
     )
-    references = forms.CharField(
+    orders = forms.CharField(
+        label="Orders",
         widget=forms.Textarea(
             attrs={
                 "rows": 8,
-                "placeholder": "MB-008\nMB-009\nAH-006",
+                "placeholder": "MB-008 | 4\nMB-009 | 2\nAH-006 | 6",
             }
         ),
-        help_text="Enter one operational order reference per line.",
+        help_text="Enter one order per line as Order Reference | PCS.",
     )
     notes = forms.CharField(
         required=False,
@@ -73,8 +118,8 @@ class NewOrdersBatchForm(forms.Form):
             else:
                 field.widget.attrs.setdefault("class", "form-control")
 
-    def clean_references(self):
-        return normalize_reference_batch(self.cleaned_data["references"])
+    def clean_orders(self):
+        return normalize_order_batch(self.cleaned_data["orders"])
 
     def clean_notes(self):
         return (self.cleaned_data.get("notes") or "").strip()
@@ -106,3 +151,16 @@ class FinishOrdersBatchForm(forms.Form):
 
     def clean_references(self):
         return normalize_reference_batch(self.cleaned_data["references"])
+
+
+class OrderPieceCountForm(forms.Form):
+    eligible_piece_count = forms.IntegerField(
+        label="Eligible PCS",
+        min_value=1,
+        widget=forms.NumberInput(
+            attrs={"class": "form-control", "min": "1", "step": "1"}
+        ),
+        help_text=(
+            "The maximum normal-production PCS for each operation on this order."
+        ),
+    )

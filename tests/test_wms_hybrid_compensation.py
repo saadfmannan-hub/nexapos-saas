@@ -12,6 +12,7 @@ from apps.backups.engine.logical_export_registry import (
 from apps.tenants.services import provision_business
 from apps.wms_attendance import services as attendance_services
 from apps.wms_core.models import WmsUserAccess
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_production import services as production_services
 from apps.wms_salary import services as salary_services
 from apps.wms_salary.models import (
@@ -114,6 +115,13 @@ class WmsHybridCompensationTests(TestCase):
             self.fallback,
             None,
         )
+        self.production_order = WmsWorkshopOrder.objects.create(
+            business=self.business_a,
+            location=self.location_a1,
+            order_reference="HYBRID-PRODUCTION",
+            eligible_piece_count=10000,
+            received_date=date(2026, 7, 1),
+        )
 
     def _assign(self, employee, category, rate):
         return WmsEmployeeCategoryAssignment.objects.create(
@@ -163,14 +171,39 @@ class WmsHybridCompensationTests(TestCase):
             )
             for assignment in assignments
         }
+        access = WmsUserAccess.objects.for_business(employee.business).get(
+            membership__user=employee.business.owner
+        )
+        order = WmsWorkshopOrder.objects.for_business(employee.business).filter(
+            location=employee.location,
+            status=WmsWorkshopOrder.Status.IN_PROCESS,
+            eligible_piece_count__gt=0,
+        ).first()
+        if order is None:
+            order = WmsWorkshopOrder.objects.create(
+                business=employee.business,
+                location=employee.location,
+                order_reference=f"PROD-{employee.employee_code}",
+                eligible_piece_count=10000,
+                received_date=date(2026, 1, 1),
+            )
         return production_services.create_production_entry(
             business=employee.business,
+            user_access=access,
             location=employee.location,
             employee=employee,
             production_date=production_date,
             daily_total_pieces=sum(assignment_quantities.values()),
             notes="Hybrid compensation test production.",
-            assignment_quantities=assignment_quantities,
+            production_rows=[
+                {
+                    "order": order,
+                    "assignment": assignment,
+                    "quantity": assignment_quantities[str(assignment.public_id)],
+                }
+                for assignment in assignments
+                if assignment_quantities[str(assignment.public_id)] > 0
+            ],
             user=employee.business.owner,
         )
 
@@ -201,6 +234,7 @@ class WmsHybridCompensationTests(TestCase):
         }
         return production_services.correct_production_entry(
             business=self.business_a,
+            user_access=self.access_a,
             entry=entry,
             daily_total_pieces=quantity,
             notes="Corrected Hybrid production.",
@@ -306,7 +340,7 @@ class WmsHybridCompensationTests(TestCase):
         self.assertEqual(merged.eligible_quantity, 2)
         self.assertEqual(merged.daily_amount, Decimal("1.400"))
         self.assertEqual(merged.worked_minutes_snapshot, 510)
-        self.assertEqual(merged.piece_lines.count(), 3)
+        self.assertEqual(merged.piece_lines.count(), 1)
         attendance_day = salary.days.get(salary_date=date(2026, 7, 11))
         self.assertEqual(attendance_day.attendance_id, attendance_only.pk)
         self.assertIsNone(attendance_day.production_entry_id)

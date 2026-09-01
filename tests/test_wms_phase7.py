@@ -20,6 +20,7 @@ from apps.wms_attendance.models import WmsAttendance
 from apps.wms_core import services as core_services
 from apps.wms_core.models import WmsRole, WmsUserAccess
 from apps.wms_orders import services as order_services
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_production import services as production_services
 from apps.wms_salary import selectors, services
 from apps.wms_salary.models import (
@@ -127,6 +128,13 @@ class WmsPhase7Base(TestCase):
         self.access_b = WmsUserAccess.objects.for_business(
             self.business_b
         ).get(membership=self.membership_b)
+        self.production_order = WmsWorkshopOrder.objects.create(
+            business=self.business_a,
+            location=self.location_a1,
+            order_reference="P7-PRODUCTION",
+            eligible_piece_count=10000,
+            received_date=date(2026, 7, 1),
+        )
         self.client.force_login(self.owner_a)
 
     def calculate(
@@ -197,14 +205,38 @@ class WmsPhase7Base(TestCase):
                 if assignment.category_id == self.category_override.pk
                 else default_quantity
             )
+        production_order = WmsWorkshopOrder.objects.for_business(
+            employee.business
+        ).filter(
+            location=employee.location,
+            status=WmsWorkshopOrder.Status.IN_PROCESS,
+            eligible_piece_count__gt=0,
+        ).first()
+        if production_order is None:
+            production_order = WmsWorkshopOrder.objects.create(
+                business=employee.business,
+                location=employee.location,
+                order_reference=f"P7-PRODUCTION-{employee.location.public_id}",
+                eligible_piece_count=10000,
+                received_date=date(2026, 7, 1),
+            )
         return production_services.create_production_entry(
             business=employee.business,
+            user_access=self.access_a,
             location=employee.location,
             employee=employee,
             production_date=production_date,
             daily_total_pieces=daily_total,
             notes="Phase 7 eligible production.",
-            assignment_quantities=quantities,
+            production_rows=[
+                {
+                    "order": production_order,
+                    "assignment": assignment,
+                    "quantity": quantities[str(assignment.public_id)],
+                }
+                for assignment in assignments
+                if quantities[str(assignment.public_id)] > 0
+            ],
             user=employee.business.owner,
         )
 
@@ -453,7 +485,12 @@ class WmsPhase7PerPieceSalaryTests(WmsPhase7Base):
             user_access=self.access_a,
             location=self.location_a1,
             received_date=date(2026, 7, 1),
-            references=["SALARY-IGNORED"],
+            order_rows=[
+                {
+                    "order_reference": "SALARY-IGNORED",
+                    "eligible_piece_count": 1,
+                }
+            ],
             notes="Must not affect salary.",
             user=self.owner_a,
         )
@@ -497,6 +534,7 @@ class WmsPhase7LifecycleServiceTests(WmsPhase7Base):
         original_pk = salary.pk
         production_services.correct_production_entry(
             business=self.business_a,
+            user_access=self.access_a,
             entry=entry,
             daily_total_pieces=1,
             notes="Corrected.",

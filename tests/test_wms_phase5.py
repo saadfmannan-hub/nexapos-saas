@@ -75,7 +75,13 @@ class WmsPhase5Base(TestCase):
             user_access=access or self.access_a,
             location=location or self.location_a,
             received_date=received_date or self.received_date,
-            references=references,
+            order_rows=[
+                {
+                    "order_reference": reference,
+                    "eligible_piece_count": 100,
+                }
+                for reference in references
+            ],
             notes="Operational workshop notes.",
             user=user or business.owner,
         )
@@ -92,7 +98,10 @@ class WmsPhase5Base(TestCase):
             "received_date": (
                 received_date or self.received_date
             ).isoformat(),
-            "references": references,
+            "orders": "\n".join(
+                f"{reference.strip()} | 100"
+                for reference in references.splitlines()
+            ),
             "notes": "Operational workshop notes.",
             "status": WmsWorkshopOrder.Status.FINISHED_READY,
         }
@@ -128,6 +137,7 @@ class WmsPhase5ModelTests(WmsPhase5Base):
             business=self.business_a,
             location=self.location_a,
             order_reference="MB-009",
+            eligible_piece_count=1,
             status="PENDING",
             received_date=self.received_date,
         )

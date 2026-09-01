@@ -71,7 +71,11 @@ def filtered_salary_records(
 def get_salary_for_access(user_access, public_id):
     piece_lines = (
         WmsSalaryPieceLine.objects.for_business(user_access.business)
-        .select_related("production_line", "production_line__assignment")
+        .select_related(
+            "production_line",
+            "production_line__order",
+            "production_line__assignment",
+        )
         .order_by("category_name_snapshot", "category_code_snapshot")
     )
     days = (

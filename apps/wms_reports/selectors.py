@@ -324,8 +324,15 @@ def monthly_alterations(
 
 def _production_lines_for_access(user_access):
     location_ids = historical_locations_for_access(user_access).values("pk")
-    return WmsProductionEntryLine.objects.for_business(user_access.business).filter(
-        entry__location_id__in=location_ids
+    return (
+        WmsProductionEntryLine.objects.for_business(user_access.business)
+        .filter(entry__location_id__in=location_ids)
+        .select_related(
+            "entry__employee",
+            "entry__location__branch",
+            "order",
+            "category",
+        )
     )
 
 
@@ -348,6 +355,27 @@ def daily_production(
         lines = lines.filter(entry__employee=employee)
     if category is not None:
         lines = lines.filter(category=category)
+    detail_rows = [
+        {
+            "date": line.entry.production_date,
+            "employee_code": line.entry.employee.employee_code,
+            "employee_name": line.entry.employee.full_name,
+            "order_reference": (
+                line.order.order_reference
+                if line.order_id
+                else "Legacy / Not recorded"
+            ),
+            "operation": line.category_name_snapshot,
+            "quantity": line.quantity,
+        }
+        for line in lines.order_by(
+            "entry__employee__full_name",
+            "order__order_reference",
+            "category__display_order",
+            "category_name_snapshot",
+            "pk",
+        )
+    ]
     values = list(
         lines.values(
             "entry__employee_id",
@@ -414,6 +442,7 @@ def daily_production(
         "rows": rows,
         "category_totals": category_totals,
         "grand_total": sum(row["total"] for row in rows),
+        "detail_rows": detail_rows,
     }
 
 
@@ -434,6 +463,27 @@ def monthly_employee_production(
     )
     if location is not None:
         lines = lines.filter(entry__location=location)
+    detail_rows = [
+        {
+            "date": line.entry.production_date,
+            "employee_code": line.entry.employee.employee_code,
+            "employee_name": line.entry.employee.full_name,
+            "order_reference": (
+                line.order.order_reference
+                if line.order_id
+                else "Legacy / Not recorded"
+            ),
+            "operation": line.category_name_snapshot,
+            "quantity": line.quantity,
+        }
+        for line in lines.order_by(
+            "entry__production_date",
+            "order__order_reference",
+            "category__display_order",
+            "category_name_snapshot",
+            "pk",
+        )
+    ]
     values = list(
         lines.values(
             "entry__production_date",
@@ -508,6 +558,7 @@ def monthly_employee_production(
         "rows": rows,
         "category_totals": category_totals,
         "grand_total": sum(row["total"] for row in rows),
+        "detail_rows": detail_rows,
     }
 
 

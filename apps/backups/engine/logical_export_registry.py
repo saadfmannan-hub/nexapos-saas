@@ -75,6 +75,7 @@ _VALIDATOR_REFERENCE_MODEL_LABELS = {
     "wms_salary_assignment_snapshot_matches": (
         "wms_production.WmsProductionEntryLine",
         "wms_workforce.WmsEmployeeCategoryAssignment",
+        "wms_orders.WmsWorkshopOrder",
     ),
 }
 

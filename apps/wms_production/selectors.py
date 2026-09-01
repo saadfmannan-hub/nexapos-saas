@@ -7,6 +7,7 @@ from apps.wms_core.selectors import (
     historical_locations_for_access,
     locations_for_access,
 )
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_workforce.models import WmsEmployeeCategoryAssignment
 from apps.wms_workforce.selectors import (
     categories_for_business,
@@ -20,7 +21,7 @@ def production_entries_for_access(user_access):
     location_ids = historical_locations_for_access(user_access).values("pk")
     lines = WmsProductionEntryLine.objects.for_business(
         user_access.business
-    ).select_related("assignment", "category")
+    ).select_related("order", "assignment", "category")
     return (
         WmsProductionEntry.objects.for_business(user_access.business)
         .filter(location_id__in=location_ids)
@@ -48,6 +49,7 @@ def filtered_production_entries(
         entries = entries.filter(
             Q(employee__full_name__icontains=query)
             | Q(employee__employee_code__icontains=query)
+            | Q(lines__order__order_reference__icontains=query)
         )
     if production_date is not None:
         entries = entries.filter(production_date=production_date)
@@ -111,6 +113,23 @@ def active_assignments_for_employee(employee):
         )
         .select_related("category")
         .order_by("category__display_order", "category__name")
+    )
+
+
+def eligible_orders_for_production(user_access, location):
+    if location is None or not user_access.can_access_location(location):
+        return WmsWorkshopOrder.objects.none()
+    return (
+        WmsWorkshopOrder.objects.for_business(user_access.business)
+        .filter(
+            location=location,
+            location__is_active=True,
+            location__branch__is_active=True,
+            status=WmsWorkshopOrder.Status.IN_PROCESS,
+            eligible_piece_count__gt=0,
+        )
+        .select_related("location__branch")
+        .order_by("order_reference")
     )
 
 

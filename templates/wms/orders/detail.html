@@ -12,6 +12,9 @@
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" href="{% url 'wms:order_list' %}">Back to orders</a>
+    <a class="btn btn-outline-secondary" href="{% url 'wms:order_print' order.public_id %}?autoprint=1" target="_blank" rel="noopener">
+      <i class="bi bi-printer"></i> Print / PDF
+    </a>
     {% if can_finish_orders %}
     <a class="btn btn-success" href="{% url 'wms:order_finish_batch' %}?reference={{ order.order_reference|urlencode }}">Mark finished</a>
     {% endif %}
@@ -28,6 +31,15 @@
           <dd class="col-sm-7">{{ order.location.branch.name }}</dd>
           <dt class="col-sm-5">Received date</dt>
           <dd class="col-sm-7">{{ order.received_date|date:"M d, Y" }}</dd>
+          <dt class="col-sm-5">Eligible PCS</dt>
+          <dd class="col-sm-7">
+            {{ order.eligible_piece_count|default_if_none:"Not recorded" }}
+            {% if can_manage_orders and order.status == "IN_PROCESS" %}
+            <a class="btn btn-sm btn-outline-primary ms-2" href="{% url 'wms:order_piece_count_update' order.public_id %}">
+              {% if order.eligible_piece_count %}Update PCS{% else %}Enter PCS{% endif %}
+            </a>
+            {% endif %}
+          </dd>
           <dt class="col-sm-5">Finished date</dt>
           <dd class="col-sm-7">{{ order.finished_date|date:"M d, Y"|default:"—" }}</dd>
           <dt class="col-sm-5">Notes</dt>
@@ -61,6 +73,70 @@
     </div>
   </div>
 </div>
+
+<div class="card mb-3">
+  <div class="card-header">Production Progress</div>
+  {% if production_progress %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Operation</th>
+          <th class="text-end">Completed PCS</th>
+          <th class="text-end">Eligible Order PCS</th>
+          <th class="text-end">Progress</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for progress in production_progress %}
+        <tr>
+          <td>{{ progress.operation }}</td>
+          <td class="text-end">{{ progress.completed_pieces }}</td>
+          <td class="text-end">{{ order.eligible_piece_count|default_if_none:"—" }}</td>
+          <td class="text-end fw-semibold">
+            {% if order.eligible_piece_count %}
+            {{ progress.completed_pieces }} / {{ order.eligible_piece_count }} PCS
+            {% else %}
+            {{ progress.completed_pieces }} PCS recorded
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body text-secondary">No production recorded yet.</div>
+  {% endif %}
+</div>
+
+{% if production_history %}
+<div class="card mb-3">
+  <div class="card-header">Production History</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Employee</th>
+          <th>Operation</th>
+          <th class="text-end">PCS</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in production_history %}
+        <tr>
+          <td>{{ line.entry.production_date|date:"M d, Y" }}</td>
+          <td>{{ line.entry.employee.full_name }}</td>
+          <td>{{ line.category_name_snapshot }}</td>
+          <td class="text-end">{{ line.quantity }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 
 <div class="card">
   <div class="card-header">Record metadata</div>

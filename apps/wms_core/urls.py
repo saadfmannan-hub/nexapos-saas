@@ -34,6 +34,16 @@ urlpatterns = [
         name="order_detail",
     ),
     path(
+        "orders/<uuid:public_id>/print/",
+        order_views.order_print,
+        name="order_print",
+    ),
+    path(
+        "orders/<uuid:public_id>/pcs/",
+        order_views.order_piece_count_update,
+        name="order_piece_count_update",
+    ),
+    path(
         "alterations/",
         alteration_views.alteration_list,
         name="alteration_list",

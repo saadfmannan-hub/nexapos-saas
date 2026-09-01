@@ -128,6 +128,29 @@ def _daily_result(request):
             *result["category_totals"],
             result["grand_total"],
         ],
+        "detail_export": {
+            "sheet_name": "Order Detail",
+            "columns": [
+                "Date",
+                "Employee",
+                "Employee Code",
+                "Workshop Order",
+                "Operation",
+                "PCS",
+            ],
+            "rows": [
+                [
+                    row["date"],
+                    row["employee_name"],
+                    row["employee_code"],
+                    row["order_reference"],
+                    row["operation"],
+                    row["quantity"],
+                ]
+                for row in result["detail_rows"]
+            ],
+            "column_formats": {0: "yyyy-mm-dd"},
+        },
     }
     metadata = [
         ("Period", report["period_label"]),
@@ -216,6 +239,29 @@ def _monthly_production_result(request):
             result["grand_total"],
         ],
         "column_formats": {0: "yyyy-mm-dd"},
+        "detail_export": {
+            "sheet_name": "Order Detail",
+            "columns": [
+                "Date",
+                "Employee",
+                "Employee Code",
+                "Workshop Order",
+                "Operation",
+                "PCS",
+            ],
+            "rows": [
+                [
+                    row["date"],
+                    row["employee_name"],
+                    row["employee_code"],
+                    row["order_reference"],
+                    row["operation"],
+                    row["quantity"],
+                ]
+                for row in result["detail_rows"]
+            ],
+            "column_formats": {0: "yyyy-mm-dd"},
+        },
     }
     metadata = [
         ("Period", report["period_label"]),

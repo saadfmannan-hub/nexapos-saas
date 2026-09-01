@@ -1,0 +1,24 @@
+{% extends "wms/base.html" %}
+{% block wms_content %}
+<div class="card wms-form-card">
+  <div class="card-header"><i class="bi bi-123 text-primary"></i> Workshop Order PCS</div>
+  <div class="card-body">
+    <div class="alert alert-light border">
+      <div class="fw-semibold">{{ order.order_reference }}</div>
+      <div class="small text-secondary">{{ order.location.branch.name }} · {{ order.get_status_display }}</div>
+    </div>
+    <p class="text-secondary small">
+      This is the maximum normal-production quantity for each operation on the order.
+      A saved value cannot be reduced below production already recorded for any operation.
+    </p>
+    <form method="post">{% csrf_token %}
+      {% include "components/form_field.html" with field=form.eligible_piece_count %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors }}</div>{% endif %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">Save PCS</button>
+        <a class="btn btn-outline-secondary" href="{% url 'wms:order_detail' order.public_id %}">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

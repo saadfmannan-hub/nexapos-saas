@@ -92,3 +92,18 @@ def get_assignment_for_employee(employee, public_id):
         assignments_for_employee(employee),
         public_id=public_id,
     )
+
+
+def recent_production_lines_for_employee(user_access, employee, *, limit=50):
+    from apps.wms_production.models import WmsProductionEntryLine
+
+    location_ids = historical_locations_for_access(user_access).values("pk")
+    return list(
+        WmsProductionEntryLine.objects.for_business(user_access.business)
+        .filter(
+            entry__employee=employee,
+            entry__location_id__in=location_ids,
+        )
+        .select_related("entry", "order", "category")
+        .order_by("-entry__production_date", "-pk")[:limit]
+    )
