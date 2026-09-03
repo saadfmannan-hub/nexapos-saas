@@ -168,6 +168,7 @@ def _production_dashboard(user_access, location_ids, today):
         WmsProductionEntryLine.objects.for_business(user_access.business).filter(
             entry__production_date__gte=month_start,
             entry__production_date__lte=today,
+            is_removed=False,
         ),
         location_ids,
         field="entry__location_id",

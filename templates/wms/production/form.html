@@ -31,12 +31,13 @@
       <div class="fw-semibold">{{ selected_employee.full_name }}</div>
       <div class="small text-secondary">
         {{ selected_employee.employee_code }} · {{ selected_employee.location.branch.name }}
+        {% if is_correction %} · {{ entry.production_date|date:"d M Y" }}{% endif %}
       </div>
     </div>
     {% if is_correction %}
     <p class="text-secondary small">
-      Employee, location, date, linked order, and operation remain fixed.
-      Every correction requires a reason and is written to the audit trail.
+      Employee, location, and date remain fixed. You can correct, add, or remove
+      production rows. Every correction requires a reason and is written to the audit trail.
     </p>
     {% else %}
     <p class="text-secondary small">
@@ -44,6 +45,23 @@
       orders at this employee's location are available. Daily Total Pieces remains
       independent from the operation rows.
     </p>
+    {% endif %}
+    {% if existing_entry %}
+    <div class="alert alert-warning border" role="alert">
+      <div class="fw-semibold">Production already exists for this employee and date.</div>
+      <div class="small mb-2">
+        No duplicate record was created. Open the saved entry to review or correct it.
+      </div>
+      {% if can_correct_production %}
+      <a class="btn btn-sm btn-warning" href="{% url 'wms:production_entry_correct' existing_entry.public_id %}">
+        Correct Existing Production
+      </a>
+      {% else %}
+      <a class="btn btn-sm btn-outline-dark" href="{% url 'wms:production_entry_detail' existing_entry.public_id %}">
+        Open Existing Production
+      </a>
+      {% endif %}
+    </div>
     {% endif %}
     <form method="post">{% csrf_token %}
       {% if not is_correction %}
@@ -56,23 +74,14 @@
       {% include "components/form_field.html" with field=form.production_date %}
       {% endif %}
       {% include "components/form_field.html" with field=form.daily_total_pieces %}
-      {% if is_correction %}
-      <h3 class="h6 mt-4">Workshop Order operation quantities</h3>
-      <div class="row g-2 mb-3">
-        {% for field in form.quantity_fields %}
-        <div class="col-md-6">
-          {% include "components/form_field.html" with field=field %}
-        </div>
-        {% endfor %}
-      </div>
-      {% else %}
       <h3 class="h6 mt-4">Production rows</h3>
       {{ line_formset.management_form }}
       {% if line_formset.non_form_errors %}<div class="alert alert-danger">{{ line_formset.non_form_errors }}</div>{% endif %}
       <div id="production-rows" class="vstack gap-3 mb-3">
         {% for row_form in line_formset %}
-        <div class="card border production-row">
+        <div class="card border production-row{% if row_form.DELETE.value %} d-none{% endif %}">
           <div class="card-body row g-2 align-items-start">
+            {{ row_form.line_id }}{{ row_form.DELETE }}
             <div class="col-lg-5">
               <label class="form-label" for="{{ row_form.order.id_for_label }}">Workshop Order</label>
               <input class="form-control form-control-sm mb-1" type="search" data-order-filter placeholder="Search order reference">
@@ -98,6 +107,7 @@
       <template id="empty-production-row">
         <div class="card border production-row">
           <div class="card-body row g-2 align-items-start">
+            {{ line_formset.empty_form.line_id }}{{ line_formset.empty_form.DELETE }}
             <div class="col-lg-5">
               <label class="form-label" for="{{ line_formset.empty_form.order.id_for_label }}">Workshop Order</label>
               <input class="form-control form-control-sm mb-1" type="search" data-order-filter placeholder="Search order reference">
@@ -109,7 +119,6 @@
           </div>
         </div>
       </template>
-      {% endif %}
       {% include "components/form_field.html" with field=form.notes %}
       {% if is_correction %}
       {% include "components/form_field.html" with field=form.correction_reason %}
@@ -132,7 +141,7 @@
     {% endif %}
   </div>
 </div>
-{% if not is_correction and line_formset %}
+{% if line_formset %}
 <script>
 (() => {
   const rows = document.getElementById('production-rows');
@@ -151,7 +160,13 @@
       });
     }
     row.querySelector('[data-remove-row]')?.addEventListener('click', () => {
-      if (rows.querySelectorAll('.production-row').length > 1) row.remove();
+      const deleteInput = row.querySelector('[name$="-DELETE"]');
+      if (deleteInput) {
+        deleteInput.value = 'on';
+        row.classList.add('d-none');
+      } else if (rows.querySelectorAll('.production-row').length > 1) {
+        row.remove();
+      }
     });
   };
   rows.querySelectorAll('.production-row').forEach(bindRow);

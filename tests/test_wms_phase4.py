@@ -233,15 +233,35 @@ class WmsPhase4Base(TestCase):
         quantity=8,
         reason="Corrected from signed production sheet.",
     ):
-        return {
+        lines = list(
+            entry.lines.filter(is_removed=False).order_by(
+                "assignment__category__display_order",
+                "category_name_snapshot",
+                "pk",
+            )
+        )
+        payload = {
             "daily_total_pieces": str(daily_total),
             "notes": "Corrected workshop entry.",
             "correction_reason": reason,
-            **{
-                f"quantity_{line.public_id}": str(quantity)
-                for line in entry.lines.all()
-            },
+            "rows-TOTAL_FORMS": str(len(lines)),
+            "rows-INITIAL_FORMS": str(len(lines)),
+            "rows-MIN_NUM_FORMS": "0",
+            "rows-MAX_NUM_FORMS": "1000",
         }
+        for index, line in enumerate(lines):
+            payload.update(
+                {
+                    f"rows-{index}-line_id": str(line.public_id),
+                    f"rows-{index}-order": (
+                        str(line.order.public_id) if line.order_id else ""
+                    ),
+                    f"rows-{index}-assignment": str(line.assignment.public_id),
+                    f"rows-{index}-quantity": str(quantity),
+                    f"rows-{index}-DELETE": "",
+                }
+            )
+        return payload
 
 
 class WmsPhase4ModelTests(WmsPhase4Base):

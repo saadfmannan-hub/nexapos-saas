@@ -103,6 +103,7 @@ def recent_production_lines_for_employee(user_access, employee, *, limit=50):
         .filter(
             entry__employee=employee,
             entry__location_id__in=location_ids,
+            is_removed=False,
         )
         .select_related("entry", "order", "category")
         .order_by("-entry__production_date", "-pk")[:limit]

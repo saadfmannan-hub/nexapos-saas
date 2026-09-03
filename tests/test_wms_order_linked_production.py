@@ -152,7 +152,10 @@ class LinkedProductionCapTests(WmsPhase4Base):
         self.assertEqual(entry.lines.count(), 2)
 
         second_order = self.make_capped_order("AGGREGATE-4")
-        with self.assertRaisesMessage(ValidationError, "Requested additional: 6 PCS"):
+        with self.assertRaisesMessage(
+            ValidationError,
+            "This Workshop Order and operation already exist",
+        ):
             production_services.create_production_entry(
                 business=self.business_a,
                 user_access=self.access_a,
@@ -513,6 +516,39 @@ class LinkedProductionCapTests(WmsPhase4Base):
 
 
 class LinkedProductionSalaryTests(WmsPhase7Base):
+    def test_salary_calculation_ignores_removed_production_rows(self):
+        entry = self.create_production(
+            daily_total=999,
+            override_quantity=3,
+            default_quantity=4,
+        )
+        source_lines = list(entry.lines.filter(is_removed=False).order_by("pk"))
+        production_services.correct_production_entry(
+            business=self.business_a,
+            user_access=self.access_a,
+            entry=entry,
+            daily_total_pieces=1,
+            notes="One source row removed before salary calculation.",
+            production_rows=[
+                {
+                    "line_id": str(source_lines[0].public_id),
+                    "order": source_lines[0].order,
+                    "assignment": source_lines[0].assignment,
+                    "quantity": 2,
+                }
+            ],
+            correction_reason="Verified active salary source rows.",
+            user=self.owner_a,
+        )
+
+        salary = self.calculate(self.piece_employee)
+
+        self.assertEqual(salary.total_eligible_quantity, 2)
+        self.assertEqual(
+            salary.days.get(production_entry=entry).piece_lines.count(),
+            1,
+        )
+
     def test_salary_snapshots_linked_order_without_changing_math(self):
         entry = self.create_production(
             daily_total=999,
@@ -559,6 +595,60 @@ class LinkedProductionSalaryTests(WmsPhase7Base):
             saved,
         )
 
+    def test_removing_source_row_keeps_finalized_salary_snapshot_immutable(self):
+        entry = self.create_production(
+            daily_total=999,
+            override_quantity=3,
+            default_quantity=4,
+        )
+        salary = self.calculate(self.piece_employee)
+        salary_services.finalize_salary(
+            business=self.business_a,
+            user_access=self.access_a,
+            salary=salary,
+            user=self.owner_a,
+        )
+        salary_day = salary.days.get(production_entry=entry)
+        saved = list(
+            salary_day.piece_lines.order_by("pk").values_list(
+                "production_line_id",
+                "quantity",
+                "line_amount",
+            )
+        )
+        source_lines = list(entry.lines.filter(is_removed=False).order_by("pk"))
+
+        production_services.correct_production_entry(
+            business=self.business_a,
+            user_access=self.access_a,
+            entry=entry,
+            daily_total_pieces=1,
+            notes="Removed one source row after payroll finalization.",
+            production_rows=[
+                {
+                    "line_id": str(source_lines[1].public_id),
+                    "order": source_lines[1].order,
+                    "assignment": source_lines[1].assignment,
+                    "quantity": 1,
+                }
+            ],
+            correction_reason="Verified source row removal.",
+            user=self.owner_a,
+        )
+
+        source_lines[0].refresh_from_db()
+        self.assertTrue(source_lines[0].is_removed)
+        self.assertEqual(
+            list(
+                salary_day.piece_lines.order_by("pk").values_list(
+                    "production_line_id",
+                    "quantity",
+                    "line_amount",
+                )
+            ),
+            saved,
+        )
+
 
 class LinkedProductionBackupPolicyTests(WmsPhase4Base):
     def test_backup_specs_and_component_order_cover_linked_order_fields(self):
@@ -571,6 +661,7 @@ class LinkedProductionBackupPolicyTests(WmsPhase4Base):
             relation.field_name: relation for relation in production_spec.relation_fields
         }
         self.assertTrue(relation_map["order"].nullable)
+        self.assertIn("is_removed", production_spec.scalar_fields)
         self.assertIn("order_public_id_snapshot", salary_spec.scalar_fields)
         self.assertIn("order_reference_snapshot", salary_spec.scalar_fields)
         orders_component = get_component_definition("wms.orders")

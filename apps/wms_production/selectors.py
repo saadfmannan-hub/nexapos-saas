@@ -21,7 +21,7 @@ def production_entries_for_access(user_access):
     location_ids = historical_locations_for_access(user_access).values("pk")
     lines = WmsProductionEntryLine.objects.for_business(
         user_access.business
-    ).select_related("order", "assignment", "category")
+    ).filter(is_removed=False).select_related("order", "assignment", "category")
     return (
         WmsProductionEntry.objects.for_business(user_access.business)
         .filter(location_id__in=location_ids)
@@ -49,7 +49,10 @@ def filtered_production_entries(
         entries = entries.filter(
             Q(employee__full_name__icontains=query)
             | Q(employee__employee_code__icontains=query)
-            | Q(lines__order__order_reference__icontains=query)
+            | Q(
+                lines__is_removed=False,
+                lines__order__order_reference__icontains=query,
+            )
         )
     if production_date is not None:
         entries = entries.filter(production_date=production_date)
@@ -58,7 +61,10 @@ def filtered_production_entries(
     if location_id:
         entries = entries.filter(location__public_id=location_id)
     if category_id:
-        entries = entries.filter(lines__category__public_id=category_id)
+        entries = entries.filter(
+            lines__category__public_id=category_id,
+            lines__is_removed=False,
+        )
     return entries.distinct().order_by(
         "-production_date",
         "employee__full_name",

@@ -220,7 +220,7 @@ def _piece_breakdown(
         WmsProductionEntryLine.objects.for_business(business)
         .select_for_update()
         .select_related("entry", "order", "assignment", "category")
-        .filter(entry_id__in=entry_ids)
+        .filter(entry_id__in=entry_ids, is_removed=False)
         .order_by(
             "entry__production_date",
             "assignment__category__display_order",

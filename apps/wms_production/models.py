@@ -164,6 +164,7 @@ class WmsProductionEntryLine(ValidatedTenantModel):
         editable=False,
     )
     quantity = models.PositiveIntegerField(default=0)
+    is_removed = models.BooleanField(default=False, editable=False)
 
     class Meta:
         ordering = [
@@ -247,7 +248,11 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             or original["assignment_id"] != self.assignment_id
             or original["category_id"] != self.category_id
         )
-        if identity_changed:
+        if identity_changed and not getattr(
+            self,
+            "_allow_correction_identity_change",
+            False,
+        ):
             errors["order"] = (
                 "Production line identity cannot be changed after creation."
             )

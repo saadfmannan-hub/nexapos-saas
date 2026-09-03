@@ -326,7 +326,7 @@ def _production_lines_for_access(user_access):
     location_ids = historical_locations_for_access(user_access).values("pk")
     return (
         WmsProductionEntryLine.objects.for_business(user_access.business)
-        .filter(entry__location_id__in=location_ids)
+        .filter(entry__location_id__in=location_ids, is_removed=False)
         .select_related(
             "entry__employee",
             "entry__location__branch",

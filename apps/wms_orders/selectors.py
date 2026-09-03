@@ -73,6 +73,7 @@ def production_lines_for_order_access(user_access, order):
             entry__location_id__in=location_ids,
             entry__employee__business=user_access.business,
             category__business=user_access.business,
+            is_removed=False,
             quantity__gt=0,
         )
         .select_related("entry__employee", "category")

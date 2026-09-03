@@ -13,6 +13,7 @@ from apps.wms_core.access import wms_permission_required
 from . import selectors, services
 from .forms import (
     ProductionCorrectionForm,
+    ProductionCorrectionLineFormSet,
     ProductionEntryForm,
     ProductionLineFormSet,
 )
@@ -143,9 +144,13 @@ def production_entry_create(request):
                 "employee": selected_employee,
             },
         )
+    existing_entry = None
+    form_is_valid = request.method == "POST" and form.is_valid()
+    if form_is_valid:
+        existing_entry = form.existing_entry
     if (
-        request.method == "POST"
-        and form.is_valid()
+        form_is_valid
+        and existing_entry is None
         and line_formset is not None
         and line_formset.is_valid()
     ):
@@ -170,7 +175,16 @@ def production_entry_create(request):
                 request=request,
             )
         except ValidationError as exc:
-            form.add_error(None, "; ".join(exc.messages))
+            existing_entry = (
+                selectors.production_entries_for_access(request.wms_user_access)
+                .filter(
+                    employee=form.cleaned_data["employee"],
+                    production_date=form.cleaned_data["production_date"],
+                )
+                .first()
+            )
+            if existing_entry is None:
+                form.add_error(None, "; ".join(exc.messages))
         else:
             messages.success(request, "Production entry saved.")
             return redirect(
@@ -191,6 +205,10 @@ def production_entry_create(request):
                 )
             ),
             "line_formset": line_formset,
+            "existing_entry": existing_entry,
+            "can_correct_production": request.wms_user_access.has_perm(
+                "wms.production.correct"
+            ),
             "active_nav": "wms",
             "wms_active_nav": "production",
         },
@@ -208,7 +226,27 @@ def production_entry_correct(request, public_id):
         request.POST or None,
         instance=entry,
     )
-    if request.method == "POST" and form.is_valid():
+    lines = list(entry.lines.all())
+    line_formset = ProductionCorrectionLineFormSet(
+        request.POST or None,
+        prefix="rows",
+        initial=[
+            {
+                "line_id": line.public_id,
+                "order": line.order,
+                "assignment": line.assignment,
+                "quantity": line.quantity,
+            }
+            for line in lines
+        ],
+        existing_lines=lines,
+        form_kwargs={
+            "business": request.business,
+            "user_access": request.wms_user_access,
+            "employee": entry.employee,
+        },
+    )
+    if request.method == "POST" and form.is_valid() and line_formset.is_valid():
         try:
             entry = services.correct_production_entry(
                 business=request.business,
@@ -216,7 +254,7 @@ def production_entry_correct(request, public_id):
                 entry=entry,
                 daily_total_pieces=form.cleaned_data["daily_total_pieces"],
                 notes=form.cleaned_data["notes"],
-                line_quantities=form.line_quantities(),
+                production_rows=line_formset.production_rows(),
                 correction_reason=form.cleaned_data["correction_reason"],
                 request=request,
             )
@@ -237,6 +275,7 @@ def production_entry_correct(request, public_id):
             "is_correction": True,
             "selected_employee": entry.employee,
             "employee_options": (),
+            "line_formset": line_formset,
             "active_nav": "wms",
             "wms_active_nav": "production",
         },

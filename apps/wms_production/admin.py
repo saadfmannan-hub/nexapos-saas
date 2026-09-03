@@ -14,6 +14,7 @@ class WmsProductionEntryLineInline(admin.TabularInline):
         "category_name_snapshot",
         "category_code_snapshot",
         "quantity",
+        "is_removed",
         "created_at",
         "updated_at",
     )
@@ -68,7 +69,9 @@ class WmsProductionEntryLineAdmin(admin.ModelAdmin):
         "order",
         "category_name_snapshot",
         "quantity",
+        "is_removed",
     )
+    list_filter = ("is_removed",)
     search_fields = (
         "entry__employee__employee_code",
         "entry__employee__full_name",
@@ -85,6 +88,7 @@ class WmsProductionEntryLineAdmin(admin.ModelAdmin):
         "category_name_snapshot",
         "category_code_snapshot",
         "quantity",
+        "is_removed",
         "created_at",
         "updated_at",
     )

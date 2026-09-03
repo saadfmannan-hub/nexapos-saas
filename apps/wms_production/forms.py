@@ -1,5 +1,7 @@
+from collections import Counter
+
 from django import forms
-from django.forms import formset_factory
+from django.forms import BaseFormSet, formset_factory
 
 from apps.core.date_ranges import business_localdate
 from apps.wms_core.models import WmsLocation
@@ -12,9 +14,10 @@ from apps.wms_workforce.models import (
 from . import selectors
 from .models import WmsProductionEntry
 
-
-def _quantity_field_name(public_id):
-    return f"quantity_{public_id}"
+DUPLICATE_ROW_MESSAGE = (
+    "This Workshop Order and operation already exist in this production "
+    "record. Update the existing row instead."
+)
 
 
 class ProductionStyledModelForm(forms.ModelForm):
@@ -105,6 +108,7 @@ class ProductionEntryForm(ProductionStyledModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
+        self.existing_entry = None
         employee = cleaned_data.get("employee")
         location = cleaned_data.get("location")
         production_date = cleaned_data.get("production_date")
@@ -124,14 +128,14 @@ class ProductionEntryForm(ProductionStyledModelForm):
                     "Select an active employee at an active WMS location.",
                 )
         if employee is not None and production_date is not None:
-            if WmsProductionEntry.objects.for_business(self.business).filter(
-                employee=employee,
-                production_date=production_date,
-            ).exists():
-                self.add_error(
-                    "production_date",
-                    "Production already exists for this employee on this date.",
+            self.existing_entry = (
+                selectors.production_entries_for_access(self.user_access)
+                .filter(
+                    employee=employee,
+                    production_date=production_date,
                 )
+                .first()
+            )
         if employee is not None and not selectors.active_assignments_for_employee(
             employee
         ).exists():
@@ -215,8 +219,27 @@ class ProductionLineForm(forms.Form):
         return cleaned
 
 
+class BaseProductionLineFormSet(BaseFormSet):
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+        combinations = Counter()
+        for form in self.forms:
+            if not form.cleaned_data:
+                continue
+            order = form.cleaned_data.get("order")
+            assignment = form.cleaned_data.get("assignment")
+            if order is None or assignment is None:
+                continue
+            combinations[(order.pk, assignment.category_id)] += 1
+        if any(count > 1 for count in combinations.values()):
+            raise forms.ValidationError(DUPLICATE_ROW_MESSAGE)
+
+
 ProductionLineFormSet = formset_factory(
     ProductionLineForm,
+    formset=BaseProductionLineFormSet,
     extra=1,
     min_num=1,
     validate_min=True,
@@ -248,41 +271,6 @@ class ProductionCorrectionForm(ProductionStyledModelForm):
         self.fields["correction_reason"].help_text = (
             "Required. Explain why the saved production is being changed."
         )
-        self.lines = list(
-            self.instance.lines.select_related(
-                "order",
-                "assignment",
-                "category",
-            ).order_by(
-                "assignment__category__display_order",
-                "category_name_snapshot",
-                "pk",
-            )
-        )
-        for line in self.lines:
-            order_label = (
-                line.order.order_reference
-                if line.order_id
-                else "Legacy / Not recorded"
-            )
-            self.fields[_quantity_field_name(line.public_id)] = forms.IntegerField(
-                min_value=0,
-                required=True,
-                initial=line.quantity,
-                label=f"{order_label} — {line.category_name_snapshot}",
-                help_text=(
-                    line.category_code_snapshot
-                    or "Historical assigned production operation"
-                ),
-                widget=forms.NumberInput(
-                    attrs={
-                        "class": "form-control",
-                        "min": "0",
-                        "step": "1",
-                        "inputmode": "numeric",
-                    }
-                ),
-            )
 
     def clean_correction_reason(self):
         reason = (self.cleaned_data.get("correction_reason") or "").strip()
@@ -290,20 +278,119 @@ class ProductionCorrectionForm(ProductionStyledModelForm):
             raise forms.ValidationError("Enter a correction reason.")
         return reason
 
-    def clean(self):
-        cleaned_data = super().clean()
-        expected = {_quantity_field_name(line.public_id) for line in self.lines}
-        submitted = {key for key in self.data if key.startswith("quantity_")}
-        if submitted != expected:
-            self.add_error(None, "Submit every saved production row exactly once.")
-        return cleaned_data
 
-    def line_quantities(self):
-        return {
-            str(line.public_id): self.cleaned_data[_quantity_field_name(line.public_id)]
-            for line in self.lines
+
+class ProductionCorrectionLineForm(ProductionLineForm):
+    line_id = forms.UUIDField(required=False, widget=forms.HiddenInput())
+
+    def __init__(self, *args, existing_lines, **kwargs):
+        self.existing_lines = existing_lines
+        super().__init__(*args, **kwargs)
+        raw_line_id = self.initial.get("line_id")
+        if self.is_bound:
+            raw_line_id = self.data.get(self.add_prefix("line_id"), raw_line_id)
+        self.existing_line = existing_lines.get(str(raw_line_id))
+
+        if self.existing_line is not None:
+            if self.existing_line.order_id:
+                historical_order = WmsWorkshopOrder.objects.for_business(
+                    self.business
+                ).filter(pk=self.existing_line.order_id)
+                self.fields["order"].queryset = (
+                    self.fields["order"].queryset | historical_order
+                ).distinct().order_by("order_reference")
+            else:
+                self.fields["order"].required = False
+                self.fields["order"].empty_label = "Legacy / Not recorded"
+
+            historical_assignment = (
+                WmsEmployeeCategoryAssignment.objects.for_business(self.business)
+                .filter(pk=self.existing_line.assignment_id)
+                .select_related("category")
+            )
+            self.fields["assignment"].queryset = (
+                self.fields["assignment"].queryset | historical_assignment
+            ).distinct().order_by("category__display_order", "category__name")
+
+
+class BaseProductionCorrectionLineFormSet(BaseFormSet):
+    deletion_widget = forms.HiddenInput
+
+    def __init__(self, *args, existing_lines, **kwargs):
+        self.existing_lines = {
+            str(line.public_id): line for line in existing_lines
         }
+        super().__init__(*args, **kwargs)
 
-    @property
-    def quantity_fields(self):
-        return [self[_quantity_field_name(line.public_id)] for line in self.lines]
+    def get_form_kwargs(self, index):
+        kwargs = super().get_form_kwargs(index)
+        kwargs["existing_lines"] = self.existing_lines
+        return kwargs
+
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+
+        submitted_line_ids = set()
+        proposed_combinations = Counter()
+        proposed_forms = []
+        for form in self.forms:
+            if not form.cleaned_data or self._should_delete_form(form):
+                continue
+            line_id = form.cleaned_data.get("line_id")
+            if line_id is not None:
+                line_key = str(line_id)
+                if line_key not in self.existing_lines:
+                    raise forms.ValidationError(
+                        "A submitted production row is unavailable. Refresh and try again."
+                    )
+                if line_key in submitted_line_ids:
+                    raise forms.ValidationError(
+                        "Submit each saved production row at most once."
+                    )
+                submitted_line_ids.add(line_key)
+
+            order = form.cleaned_data.get("order")
+            assignment = form.cleaned_data.get("assignment")
+            if order is not None and assignment is not None:
+                combination = (order.pk, assignment.category_id)
+                proposed_combinations[combination] += 1
+                proposed_forms.append((form, combination))
+
+        for form, combination in proposed_forms:
+            original = form.existing_line
+            original_combination = (
+                (original.order_id, original.category_id)
+                if original is not None and original.order_id
+                else None
+            )
+            if (
+                proposed_combinations[combination] > 1
+                and original_combination != combination
+            ):
+                raise forms.ValidationError(DUPLICATE_ROW_MESSAGE)
+
+    def production_rows(self):
+        rows = []
+        for form in self.forms:
+            if not form.cleaned_data or self._should_delete_form(form):
+                continue
+            line_id = form.cleaned_data.get("line_id")
+            rows.append(
+                {
+                    "line_id": str(line_id) if line_id is not None else None,
+                    "order": form.cleaned_data.get("order"),
+                    "assignment": form.cleaned_data["assignment"],
+                    "quantity": form.cleaned_data["quantity"],
+                }
+            )
+        return rows
+
+
+ProductionCorrectionLineFormSet = formset_factory(
+    ProductionCorrectionLineForm,
+    formset=BaseProductionCorrectionLineFormSet,
+    extra=0,
+    can_delete=True,
+)

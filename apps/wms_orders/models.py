@@ -199,7 +199,7 @@ class WmsWorkshopOrder(ValidatedTenantModel):
 
                 largest_recorded = (
                     WmsProductionEntryLine.objects.for_business(self.business)
-                    .filter(order_id=self.pk)
+                    .filter(order_id=self.pk, is_removed=False)
                     .values("category_id")
                     .annotate(total=Sum("quantity"))
                     .order_by("-total")

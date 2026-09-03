@@ -286,6 +286,7 @@ LOGICAL_EXPORT_SPECS_WMS = (
             "category_name_snapshot",
             "category_code_snapshot",
             "quantity",
+            "is_removed",
         ),
         relation_fields=(
             relation(
