@@ -235,7 +235,9 @@ def pos_view(request):
         messages.error(request, "No active warehouse is configured for this branch.")
         return post_login_redirect(request, excluded_routes={"sales:pos"})
 
-    categories = Category.objects.for_business(request.business).filter(is_active=True)
+    categories = Category.objects.for_business(request.business).filter(
+        is_active=True, parent__isnull=True
+    )
     credit_module_write = evaluate_access(
         request, "customer_credit", action=AccessAction.WRITE
     ).allowed
@@ -301,7 +303,7 @@ def pos_products(request):
     """JSON product grid/search for the POS screen."""
     from apps.branches.models import Branch, Warehouse
     from apps.catalog import services as catalog_services
-    from apps.catalog.models import Product
+    from apps.catalog.models import Category, Product
     from apps.inventory import services as inventory_services
 
     q = request.GET.get("q", "").strip()
@@ -342,8 +344,6 @@ def pos_products(request):
             Q(unit__isnull=True)
             | Q(unit__business=request.business, unit__is_meter=True)
         )
-    elif category_id == "tailoring":
-        base_qs = base_qs.filter(is_tailoring_item=True)
     if q:
         if not customer_fabric_picker and _customer_fabric_search(q):
             base_qs = base_qs.none()
@@ -518,10 +518,20 @@ def pos_products(request):
                 ),
                 "image": p.image.url if p.image else None,
             })
+    # Category has no type/slug; recognize only a selected, active, tenant-owned
+    # root category actually shown in the POS filter bar.
+    tailoring_category_selected = False
+    if tailoring_enabled and category_id.isdigit():
+        selected_name = Category.objects.for_business(request.business).filter(
+            pk=category_id, is_active=True, parent__isnull=True
+        ).values_list("name", flat=True).first()
+        tailoring_category_selected = (
+            selected_name is not None and selected_name.strip().casefold() == "tailoring"
+        )
     if (
         tailoring_enabled
         and not customer_fabric_picker
-        and category_id in ("", "tailoring")
+        and (category_id == "" or tailoring_category_selected)
         and (not q or _customer_fabric_search(q))
     ):
         items.insert(0, {

@@ -1,6 +1,7 @@
 """Focused regression coverage for the Customer Fabric POS workflow."""
 
 import json
+import re
 from decimal import Decimal
 from types import SimpleNamespace
 from uuid import uuid4
@@ -12,7 +13,7 @@ from django.utils import timezone
 
 from apps.api.serializers import SaleItemSerializer
 from apps.branches.models import Branch, Warehouse
-from apps.catalog.models import Product, ProductVariant, Unit
+from apps.catalog.models import Category, Product, ProductVariant, Unit
 from apps.customers.models import Customer
 from apps.inventory import services as inventory
 from apps.inventory.models import StockLevel, StockMovement
@@ -942,11 +943,15 @@ class CustomerSuppliedFabricTests(TenantTestCase):
         )
 
     def test_pos_shows_one_customer_fabric_action_without_hiding_stocked_fabrics(self):
+        tailoring_category = Category.objects.create(
+            business=self.business_a, name="Tailoring"
+        )
         hi_sofy = Product.objects.create(
             business=self.business_a,
             name="Hi Sofy Japan",
             sku="HI-SOFY-JAPAN",
             product_type=Product.Type.VARIANT,
+            category=tailoring_category,
             unit=self.meter,
             track_inventory=True,
             is_tailoring_item=True,
@@ -997,7 +1002,7 @@ class CustomerSuppliedFabricTests(TenantTestCase):
 
         tailoring = self.client.get(
             endpoint,
-            {"warehouse_id": self.warehouse_a.id, "category": "tailoring"},
+            {"warehouse_id": self.warehouse_a.id, "category": tailoring_category.id},
         ).json()["items"]
         self.assertEqual(
             [item["name"] for item in tailoring if item.get("customer_fabric_option")],
@@ -1042,6 +1047,141 @@ class CustomerSuppliedFabricTests(TenantTestCase):
         self.assertEqual(sale.items.get().product_id, hi_sofy.id)
         self.assertTrue(sale.items.get().customer_supplied_fabric)
         self.assertEqual(StockMovement.objects.for_business(self.business_a).count(), before)
+
+    def test_pos_filters_follow_active_catalog_categories_and_customer_fabric(self):
+        tailoring = Category.objects.create(
+            business=self.business_a, name="Tailoring"
+        )
+        non_tailoring = Category.objects.create(
+            business=self.business_a, name="Non - Tailoring ABC"
+        )
+        custom = Category.objects.create(
+            business=self.business_a, name="Accessories"
+        )
+        child = Category.objects.create(
+            business=self.business_a, name="Buttons", parent=custom
+        )
+        Category.objects.create(
+            business=self.business_a, name="Inactive Category", is_active=False
+        )
+        Category.objects.create(
+            business=self.business_b, name="Other Tenant Category"
+        )
+        self.fabric.category = tailoring
+        self.fabric.save(update_fields=["category"])
+        self.retail.category = child
+        self.retail.save(update_fields=["category"])
+        category_rows_before = list(
+            Category.objects.order_by("pk").values_list(
+                "pk", "business_id", "name", "parent_id", "is_active"
+            )
+        )
+
+        pos = self.client.get(reverse("sales:pos"))
+        self.assertEqual(pos.status_code, 200)
+        html = pos.content.decode()
+        filter_labels = re.findall(
+            r'<button class="btn btn-sm pos-cat-pill"[^>]*>([^<]*)</button>', html
+        )
+        # Catalog Setup and POS both use Category's existing name ordering.
+        self.assertEqual(
+            filter_labels,
+            ["All"] + list(
+                Category.objects.for_business(self.business_a).filter(
+                    is_active=True, parent__isnull=True
+                ).values_list("name", flat=True)
+            ),
+        )
+        self.assertEqual(set(filter_labels), {
+            "All", "Tailoring", "Non - Tailoring ABC", "Accessories"
+        })
+        self.assertNotIn("Non-Tailoring", filter_labels)
+        self.assertIn(f"category='{tailoring.id}'; loadProducts()", html)
+        self.assertIn(f"category='{non_tailoring.id}'; loadProducts()", html)
+        self.assertIn(f"category='{custom.id}'; loadProducts()", html)
+        self.assertNotIn(f"category='{child.id}'; loadProducts()", html)
+
+        endpoint = reverse("sales:pos_products")
+
+        def items_for(category):
+            response = self.client.get(
+                endpoint,
+                {"warehouse_id": self.warehouse_a.id, "category": category},
+            )
+            self.assertEqual(response.status_code, 200)
+            return response.json()["items"]
+
+        all_items = items_for("")
+        tailoring_items = items_for(str(tailoring.id))
+        non_tailoring_items = items_for(str(non_tailoring.id))
+        custom_items = items_for(str(custom.id))
+        self.assertEqual(
+            [item["name"] for item in tailoring_items if item.get("customer_fabric_option")],
+            ["Customer Fabric / Stitching Only"],
+        )
+        self.assertIn(self.fabric.id, {item["product_id"] for item in tailoring_items})
+        self.assertIn(self.fabric.id, {item["product_id"] for item in all_items})
+        self.assertTrue(any(item.get("customer_fabric_option") for item in all_items))
+        self.assertFalse(any(item.get("customer_fabric_option") for item in non_tailoring_items))
+        self.assertIn(self.retail.id, {item["product_id"] for item in custom_items})
+        self.assertFalse(any(item.get("customer_fabric_option") for item in custom_items))
+        self.assertEqual(
+            list(Category.objects.order_by("pk").values_list(
+                "pk", "business_id", "name", "parent_id", "is_active"
+            )),
+            category_rows_before,
+        )
+
+    def test_pos_does_not_synthesize_missing_or_inactive_category_filters(self):
+        accessories = Category.objects.create(
+            business=self.business_a, name="Accessories"
+        )
+        pos = self.client.get(reverse("sales:pos"))
+        self.assertEqual(pos.status_code, 200)
+        self.assertEqual(
+            re.findall(
+                r'<button class="btn btn-sm pos-cat-pill"[^>]*>([^<]*)</button>',
+                pos.content.decode(),
+            ),
+            ["All", "Accessories"],
+        )
+        inactive_tailoring = Category.objects.create(
+            business=self.business_a, name="Tailoring", is_active=False
+        )
+        Category.objects.create(
+            business=self.business_a, name="Non-Tailoring", is_active=False
+        )
+        category_rows_before = list(
+            Category.objects.for_business(self.business_a).order_by("pk").values_list(
+                "pk", "name", "is_active"
+            )
+        )
+
+        pos = self.client.get(reverse("sales:pos"))
+        self.assertEqual(pos.status_code, 200)
+        filter_labels = re.findall(
+            r'<button class="btn btn-sm pos-cat-pill"[^>]*>([^<]*)</button>',
+            pos.content.decode(),
+        )
+        self.assertEqual(filter_labels, ["All", "Accessories"])
+
+        def has_customer_fabric(category):
+            response = self.client.get(
+                reverse("sales:pos_products"),
+                {"warehouse_id": self.warehouse_a.id, "category": category},
+            )
+            self.assertEqual(response.status_code, 200)
+            return any(item.get("customer_fabric_option") for item in response.json()["items"])
+
+        self.assertTrue(has_customer_fabric(""))
+        self.assertFalse(has_customer_fabric(str(inactive_tailoring.id)))
+        self.assertFalse(has_customer_fabric(str(accessories.id)))
+        self.assertEqual(
+            list(Category.objects.for_business(self.business_a).order_by("pk").values_list(
+                "pk", "name", "is_active"
+            )),
+            category_rows_before,
+        )
 
     def test_customer_fabric_picker_never_consumes_shared_workshop_stock(self):
         workshop_branch = Branch.objects.create(

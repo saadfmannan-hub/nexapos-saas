@@ -62,12 +62,10 @@
       <div class="d-flex gap-1 overflow-auto pb-1">
         <button class="btn btn-sm pos-cat-pill" :class="category === '' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="category=''; loadProducts()">All</button>
-        {% if tailoring_enabled %}<button class="btn btn-sm pos-cat-pill" :class="category === 'tailoring' ? 'btn-primary' : 'btn-outline-secondary'"
-                @click="category='tailoring'; loadProducts()">Tailoring</button>{% endif %}
-        {% for c in categories %}{% if not c.parent %}
+        {% for c in categories %}
         <button class="btn btn-sm pos-cat-pill" :class="category === '{{ c.id }}' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="category='{{ c.id }}'; loadProducts()">{{ c.name }}</button>
-        {% endif %}{% endfor %}
+        {% endfor %}
       </div>
       <div class="pos-products">
         <div class="pos-grid" x-show="!loading">

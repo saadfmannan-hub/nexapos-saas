@@ -231,7 +231,13 @@ class PosBrandSearchTests(TenantTestCase):
         tailoring_names = self.names(category=self.tailoring.pk)
         self.assertEqual(
             tailoring_names,
-            ["Beige", "Black", "Brown", "Color 2"],
+            [
+                "Customer Fabric / Stitching Only",
+                "Beige",
+                "Black",
+                "Brown",
+                "Color 2",
+            ],
         )
 
     def test_13_category_filtering_remains_correct(self):
