@@ -62,6 +62,8 @@
       <div class="d-flex gap-1 overflow-auto pb-1">
         <button class="btn btn-sm pos-cat-pill" :class="category === '' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="category=''; loadProducts()">All</button>
+        {% if tailoring_enabled %}<button class="btn btn-sm pos-cat-pill" :class="category === 'tailoring' ? 'btn-primary' : 'btn-outline-secondary'"
+                @click="category='tailoring'; loadProducts()">Tailoring</button>{% endif %}
         {% for c in categories %}{% if not c.parent %}
         <button class="btn btn-sm pos-cat-pill" :class="category === '{{ c.id }}' ? 'btn-primary' : 'btn-outline-secondary'"
                 @click="category='{{ c.id }}'; loadProducts()">{{ c.name }}</button>
@@ -69,12 +71,13 @@
       </div>
       <div class="pos-products">
         <div class="pos-grid" x-show="!loading">
-          <template x-for="p in products" :key="p.product_id + '-' + (p.variant_id || 0)">
+          <template x-for="p in products" :key="p.customer_fabric_option ? 'customer-fabric-option' : p.product_id + '-' + (p.variant_id || 0)">
             <div class="pos-product-card" @click="addToCart(p)">
               <template x-if="p.image"><img :src="p.image" style="width:100%;height:64px;object-fit:contain" class="mb-1"></template>
               <div class="pp-name" x-text="p.name"></div>
               <div class="pp-brand" x-show="p.brand" x-text="p.brand"></div>
-              <div class="pp-price"><span x-text="fmt(p.price)"></span> {{ currency }}</div>
+              <div class="pp-price" x-show="!p.customer_fabric_option"><span x-text="fmt(p.price)"></span> {{ currency }}</div>
+              <div class="pp-price" x-show="p.customer_fabric_option">Choose garment / stitching service</div>
               <div class="pp-stock" x-show="p.stocked && p.stock !== null">Stock: <span x-text="p.stock"></span> <span x-text="p.unit"></span></div>
             </div>
           </template>
@@ -456,6 +459,32 @@
       </div>
     </div></div>
   </div>
+
+  <!-- One customer-supplied-fabric entry; the existing tailoring product supplies pricing and workflow rules. -->
+  <div class="modal fade" id="customerFabricModal" tabindex="-1" aria-labelledby="customerFabricTitle">
+    <div class="modal-dialog modal-dialog-scrollable"><div class="modal-content">
+      <div class="modal-header py-2">
+        <h5 class="modal-title" id="customerFabricTitle">Customer Fabric / Stitching Only</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-secondary">Choose the garment or stitching service, then set any stitching charge in the cart. Customer-supplied material will not use warehouse stock.</p>
+        <input type="search" class="form-control mb-2" placeholder="Search garment or service…"
+               x-model="customerFabricSearch" @input.debounce.300ms="loadCustomerFabricOptions()">
+        <div x-show="customerFabricLoading" class="small text-secondary py-2">Loading options…</div>
+        <template x-for="option in customerFabricOptions" :key="option.product_id">
+          <button type="button" class="btn btn-outline-secondary w-100 text-start mb-2"
+                  @click="selectCustomerFabric(option)">
+            <span class="fw-semibold" x-text="option.name"></span>
+            <span class="float-end" x-text="option.is_meter_tailoring ? 'Set stitching charge' : fmt(option.price) + ' {{ currency }}'"></span>
+          </button>
+        </template>
+        <div x-show="!customerFabricLoading && !customerFabricOptions.length" class="small text-secondary py-2">
+          No eligible garment or stitching service found. Try another search.
+        </div>
+      </div>
+    </div></div>
+  </div>
 </div>
 {% endblock %}
 
@@ -467,6 +496,7 @@ function pos() {
   const STORAGE_SCALE = 1000;
   return {
     products: [], loading: false, search: '', category: '', barcodeInput: '',
+    customerFabricOptions: [], customerFabricSearch: '', customerFabricLoading: false,
     cart: [], invoiceDiscount: 0, notes: '', priority: 'normal', deliveryDate: '',
     busy: false, payError: '',
     customer: {id: {{ walk_in.id|default:"null" }}, public_id: "{{ walk_in.public_id|default:'' }}", name: "{{ walk_in.full_name|default:'Walk-In Customer'|escapejs }}", balance: 0, store_credit: 0, credit_limit: 0, is_walk_in: true, more_options: []},
@@ -524,6 +554,13 @@ function pos() {
       else { this.search = code; this.loadProducts(); }
     },
     addToCart(p) {
+      if (p.customer_fabric_option === true) {
+        this.customerFabricSearch = '';
+        this.customerFabricOptions = [];
+        this.loadCustomerFabricOptions();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('customerFabricModal')).show();
+        return;
+      }
       const existing = this.cart.find(line => this.canMerge(line, p));
       if (existing) { existing.quantity = +existing.quantity + 1; }
       else this.cart.push({product_id: p.product_id, variant_id: p.variant_id, name: p.name,
@@ -542,6 +579,20 @@ function pos() {
                            validation_error: '', collection_error: '',
                            expanded: false, tailoring_details: this.blankTailoringDetails()});
       this.$refs.barcode.focus();
+    },
+    async loadCustomerFabricOptions() {
+      this.customerFabricLoading = true;
+      const params = new URLSearchParams({
+        customer_fabric: '1', q: this.customerFabricSearch,
+        warehouse_id: '{{ warehouse.id }}'
+      });
+      const r = await fetch("{% url 'sales:pos_products' %}?" + params);
+      this.customerFabricOptions = r.ok ? (await r.json()).items : [];
+      this.customerFabricLoading = false;
+    },
+    selectCustomerFabric(option) {
+      this.addToCart(option);
+      bootstrap.Modal.getInstance(document.getElementById('customerFabricModal'))?.hide();
     },
     canMerge(line, product) {
       if (line.product_id !== product.product_id || line.variant_id !== product.variant_id

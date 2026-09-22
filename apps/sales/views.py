@@ -86,6 +86,12 @@ def _tailoring_enabled(request):
     return get_access_context(request).has_module("tailoring")
 
 
+def _customer_fabric_search(query):
+    """Match the dedicated POS action, not names of stocked fabrics."""
+    query = query.casefold()
+    return any(term in query for term in ("customer fabric", "stitching", "own fabric"))
+
+
 def _visible_held_sales(request, held_sales):
     """Hide Tailoring carts after downgrade without affecting retail carts."""
 
@@ -300,6 +306,7 @@ def pos_products(request):
 
     q = request.GET.get("q", "").strip()
     category_id = request.GET.get("category", "")
+    customer_fabric_picker = request.GET.get("customer_fabric") == "1"
     warehouse_id = request.GET.get("warehouse_id", "")
     if not str(warehouse_id).isdigit():
         return JsonResponse(
@@ -326,17 +333,29 @@ def pos_products(request):
         .prefetch_related("variants")
     )
     tailoring_enabled = _tailoring_enabled(request)
+    if customer_fabric_picker and not tailoring_enabled:
+        return JsonResponse({"items": []})
     if not tailoring_enabled:
         base_qs = base_qs.filter(is_tailoring_item=False)
-    if q:
-        base_qs = base_qs.filter(
-            Q(name__icontains=q)
-            | Q(brand__business=request.business, brand__name__icontains=q)
-            | Q(sku__icontains=q)
-            | Q(barcode__icontains=q)
-            | Q(internal_code__icontains=q)
+    elif customer_fabric_picker:
+        base_qs = base_qs.filter(is_tailoring_item=True).filter(
+            Q(unit__isnull=True)
+            | Q(unit__business=request.business, unit__is_meter=True)
         )
-    if category_id.isdigit():
+    elif category_id == "tailoring":
+        base_qs = base_qs.filter(is_tailoring_item=True)
+    if q:
+        if not customer_fabric_picker and _customer_fabric_search(q):
+            base_qs = base_qs.none()
+        else:
+            base_qs = base_qs.filter(
+                Q(name__icontains=q)
+                | Q(brand__business=request.business, brand__name__icontains=q)
+                | Q(sku__icontains=q)
+                | Q(barcode__icontains=q)
+                | Q(internal_code__icontains=q)
+            )
+    if category_id.isdigit() and not customer_fabric_picker:
         base_qs = base_qs.filter(
             Q(category_id=category_id) | Q(category__parent_id=category_id)
         )
@@ -349,11 +368,11 @@ def pos_products(request):
         request.business
     ).filter(product_id=OuterRef("pk"))
     product_qs = visible_qs
-    if tailoring_enabled:
+    if tailoring_enabled and customer_fabric_picker:
         # A customer-owned fabric line does not need a branch/shared-stock
         # assignment. Include only otherwise-hidden, completely unassigned
         # canonical tailoring workflows alongside the normal branch-scoped
-        # grid in one query; their cards are locked to Customer Fabric below.
+        # picker in one query. They must not appear as duplicate grid cards.
         unassigned_customer_only = (
             base_qs.filter(is_tailoring_item=True)
             .filter(
@@ -409,11 +428,29 @@ def pos_products(request):
 
     items = []
     for p in products:
-        customer_fabric_only = bool(
-            p.is_stocked
-            and (p.is_meter_tailoring or p.is_legacy_tailoring)
-            and not p._has_stock_assignment
-        )
+        if customer_fabric_picker:
+            if p._has_stock_assignment and not catalog_services.product_is_visible_in_branch(
+                business=request.business, product=p, branch=warehouse.branch,
+            ):
+                continue
+            items.append({
+                "product_id": p.id, "variant_id": None,
+                "name": p.name,
+                "price": "0" if p.is_meter_tailoring else str(p.sale_price),
+                "sku": p.sku,
+                "tax_rate": str(calculations.resolve_tax_rate(request.business, p)),
+                "stocked": p.is_stocked,
+                "allow_discount": p.allow_discount,
+                "is_tailoring_item": True,
+                "is_meter_tailoring": p.is_meter_tailoring,
+                "is_legacy_tailoring": p.is_legacy_tailoring,
+                "customer_fabric_only": True,
+                "unit": p.unit.abbreviation if p.unit else "",
+                "min_price": str(p.minimum_sale_price),
+                "stock": None,
+                "image": p.image.url if p.image else None,
+            })
+            continue
         source_warehouse = (
             shared_warehouse
             if p.is_meter_tailoring and shared_warehouse is not None
@@ -431,13 +468,11 @@ def pos_products(request):
             else ""
         )
         if p.has_variants:
-            added_variant = False
             for v in p.variants.all():
                 if v.business_id != request.business.id or not v.is_active or (
                     p.is_stocked and v.id not in visible_variant_ids
                 ):
                     continue
-                added_variant = True
                 items.append({
                     "product_id": p.id, "variant_id": v.id,
                     "name": f"{p.name} — {v.name}",
@@ -462,33 +497,10 @@ def pos_products(request):
                     ),
                     "image": v.image.url if v.image else (p.image.url if p.image else None),
                 })
-            if not added_variant and customer_fabric_only:
-                items.append({
-                    "product_id": p.id,
-                    "variant_id": None,
-                    "name": f"{p.name} — Customer Fabric",
-                    "brand": brand_name,
-                    "price": "0" if p.is_meter_tailoring else str(p.sale_price),
-                    "sku": p.sku,
-                    "tax_rate": str(tax_rate),
-                    "stocked": p.is_stocked,
-                    "allow_discount": p.allow_discount,
-                    "is_tailoring_item": True,
-                    "is_meter_tailoring": p.is_meter_tailoring,
-                    "is_legacy_tailoring": p.is_legacy_tailoring,
-                    "customer_fabric_only": True,
-                    "unit": p.unit.abbreviation if p.unit else "",
-                    "min_price": str(p.minimum_sale_price),
-                    "stock": None,
-                    "image": p.image.url if p.image else None,
-                })
         else:
             items.append({
                 "product_id": p.id, "variant_id": None,
-                "name": (
-                    f"{p.name} — Customer Fabric"
-                    if customer_fabric_only else p.name
-                ),
+                "name": p.name,
                 "brand": brand_name,
                 "price": "0" if p.is_meter_tailoring else str(p.sale_price),
                 "sku": p.sku,
@@ -498,7 +510,7 @@ def pos_products(request):
                 "is_tailoring_item": p.is_tailoring_item,
                 "is_meter_tailoring": p.is_meter_tailoring,
                 "is_legacy_tailoring": p.is_legacy_tailoring,
-                "customer_fabric_only": customer_fabric_only,
+                "customer_fabric_only": False,
                 "unit": p.unit.abbreviation if p.unit else "",
                 "min_price": str(p.minimum_sale_price),
                 "stock": stock_map.get(
@@ -506,6 +518,20 @@ def pos_products(request):
                 ),
                 "image": p.image.url if p.image else None,
             })
+    if (
+        tailoring_enabled
+        and not customer_fabric_picker
+        and category_id in ("", "tailoring")
+        and (not q or _customer_fabric_search(q))
+    ):
+        items.insert(0, {
+            "product_id": None, "variant_id": None,
+            "name": "Customer Fabric / Stitching Only",
+            "customer_fabric_option": True,
+            "price": None, "stock": None, "stocked": False,
+            "brand": "Customer-supplied material",
+            "image": None,
+        })
     return JsonResponse({"items": items})
 
 

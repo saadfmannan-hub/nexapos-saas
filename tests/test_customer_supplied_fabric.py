@@ -720,6 +720,22 @@ class CustomerSuppliedFabricTests(TenantTestCase):
 
     def test_20_customer_fabric_cannot_bypass_tenant_or_branch_scope(self):
         sale_count = Sale.objects.for_business(self.business_a).count()
+        foreign_tailoring = Product.objects.create(
+            business=self.business_b,
+            name="Foreign Customer Garment",
+            product_type=Product.Type.SERVICE,
+            track_inventory=False,
+            is_tailoring_item=True,
+        )
+        picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": foreign_tailoring.name,
+            },
+        )
+        self.assertEqual(picker.json()["items"], [])
         tenant_response = self.checkout(
             [
                 {
@@ -757,6 +773,15 @@ class CustomerSuppliedFabricTests(TenantTestCase):
         )
         self.cashier_membership.branches.set([self.branch_a])
         self.client.force_login(self.cashier_a)
+
+        restricted_picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": other_branch.warehouses.get().id,
+                "customer_fabric": "1",
+            },
+        )
+        self.assertEqual(restricted_picker.status_code, 403)
 
         branch_response = self.checkout(
             [self.http_customer_line()],
@@ -865,8 +890,21 @@ class CustomerSuppliedFabricTests(TenantTestCase):
             },
         )
         self.assertEqual(grid.status_code, 200)
+        self.assertNotIn(
+            unassigned.id,
+            {item["product_id"] for item in grid.json()["items"]},
+        )
+        picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": "Unassigned Customer Fabric Garment",
+            },
+        )
+        self.assertEqual(picker.status_code, 200)
         card = next(
-            item for item in grid.json()["items"]
+            item for item in picker.json()["items"]
             if item["product_id"] == unassigned.id
         )
         self.assertTrue(card["customer_fabric_only"])
@@ -902,6 +940,185 @@ class CustomerSuppliedFabricTests(TenantTestCase):
             .filter(product=unassigned)
             .exists()
         )
+
+    def test_pos_shows_one_customer_fabric_action_without_hiding_stocked_fabrics(self):
+        hi_sofy = Product.objects.create(
+            business=self.business_a,
+            name="Hi Sofy Japan",
+            sku="HI-SOFY-JAPAN",
+            product_type=Product.Type.VARIANT,
+            unit=self.meter,
+            track_inventory=True,
+            is_tailoring_item=True,
+        )
+        for index, color in enumerate(("Black", "Blue"), start=1):
+            variant = ProductVariant.objects.create(
+                business=self.business_a,
+                product=hi_sofy,
+                name=color,
+                sku=f"HI-SOFY-JAPAN-{index}",
+            )
+            inventory.set_opening_stock(
+                business=self.business_a,
+                warehouse=self.warehouse_a,
+                product=hi_sofy,
+                variant=variant,
+                quantity=D("25.000"),
+                unit_cost=D("4.000"),
+                user=self.owner_a,
+            )
+        unassigned = [
+            Product.objects.create(
+                business=self.business_a,
+                name=name,
+                sku=f"HI-SOFY-UNASSIGNED-{index}",
+                product_type=Product.Type.STANDARD,
+                unit=self.meter,
+                track_inventory=True,
+                is_tailoring_item=True,
+            )
+            for index, name in enumerate(
+                ("hi sofy black jp", "hi sofy blue japan"), start=1,
+            )
+        ]
+
+        endpoint = reverse("sales:pos_products")
+        search = self.client.get(
+            endpoint, {"warehouse_id": self.warehouse_a.id, "q": "Hi Sofy"}
+        )
+        self.assertEqual(search.status_code, 200)
+        cards = search.json()["items"]
+        self.assertEqual(
+            {item["name"] for item in cards},
+            {"Hi Sofy Japan — Black", "Hi Sofy Japan — Blue"},
+        )
+        self.assertTrue(all(item["stock"] == 25 for item in cards))
+        self.assertFalse(any(item.get("customer_fabric_option") for item in cards))
+
+        tailoring = self.client.get(
+            endpoint,
+            {"warehouse_id": self.warehouse_a.id, "category": "tailoring"},
+        ).json()["items"]
+        self.assertEqual(
+            [item["name"] for item in tailoring if item.get("customer_fabric_option")],
+            ["Customer Fabric / Stitching Only"],
+        )
+        for query in ("customer fabric", "stitching"):
+            results = self.client.get(
+                endpoint, {"warehouse_id": self.warehouse_a.id, "q": query}
+            ).json()["items"]
+            self.assertEqual(len(results), 1)
+            self.assertTrue(results[0]["customer_fabric_option"])
+
+        picker = self.client.get(
+            endpoint,
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": "Hi Sofy",
+            },
+        ).json()["items"]
+        self.assertEqual(
+            {item["product_id"] for item in picker},
+            {hi_sofy.id} | {product.id for product in unassigned},
+        )
+        chosen = next(item for item in picker if item["product_id"] == hi_sofy.id)
+        self.assertIsNone(chosen["variant_id"])
+        self.assertTrue(chosen["customer_fabric_only"])
+
+        before = StockMovement.objects.for_business(self.business_a).count()
+        sale = self.sale_from_response(
+            self.checkout([{
+                "product_id": chosen["product_id"],
+                "variant_id": chosen["variant_id"],
+                "quantity": "1",
+                "unit_price": "20.000",
+                "customer_supplied_fabric": chosen["customer_fabric_only"],
+                "garment_classification": "adult",
+                "collection_type": "normal",
+                "tailoring_details": {"design_type": "Daraz"},
+            }])
+        )
+        self.assertEqual(sale.items.get().product_id, hi_sofy.id)
+        self.assertTrue(sale.items.get().customer_supplied_fabric)
+        self.assertEqual(StockMovement.objects.for_business(self.business_a).count(), before)
+
+    def test_customer_fabric_picker_never_consumes_shared_workshop_stock(self):
+        workshop_branch = Branch.objects.create(
+            business=self.business_a,
+            name="Shared Fabric Workshop",
+            code="CF-SHARED-WORKSHOP",
+            usage_type=Branch.UsageType.WORKSHOP_STOCK,
+        )
+        shared_warehouse = Warehouse.objects.create(
+            business=self.business_a,
+            branch=workshop_branch,
+            name="Shared Fabric Warehouse",
+            code="CF-SHARED-WH",
+        )
+        settings_obj = self.business_a.settings
+        settings_obj.shared_fabric_warehouse = shared_warehouse
+        settings_obj.save(update_fields=["shared_fabric_warehouse"])
+        inventory.set_opening_stock(
+            business=self.business_a,
+            warehouse=shared_warehouse,
+            product=self.fabric,
+            variant=self.color,
+            quantity=D("25.000"),
+            unit_cost=D("4.000"),
+            user=self.owner_a,
+        )
+        picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": self.fabric.name,
+            },
+        ).json()["items"]
+        self.assertEqual(len(picker), 1)
+        self.assertEqual(picker[0]["product_id"], self.fabric.id)
+        def shared_stock():
+            return StockLevel.objects.get(
+                warehouse=shared_warehouse, product=self.fabric, variant=self.color,
+            ).quantity
+        before = shared_stock()
+
+        customer_sale = self.sale_from_response(
+            self.checkout([self.http_customer_line(variant_id=None)])
+        )
+        self.assertEqual(shared_stock(), before)
+        self.assertFalse(
+            StockMovement.objects.for_business(self.business_a).filter(
+                reference_type="Sale", reference_id=customer_sale.invoice_number,
+            ).exists()
+        )
+
+        normal_sale = self.sale_from_response(
+            self.checkout([self.http_meter_line(fabric_meter_used="2.000")])
+        )
+        self.assertEqual(shared_stock(), before - D("2.000"))
+        self.assertTrue(
+            StockMovement.objects.for_business(self.business_a).filter(
+                reference_type="Sale", reference_id=normal_sale.invoice_number,
+                warehouse=shared_warehouse,
+            ).exists()
+        )
+
+    def test_customer_fabric_picker_requires_pos_permission(self):
+        role = self.cashier_membership.role
+        role.permissions = [
+            permission for permission in role.permissions
+            if permission != "sales.create"
+        ]
+        role.save(update_fields=["permissions"])
+        self.client.force_login(self.cashier_a)
+
+        response = self.client.get(
+            reverse("sales:pos_products"),
+            {"warehouse_id": self.warehouse_a.id, "customer_fabric": "1"},
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_customer_fabric_does_not_bypass_foreign_branch_assignment(self):
         other_branch = Branch.objects.create(
@@ -947,6 +1164,18 @@ class CustomerSuppliedFabricTests(TenantTestCase):
         self.assertNotIn(
             other_product.id,
             {item["product_id"] for item in grid.json()["items"]},
+        )
+        picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": other_product.name,
+            },
+        )
+        self.assertNotIn(
+            other_product.id,
+            {item["product_id"] for item in picker.json()["items"]},
         )
 
         barcode = self.client.get(
@@ -998,6 +1227,7 @@ class CustomerSuppliedFabricTests(TenantTestCase):
             {
                 "warehouse_id": self.warehouse_a.id,
                 "q": unassigned.name,
+                "customer_fabric": "1",
             },
         ).json()["items"]
         card = next(item for item in grid if item["product_id"] == unassigned.id)
@@ -1181,6 +1411,18 @@ class CustomerSuppliedFabricTests(TenantTestCase):
         self.assertNotIn(
             branch_only.id,
             {item["product_id"] for item in grid},
+        )
+        picker = self.client.get(
+            reverse("sales:pos_products"),
+            {
+                "warehouse_id": self.warehouse_a.id,
+                "customer_fabric": "1",
+                "q": branch_only.name,
+            },
+        ).json()["items"]
+        self.assertNotIn(
+            branch_only.id,
+            {item["product_id"] for item in picker},
         )
         barcode = self.client.get(
             reverse("sales:pos_barcode"),
