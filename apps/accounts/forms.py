@@ -1,6 +1,7 @@
 from django import forms
 from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
 from django.db.models import Q
+from django.utils.translation import gettext_lazy as _
 
 from apps.core.permissions import PERMISSIONS
 
@@ -8,6 +9,48 @@ from .models import Role, User
 
 INPUT = {"class": "form-control"}
 SELECT = {"class": "form-select"}
+
+
+# Presentation order for the role editor. Permission labels and values still come
+# from the central registry; new codes appear under Other Permissions.
+ROLE_PERMISSION_GROUPS = (
+    (_("Dashboard & Reports"), (
+        "dashboard.view", "reports.view", "reports.sales", "reports.financial",
+        "reports.export", "profit.view", "cost.view",
+    )),
+    (_("Sales & Returns"), (
+        "sales.view", "sales.create", "sales.void", "sales.delete",
+        "sales.refund", "sales.discount", "sales.price_override", "sales.credit",
+        "credit.approve",
+    )),
+    (_("Tailoring / Workshop"), ("workshop.fabric_actual",)),
+    (_("Products & Catalog"), (
+        "products.view", "products.manage", "products.import", "products.archive",
+        "products.delete", "products.export",
+    )),
+    (_("Inventory & Stock"), (
+        "inventory.view", "inventory.export", "inventory.import", "inventory.adjust",
+        "inventory.adjust_approve", "inventory.transfer", "inventory.transfer_approve",
+        "inventory.count",
+    )),
+    (_("Purchasing & Suppliers"), (
+        "purchases.view", "purchases.manage", "purchases.approve",
+        "suppliers.view", "suppliers.manage",
+    )),
+    (_("Customers & Credit"), (
+        "customers.view", "customers.manage", "customers.payments",
+        "customers.export", "customers.import",
+    )),
+    (_("Expenses & Cash Management"), (
+        "expenses.view", "expenses.manage", "expenses.approve", "registers.manage",
+        "shifts.open", "shifts.close", "shifts.approve", "shifts.reopen",
+    )),
+    (_("Administration"), ("users.manage", "branches.manage", "settings.manage")),
+    (_("System, Audit & Backup"), (
+        "audit.view", "notifications.view", "backups.view", "backups.create",
+        "backups.download", "backups.schedule", "backups.pin", "backups.restore",
+    )),
+)
 
 
 class LoginForm(forms.Form):
@@ -117,9 +160,9 @@ class EmployeeForm(forms.Form):
 
 class RoleForm(forms.ModelForm):
     permissions = forms.MultipleChoiceField(
-        choices=[(code, label) for code, label in PERMISSIONS.items()],
+        choices=(),
         required=False,
-        widget=forms.CheckboxSelectMultiple,
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
     )
 
     class Meta:
@@ -130,6 +173,33 @@ class RoleForm(forms.ModelForm):
     def __init__(self, business, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.business = business
+        choices = list(PERMISSIONS.items())
+        known_codes = set(PERMISSIONS)
+        if self.instance.pk:
+            for code in self.instance.permissions or []:
+                if code not in known_codes:
+                    choices.append((code, code))
+                    known_codes.add(code)
+        self.fields["permissions"].choices = choices
+
+    @property
+    def permission_sections(self):
+        """Group the actual bound checkboxes, retaining their IDs and checked state."""
+        sections = [
+            {"title": title, "checkboxes": []}
+            for title, _codes in ROLE_PERMISSION_GROUPS
+        ]
+        other = {"title": _("Other Permissions"), "checkboxes": []}
+        section_by_code = {
+            code: section
+            for section, (_title, codes) in zip(sections, ROLE_PERMISSION_GROUPS, strict=True)
+            for code in codes
+        }
+        for checkbox in self["permissions"]:
+            section_by_code.get(checkbox.data["value"], other)["checkboxes"].append(checkbox)
+        if other["checkboxes"]:
+            sections.append(other)
+        return [section for section in sections if section["checkboxes"]]
 
     def clean_name(self):
         name = self.cleaned_data["name"].strip()
