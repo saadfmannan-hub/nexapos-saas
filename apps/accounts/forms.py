@@ -2,6 +2,7 @@ from django import forms
 from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
 from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
+from rest_framework.authtoken.models import Token
 
 from apps.core.permissions import PERMISSIONS
 
@@ -74,6 +75,14 @@ class StyledSetPasswordForm(SetPasswordForm):
         super().__init__(*args, **kwargs)
         for f in self.fields.values():
             f.widget.attrs.update(INPUT)
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.must_change_password = False
+        if commit:
+            user.save(update_fields=["password", "must_change_password"])
+            Token.objects.filter(user=user).delete()
+        return user
 
 
 class ProfileForm(forms.ModelForm):

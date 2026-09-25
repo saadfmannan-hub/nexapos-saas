@@ -424,6 +424,8 @@ def post_login_redirect(request, *, next_url=None, membership=None, excluded_rou
     if not user.is_active:
         auth_logout(request)
         return redirect("accounts:login")
+    if user.must_change_password and not getattr(request, "support_admin", None):
+        return redirect("accounts:change_password")
 
     if membership is not None and (
         membership.user_id != user.id

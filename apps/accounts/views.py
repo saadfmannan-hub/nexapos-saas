@@ -6,11 +6,13 @@ from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth import views as auth_views
+from django.core.exceptions import PermissionDenied
 from django.db import IntegrityError, transaction
 from django.shortcuts import redirect, render
 from django.urls import reverse_lazy
 from django.utils import timezone
 from django.views.decorators.http import require_POST
+from rest_framework.authtoken.models import Token
 
 from apps.audit import services as audit
 from apps.audit.services import client_ip
@@ -162,15 +164,24 @@ def profile_view(request):
 def change_password_view(request):
     if not request.user.is_authenticated:
         return redirect("accounts:login")
+    if getattr(request, "support_admin", None) is not None:
+        raise PermissionDenied
     form = StyledPasswordChangeForm(request.user, request.POST or None)
     if request.method == "POST" and form.is_valid():
-        user = form.save()
+        with transaction.atomic():
+            user = form.save(commit=False)
+            user.must_change_password = False
+            user.save(update_fields=["password", "must_change_password"])
+            Token.objects.filter(user=user).delete()
         update_session_auth_hash(request, user)
         audit.log("auth.password_changed", user=user, request=request,
                   module="accounts", description="Password changed.")
         messages.success(request, "Password changed successfully.")
         return redirect("accounts:profile")
-    return render(request, "auth/change_password.html", {"form": form})
+    return render(request, "auth/change_password.html", {
+        "form": form,
+        "password_change_required": request.user.must_change_password,
+    })
 
 
 class PasswordResetView(auth_views.PasswordResetView):

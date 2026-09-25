@@ -49,6 +49,9 @@
         <tr><th>Phone</th><td>{{ business.owner.phone|default:"-" }}</td></tr>
         <tr><th>Account status</th><td>{% if business.owner.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td></tr>
       </table>
+      <a href="{% url 'platformadmin:owner_password_reset' business.public_id %}" class="btn btn-sm btn-outline-warning mt-3">
+        <i class="bi bi-key"></i> Reset password
+      </a>
     </div></div>
 
     <div class="card mt-3"><div class="card-header">Usage summary</div><div class="card-body">

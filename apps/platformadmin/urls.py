@@ -59,6 +59,11 @@ urlpatterns = [
     ),
     path("businesses/<uuid:public_id>/", views.business_detail, name="business_detail"),
     path(
+        "businesses/<uuid:public_id>/owner-password-reset/",
+        views.owner_password_reset,
+        name="owner_password_reset",
+    ),
+    path(
         "businesses/<uuid:business_public_id>/payments/"
         "<uuid:payment_public_id>/edit/",
         views.subscription_payment_edit,

@@ -69,6 +69,14 @@ class HasSubscriptionModuleAccess(BasePermission):
         user = getattr(request, "user", None)
         if not user or not user.is_authenticated:
             raise APIAuthenticationRequired
+        if getattr(user, "must_change_password", False):
+            raise PermissionDenied(
+                detail={
+                    "code": "password_change_required",
+                    "detail": "Password change required.",
+                },
+                code="password_change_required",
+            )
 
         business = self.get_business(request, view)
         membership = self.get_membership(request, view)

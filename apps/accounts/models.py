@@ -56,6 +56,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)  # Django admin access
     is_platform_admin = models.BooleanField(default=False)
     email_verified = models.BooleanField(default=False)
+    must_change_password = models.BooleanField(default=False)
 
     # Brute-force protection
     failed_login_attempts = models.PositiveIntegerField(default=0)

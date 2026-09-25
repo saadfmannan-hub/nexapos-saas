@@ -19,7 +19,10 @@ from django.http import Http404, HttpResponseBadRequest
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.crypto import get_random_string
-from django.views.decorators.http import require_POST
+from django.views.decorators.cache import never_cache
+from django.views.decorators.debug import sensitive_variables
+from django.views.decorators.http import require_http_methods, require_POST
+from rest_framework.authtoken.models import Token
 
 from apps.accounts.activity import format_last_activity
 from apps.accounts.models import LoginHistory, Membership, User
@@ -301,6 +304,51 @@ def business_detail(request, public_id):
         "history": build_subscription_history(business, sub),
         "now": timezone.now(), "pa_nav": "businesses",
     })
+
+
+@platform_admin_required
+@never_cache
+@sensitive_variables("temporary_password")
+@require_http_methods(["GET", "POST"])
+def owner_password_reset(request, public_id):
+    """Reset only the owner of the selected business and show the secret once."""
+    if getattr(request, "support_admin", None) is not None:
+        raise PermissionDenied
+    if request.method == "GET":
+        business = get_object_or_404(
+            Business.objects.select_related("owner"), public_id=public_id
+        )
+        return render(request, "platformadmin/owner_password_reset.html", {
+            "business": business, "owner": business.owner, "pa_nav": "businesses",
+        })
+
+    if set(request.POST) - {"csrfmiddlewaretoken"}:
+        return HttpResponseBadRequest("Unexpected reset parameters.")
+
+    with transaction.atomic():
+        business = get_object_or_404(
+            Business.objects.select_for_update(), public_id=public_id
+        )
+        owner = User.objects.select_for_update().get(pk=business.owner_id)
+        temporary_password = get_random_string(
+            32, allowed_chars="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+        )
+        owner.set_password(temporary_password)
+        owner.must_change_password = True
+        owner.save(update_fields=["password", "must_change_password"])
+        Token.objects.filter(user=owner).delete()
+        audit.log(
+            "platform.owner_password_reset", business=business, user=request.user,
+            request=request, module="platformadmin", obj=owner,
+            description=f"Owner password reset for {owner.email}.",
+        )
+
+    response = render(request, "platformadmin/owner_password_reset.html", {
+        "business": business, "owner": owner,
+        "temporary_password": temporary_password, "pa_nav": "businesses",
+    })
+    response["Referrer-Policy"] = "same-origin"
+    return response
 
 
 def record_subscription_payment(
