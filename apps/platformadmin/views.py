@@ -21,6 +21,7 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.views.decorators.http import require_POST
 
+from apps.accounts.activity import format_last_activity
 from apps.accounts.models import LoginHistory, Membership, User
 from apps.audit import services as audit
 from apps.audit.models import AuditLog
@@ -232,8 +233,16 @@ def business_detail(request, public_id):
         from django.http import Http404
         raise Http404 from None
     sub = getattr(business, "subscription", None)
-    members = Membership.objects.filter(business=business).select_related(
-        "user", "role")
+    members = list(
+        Membership.objects.filter(business=business)
+        .select_related("user", "role")
+        .prefetch_related("branches")
+    )
+    activity_now = timezone.now()
+    for member in members:
+        member.activity_label, member.activity_online = format_last_activity(
+            member.last_activity_at, business=business, now=activity_now
+        )
     payment_queryset = SubscriptionPayment.objects.filter(
         subscription__business=business,
     ).select_related("recorded_by", "reversed_by")
@@ -258,7 +267,7 @@ def business_detail(request, public_id):
         "monthly_invoices": Sale.objects.for_business(business).filter(
             created_at__date__gte=month_start,
         ).exclude(status__in=["draft", "held"]).count(),
-        "users": members.count(),
+        "users": len(members),
         "storage_mb": None,
     }
     payment_summary = SubscriptionPayment.objects.active().filter(

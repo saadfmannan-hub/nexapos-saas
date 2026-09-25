@@ -127,6 +127,7 @@ class Membership(TimeStampedModel):
         help_text="Empty means access to all branches.",
     )
     is_active = models.BooleanField(default=True)
+    last_activity_at = models.DateTimeField(null=True, blank=True)
 
     objects = TenantManager()
 

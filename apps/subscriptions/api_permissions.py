@@ -4,6 +4,8 @@ from django.core.exceptions import ImproperlyConfigured
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied
 from rest_framework.permissions import BasePermission
 
+from apps.accounts.activity import record_membership_activity
+
 from .access import _normalize_module_keys, evaluate_access
 from .exceptions import AccessDenial, DenialCode
 
@@ -105,6 +107,8 @@ class HasSubscriptionModuleAccess(BasePermission):
         request.api_access_context = decision.context
         request.api_business = business
         request.api_membership = membership
+        if getattr(request, "auth", None) is not None:
+            record_membership_activity(membership, user=user)
         return True
 
     def has_object_permission(self, request, view, obj):

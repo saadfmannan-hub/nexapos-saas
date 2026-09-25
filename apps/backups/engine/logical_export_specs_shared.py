@@ -153,6 +153,7 @@ LOGICAL_EXPORT_SPECS_SHARED = (
             "created_at",
             "updated_at",
             "is_active",
+            "last_activity_at",
         ),
         relation_fields=(
             relation("user", "accounts.User", nullable=False),

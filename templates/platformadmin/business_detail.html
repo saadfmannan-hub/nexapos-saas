@@ -180,14 +180,17 @@
       </table></div>
     </div>
 
-    <div class="card mt-3"><div class="card-header">Members</div>
+    <div class="card mt-3"><div class="card-header">Users</div>
       <div class="table-responsive"><table class="table table-sm mb-0">
-        <thead><tr><th>User</th><th>Role</th><th>Status</th></tr></thead>
+        <thead><tr><th>User</th><th>Role</th><th>Branch</th><th>Status</th><th>Last Activity</th></tr></thead>
         <tbody>
           {% for m in members %}
-          <tr><td class="small">{{ m.user.full_name }} ({{ m.user.email }})</td>
+          <tr><td class="small"><div class="fw-semibold">{{ m.user.full_name }}</div><div class="text-secondary">{{ m.user.email }}</div></td>
               <td><span class="badge text-bg-light border">{{ m.role.name }}</span></td>
-              <td>{% if m.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td></tr>
+              <td class="small">{% for branch in m.branches.all %}{{ branch.name }}{% if not forloop.last %}, {% endif %}{% empty %}All branches{% endfor %}</td>
+              <td>{% if m.is_active %}<span class="badge badge-status bs-active">Active</span>{% else %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}</td>
+              <td class="small">{% if m.activity_online %}<span class="badge badge-status bs-active"><span aria-hidden="true">●</span> {{ m.activity_label }}</span>{% else %}<span class="text-secondary">{{ m.activity_label }}</span>{% endif %}</td></tr>
+          {% empty %}<tr><td colspan="5" class="text-center text-secondary py-2">No users yet</td></tr>
           {% endfor %}
         </tbody>
       </table></div>

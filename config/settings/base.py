@@ -105,6 +105,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.platformadmin.middleware.SupportSessionMiddleware",
     "apps.core.middleware.BusinessMiddleware",
+    "apps.accounts.middleware.ActivityMiddleware",
     "apps.subscriptions.middleware.SubscriptionMiddleware",
 ]
 
