@@ -28,10 +28,42 @@
 
 {% if salary.status == "FINALIZED" %}
 <div class="alert alert-success">
-  <strong>Finalized historical snapshot.</strong>
-  This salary and its calculation lines cannot be recalculated, reopened, or
-  changed through the WMS salary workflow.
+  <strong>{% if salary.revision_number == current_revision_number %}Current finalized salary.{% else %}Previous finalized salary.{% endif %}</strong>
+  This snapshot is preserved in the salary history.
 </div>
+{% if pending_revision %}
+<a class="btn btn-primary mb-3" href="{% url 'wms:salary_revision' pending_revision.public_id %}">Continue Salary Revision</a>
+{% elif revision_start_form %}
+<details class="card mb-3">
+  <summary class="card-header">Revise Finalized Salary</summary>
+  <form class="card-body" method="post" action="{% url 'wms:salary_revision_start' salary.public_id %}">
+    {% csrf_token %}
+    {% include "components/form_field.html" with field=revision_start_form.reason %}
+    <button class="btn btn-primary" type="submit">Start Revision</button>
+  </form>
+</details>
+{% endif %}
+{% if history %}
+<section class="card mb-3">
+  <h3 class="card-header h6 mb-0">Finalized Salary History</h3>
+  <ul class="list-group list-group-flush">
+    {% for version in history %}
+    <li class="list-group-item">
+      <a href="{% url 'wms:salary_detail' version.public_id %}">
+        {% if version.revision_number %}Revision {{ version.revision_number }}{% else %}Original salary{% endif %}
+      </a>
+      {% if version.revision_number == current_revision_number %}<span class="badge text-bg-success">Current</span>{% endif %}
+      <span class="ms-2">{{ version.gross_salary|money_p:version.currency_precision_snapshot }} {{ version.currency_display_snapshot }}</span>
+      <div class="small text-secondary">
+        Finalized {{ version.finalized_at|date:"M d, Y H:i" }}{% if version.finalized_by %} by {{ version.finalized_by }}{% endif %}
+        {% if version.revision_started_by %} · Started by {{ version.revision_started_by }} on {{ version.created_at|date:"M d, Y H:i" }}{% endif %}
+      </div>
+      {% if version.revision_reason %}<div class="small">{{ version.revision_reason }}</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 {% else %}
 <div class="alert alert-warning">
   This calculated salary may be refreshed from current WMS source data until

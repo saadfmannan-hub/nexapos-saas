@@ -1,5 +1,6 @@
 from datetime import date
 from urllib.parse import urlencode
+from uuid import UUID
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -9,6 +10,9 @@ from django.shortcuts import redirect, render
 from apps.core.date_ranges import business_localdate
 from apps.subscriptions.access import AccessAction
 from apps.wms_core.access import wms_permission_required
+from apps.wms_salary.models import WmsSalary
+from apps.wms_salary.selectors import salary_records_for_access
+from apps.wms_salary.services import is_business_owner
 
 from . import selectors, services
 from .forms import (
@@ -221,6 +225,7 @@ def production_entry_correct(request, public_id):
         request.wms_user_access,
         public_id,
     )
+    revision = _salary_revision_for_entry(request, entry)
     form = ProductionCorrectionForm(
         request.business,
         request.POST or None,
@@ -262,6 +267,8 @@ def production_entry_correct(request, public_id):
             form.add_error(None, "; ".join(exc.messages))
         else:
             messages.success(request, "Production correction saved.")
+            if revision is not None:
+                return redirect("wms:salary_revision", public_id=revision.public_id)
             return redirect(
                 "wms:production_entry_detail",
                 public_id=entry.public_id,
@@ -273,6 +280,7 @@ def production_entry_correct(request, public_id):
             "form": form,
             "entry": entry,
             "is_correction": True,
+            "salary_revision": revision,
             "selected_employee": entry.employee,
             "employee_options": (),
             "line_formset": line_formset,
@@ -280,3 +288,24 @@ def production_entry_correct(request, public_id):
             "wms_active_nav": "production",
         },
     )
+
+
+def _salary_revision_for_entry(request, entry):
+    raw_id = request.GET.get("salary_revision")
+    if not raw_id or not (
+        is_business_owner(request.business, request.user, request)
+        and request.wms_user_access.has_perm("wms.salary.revise")
+    ):
+        return None
+    try:
+        public_id = UUID(raw_id)
+    except ValueError:
+        return None
+    return salary_records_for_access(request.wms_user_access).filter(
+        public_id=public_id,
+        employee_id=entry.employee_id,
+        salary_year=entry.production_date.year,
+        salary_month=entry.production_date.month,
+        revision_number__gt=0,
+        status=WmsSalary.Status.CALCULATED,
+    ).first()

@@ -697,7 +697,7 @@ def correct_production_entry(
     try:
         entry = (
             WmsProductionEntry.objects.for_business(business)
-            .select_for_update()
+            .select_for_update(of=("self",))
             .select_related("employee", "location__branch")
             .get(pk=entry.pk)
         )
@@ -712,7 +712,7 @@ def correct_production_entry(
     )
     lines = list(
         WmsProductionEntryLine.objects.for_business(business)
-        .select_for_update()
+        .select_for_update(of=("self",))
         .select_related("order", "assignment", "category")
         .filter(entry=entry, is_removed=False)
         .order_by(

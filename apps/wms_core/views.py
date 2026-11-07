@@ -18,6 +18,7 @@ from .forms import (
     WmsUserForm,
 )
 from .models import WmsLocation, WmsRole, WmsSettings, WmsUserAccess
+from .permissions import WMS_PERMISSIONS
 
 
 def _add_form_validation_error(form, exc):
@@ -136,6 +137,10 @@ def user_list(request):
         {
             "accesses": accesses,
             "roles": WmsRole.objects.for_business(request.business).order_by("name"),
+            "salary_permissions": [
+                (code, label) for code, label in WMS_PERMISSIONS.items()
+                if code.startswith("wms.salary.")
+            ],
             "active_nav": "wms",
             "wms_active_nav": "users",
         },

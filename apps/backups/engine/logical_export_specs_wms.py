@@ -429,6 +429,9 @@ LOGICAL_EXPORT_SPECS_WMS = (
             "period_start",
             "period_end",
             "status",
+            "revision_number",
+            "revision_reason",
+            "production_fingerprint",
             "employee_code_snapshot",
             "employee_name_snapshot",
             "employee_joining_date_snapshot",
@@ -455,6 +458,12 @@ LOGICAL_EXPORT_SPECS_WMS = (
             ),
             relation(
                 "finalized_by",
+                "accounts.User",
+                nullable=True,
+                global_reference=True,
+            ),
+            relation(
+                "revision_started_by",
                 "accounts.User",
                 nullable=True,
                 global_reference=True,

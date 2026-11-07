@@ -10,11 +10,12 @@ from django.db import models
 from apps.core.money import money
 from apps.wms_attendance.models import WmsAttendance
 from apps.wms_core.models import ValidatedTenantModel, WmsLocation
+from apps.wms_orders.models import WmsWorkshopOrder
 from apps.wms_production.models import (
     WmsProductionEntry,
     WmsProductionEntryLine,
 )
-from apps.wms_workforce.models import WmsEmployee
+from apps.wms_workforce.models import WmsEmployee, WmsEmployeeCategoryAssignment
 
 
 class WmsSalary(ValidatedTenantModel):
@@ -36,6 +37,17 @@ class WmsSalary(ValidatedTenantModel):
         choices=Status.choices,
         default=Status.CALCULATED,
     )
+    revision_number = models.PositiveIntegerField(default=0, editable=False)
+    revision_reason = models.TextField(blank=True, editable=False)
+    revision_started_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="wms_salary_revisions_started",
+        editable=False,
+    )
+    production_fingerprint = models.CharField(max_length=64, blank=True, editable=False)
 
     employee_code_snapshot = models.CharField(max_length=40, editable=False)
     employee_name_snapshot = models.CharField(max_length=160, editable=False)
@@ -112,8 +124,27 @@ class WmsSalary(ValidatedTenantModel):
         ordering = ["-salary_year", "-salary_month", "employee_name_snapshot"]
         constraints = [
             models.UniqueConstraint(
+                fields=["business", "employee", "salary_year", "salary_month", "revision_number"],
+                name="uniq_wms_salary_month_version",
+            ),
+            models.UniqueConstraint(
                 fields=["business", "employee", "salary_year", "salary_month"],
-                name="uniq_wms_salary_emp_month",
+                condition=models.Q(status="CALCULATED"),
+                name="uniq_wms_salary_month_draft",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(revision_number=0, revision_reason="", production_fingerprint="")
+                    | (models.Q(revision_number__gt=0) & ~models.Q(revision_reason=""))
+                ),
+                name="valid_wms_salary_revision",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(revision_number=0) | models.Q(status="CALCULATED")
+                    | ~models.Q(production_fingerprint="")
+                ),
+                name="wms_salary_final_revision_has_preview",
             ),
             models.CheckConstraint(
                 condition=models.Q(salary_year__gte=1, salary_year__lte=9999),
@@ -233,6 +264,10 @@ class WmsSalary(ValidatedTenantModel):
                 "period_start",
                 "period_end",
                 "status",
+                "revision_number",
+                "revision_reason",
+                "revision_started_by_id",
+                "production_fingerprint",
                 "employee_code_snapshot",
                 "employee_name_snapshot",
                 "employee_joining_date_snapshot",
@@ -371,7 +406,8 @@ class WmsSalary(ValidatedTenantModel):
         original = None
         if self.pk:
             original = type(self).objects.filter(pk=self.pk).first()
-        if original is None and self.status != self.Status.CALCULATED:
+        restoring = original is None and getattr(self, "_restoring_wms_history", False)
+        if original is None and self.status != self.Status.CALCULATED and not restoring:
             errors["status"] = "New salary records must start Calculated."
         elif original is not None:
             if original.status == self.Status.FINALIZED:
@@ -386,7 +422,7 @@ class WmsSalary(ValidatedTenantModel):
                     "Calculated salaries cannot contain finalization details."
                 )
         elif self.status == self.Status.FINALIZED:
-            if self.finalized_at is None or self.finalized_by_id is None:
+            if self.finalized_at is None or (self.finalized_by_id is None and not restoring):
                 errors["status"] = (
                     "Finalized salaries require a finalizer and timestamp."
                 )
@@ -447,7 +483,10 @@ class WmsSalaryLocationSnapshot(ValidatedTenantModel):
             and self.location.business_id != self.business_id
         ):
             errors["location"] = "The location belongs to another business."
-        if self.salary_id and self.salary.status == WmsSalary.Status.FINALIZED:
+        if (
+            self.salary_id and self.salary.status == WmsSalary.Status.FINALIZED
+            and not (self._state.adding and getattr(self, "_restoring_wms_history", False))
+        ):
             errors["salary"] = "Finalized salary snapshots are immutable."
         if errors:
             raise ValidationError(errors)
@@ -576,7 +615,9 @@ class WmsSalaryDay(ValidatedTenantModel):
                 errors["salary_date"] = (
                     "Salary day must fall inside the salary period."
                 )
-            if salary.status == WmsSalary.Status.FINALIZED:
+            if salary.status == WmsSalary.Status.FINALIZED and not (
+                self._state.adding and getattr(self, "_restoring_wms_history", False)
+            ):
                 errors["salary"] = "Finalized salary snapshots are immutable."
             if (
                 salary.compensation_type_snapshot
@@ -660,6 +701,8 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
     class RateSource(models.TextChoices):
         ASSIGNMENT = "ASSIGNMENT", "Assignment Override"
         EMPLOYEE_DEFAULT = "EMPLOYEE_DEFAULT", "Employee Default"
+        OWNER_CONFIRMED = "OWNER_CONFIRMED", "Owner Confirmed"
+        HISTORICAL = "HISTORICAL", "Historical Assignment Rate"
 
     salary_day = models.ForeignKey(
         WmsSalaryDay,
@@ -756,6 +799,7 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
     def clean(self):
         super().clean()
         errors = {}
+        restoring = self._state.adding and getattr(self, "_restoring_wms_history", False)
         day = self.salary_day if self.salary_day_id else None
         line = self.production_line if self.production_line_id else None
         if day is not None and day.business_id != self.business_id:
@@ -765,7 +809,7 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
                 "The production line belongs to another business."
             )
         if day is not None:
-            if day.salary.status == WmsSalary.Status.FINALIZED:
+            if day.salary.status == WmsSalary.Status.FINALIZED and not restoring:
                 errors["salary_day"] = "Finalized salary snapshots are immutable."
             if (
                 day.salary.compensation_type_snapshot
@@ -786,24 +830,12 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
                 errors["production_line"] = (
                     "The production line belongs to another employee."
                 )
-            if not self.pk and self.quantity != line.quantity:
+            if not self.pk and not restoring and self.quantity != line.quantity:
                 errors["quantity"] = (
                     "Salary quantity must snapshot the production line quantity."
                 )
             if not self.pk:
-                expected_public_id = (
-                    line.order.public_id if line.order_id else None
-                )
-                expected_reference = (
-                    line.order.order_reference if line.order_id else None
-                )
-                if (
-                    self.order_public_id_snapshot != expected_public_id
-                    or self.order_reference_snapshot != expected_reference
-                ):
-                    errors["order_public_id_snapshot"] = (
-                        "Salary order snapshots must match the production line."
-                    )
+                errors.update(self._source_snapshot_errors(line, restoring))
         if self.applied_rate is not None and self.applied_rate < 0:
             errors["applied_rate"] = "Applied rate cannot be negative."
         if self.line_amount is not None and self.line_amount < 0:
@@ -816,6 +848,31 @@ class WmsSalaryPieceLine(ValidatedTenantModel):
             errors["line_amount"] = "Line amount must equal quantity times rate."
         if errors:
             raise ValidationError(errors)
+
+    def _source_snapshot_errors(self, line, restoring):
+        errors = {}
+        corrected_history = restoring and line.entry.is_corrected
+        if self.assignment_public_id_snapshot != line.assignment.public_id:
+            if not corrected_history or not WmsEmployeeCategoryAssignment.objects.filter(
+                business_id=self.business_id,
+                public_id=self.assignment_public_id_snapshot,
+                employee_id=line.entry.employee_id,
+            ).exists():
+                errors["assignment_public_id_snapshot"] = "Salary assignment snapshot is invalid."
+
+        saved_order = (self.order_public_id_snapshot, self.order_reference_snapshot)
+        current_order = (line.order.public_id, line.order.order_reference) if line.order_id else (None, None)
+        if saved_order != current_order:
+            if not corrected_history or (
+                saved_order != (None, None) and not WmsWorkshopOrder.objects.filter(
+                    business_id=self.business_id,
+                    public_id=self.order_public_id_snapshot,
+                    order_reference=self.order_reference_snapshot,
+                    location_id=line.entry.location_id,
+                ).exists()
+            ):
+                errors["order_public_id_snapshot"] = "Salary order snapshot is invalid."
+        return errors
 
     def delete(self, *args, **kwargs):
         if self.salary_day.salary.status == WmsSalary.Status.FINALIZED:

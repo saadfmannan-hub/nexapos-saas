@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import uuid
 from dataclasses import FrozenInstanceError, fields, replace
+from datetime import date
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest import mock
 
@@ -92,6 +94,7 @@ from apps.backups.models import (
     RestoreOperation,
     TenantOperationLock,
 )
+from apps.backups.registry import COMPONENT_REGISTRY
 from apps.backups.versioning import (
     BACKUP_FORMAT_VERSION,
     get_application_version,
@@ -100,10 +103,19 @@ from apps.backups.versioning import (
 from apps.catalog.models import Category, Product
 from apps.subscriptions.models import Plan, Subscription
 from apps.tenants.services import provision_business
+from apps.wms_core.services import sync_wms_entitlement
+from apps.wms_orders.models import WmsWorkshopOrder
+from apps.wms_orders.services import finish_order_batch
+from apps.wms_production import services as production_services
+from apps.wms_salary import revisions
+from apps.wms_salary import services as salary_services
+from apps.wms_salary.models import WmsSalary, WmsSalaryPieceLine
+from apps.wms_workforce.models import WmsEmployee, WmsEmployeeCategoryAssignment
 
 from .test_backups_phase2b_snapshot import _StaticFilesystemInspector
 from .test_backups_phase2d1_media_manifest import _media_policy
 from .test_backups_phase2d2_package import DeterministicPackageProviderTests
+from .test_wms_phase2 import make_category, make_employee, make_location
 
 
 class _LocalInspector:
@@ -147,6 +159,8 @@ class RestoreMutationEndToEndTests(TransactionTestCase):
             value = field.value_from_object(obj)
             if isinstance(field, models.FileField):
                 value = getattr(obj, field.name).name or ""
+            elif isinstance(field, models.TimeField) and value is not None:
+                value = value.isoformat()
             values[field.name] = value
         self.fixture._insert(obj._meta.label, **values)
 
@@ -278,10 +292,10 @@ class RestoreMutationEndToEndTests(TransactionTestCase):
             ),
         ).validated()
 
-    def _source_backup(self):
+    def _source_backup(self, scope=BackupScope.POS):
         backup = services.create_backup_request(
             business=self.business,
-            scope=BackupScope.POS,
+            scope=scope,
             actor=self.owner,
             trigger=BackupTrigger.MANUAL,
             idempotency_key=f"phase3b-source-{uuid.uuid4().hex}",
@@ -341,12 +355,12 @@ class RestoreMutationEndToEndTests(TransactionTestCase):
             ),
         ).validated()
 
-    def _prepared_execution(self):
-        source = self._source_backup()
+    def _prepared_execution(self, scope=BackupScope.POS):
+        source = self._source_backup(scope)
         restore = services.create_restore_request(
             business=self.business,
             source_backup=source,
-            requested_scope=BackupScope.POS,
+            requested_scope=scope,
             actor=self.owner,
             reason="Isolated Phase 3B verification",
             idempotency_key=f"phase3b-restore-{uuid.uuid4().hex}",
@@ -405,6 +419,101 @@ class RestoreMutationEndToEndTests(TransactionTestCase):
         self.assertEqual(restore.safety_backup.integrity_status, IntegrityStatus.VERIFIED)
         source.refresh_from_db()
         self.assertEqual(source.status, BackupStatus.SUCCEEDED)
+
+    @override_settings(BACKUP_RESTORE_MUTATION_ENABLED=True)
+    def test_wms_backup_restores_revised_and_original_finalized_salaries(self):
+        Plan.objects.filter(pk=self.business.subscription.plan_id).update(feature_wms=True)
+        access = sync_wms_entitlement(
+            self.business, was_enabled=False, is_enabled=True, user=self.owner,
+        )["owner_access"]
+        location = make_location(self.business, "RESTORE-WMS", "Restore WMS")
+        employee = make_employee(
+            self.business, location, "RESTORE-WORKER",
+            compensation_type=WmsEmployee.CompensationType.PER_PIECE,
+            fixed_salary=None, piece_rate=Decimal("2"),
+        )
+        old_assignment, new_assignment = [
+            WmsEmployeeCategoryAssignment.objects.create(
+                business=self.business, employee=employee,
+                category=make_category(self.business, f"Operation {code}", code),
+            )
+            for code in ("OLD", "NEW")
+        ]
+        old_order, new_order = [
+            WmsWorkshopOrder.objects.create(
+                business=self.business, location=location, order_reference=ref,
+                eligible_piece_count=20, received_date=date(2026, 10, 1),
+            )
+            for ref in ("RESTORE-OLD", "RESTORE-NEW")
+        ]
+        actor = {"business": self.business, "user_access": access, "user": self.owner}
+        entry = production_services.create_production_entry(
+            **actor, employee=employee, location=location, production_date=date(2026, 10, 12),
+            daily_total_pieces=99, notes="",
+            production_rows=[{"order": old_order, "assignment": old_assignment, "quantity": 3}],
+        )
+        original = salary_services.finalize_salary(
+            **actor, salary=salary_services.calculate_salary(
+                **actor, employee=employee, salary_year=2026, salary_month=10,
+            ),
+        )
+        draft = revisions.start_revision(**actor, salary=original, reason="Corrected operation")
+        line = entry.lines.get()
+        production_services.correct_production_entry(
+            **actor, entry=entry, daily_total_pieces=99, notes="", correction_reason="Reassigned row",
+            production_rows=[{
+                "line_id": str(line.public_id), "order": new_order,
+                "assignment": new_assignment, "quantity": 5,
+            }],
+        )
+        finish_order_batch(
+            **actor, finished_date=date(2026, 10, 12), references=[new_order.order_reference],
+        )
+        fingerprint, _ = revisions.revision_inputs(draft, original, access)
+        draft = revisions.recalculate_revision(
+            **actor, salary=draft, fingerprint=fingerprint,
+            confirmed_rates={line.public_id: Decimal("1.5")},
+        )
+        revised = revisions.finalize_revision(
+            **actor, salary=draft, preview=draft.calculated_at.isoformat(),
+        )
+        self.fixture.context = replace(self.fixture.context, requested_scope=BackupScope.WMS)
+        for definition in COMPONENT_REGISTRY.definitions.values():
+            if not definition.key.startswith("wms."):
+                continue
+            for label in definition.model_labels:
+                model = self.business._meta.apps.get_model(label)
+                for obj in model.objects.filter(business=self.business):
+                    self._copy_source_row(obj)
+        self._copy_source_row(location.branch)
+        self.fixture.source.execute(
+            "CREATE TABLE wms_core_wmsuseraccess_allowed_locations "
+            "(id INTEGER, wmsuseraccess_id INTEGER, wmslocation_id INTEGER)"
+        )
+        _, restore, stack, request = self._prepared_execution(BackupScope.WMS)
+        revisions.start_revision(**actor, salary=revised, reason="After source backup")
+        with override_settings(MEDIA_ROOT=self.media_root):
+            try:
+                result = RestoreExecutionCoordinator(
+                    runtime_stack=stack, lock_lease_seconds=3600,
+                ).execute(request)
+            except RestoreEngineError as exc:
+                self.fail(f"Unexpected sanitized WMS restore failure: {exc.issue_code}")
+        self.assertEqual(result.final_state, RestoreExecutionState.SUCCESS)
+        restore.refresh_from_db()
+        self.assertEqual(restore.status, RestoreStatus.SUCCEEDED)
+        versions = list(WmsSalary.objects.for_business(self.business).order_by("revision_number"))
+        self.assertEqual([item.public_id for item in versions], [original.public_id, revised.public_id])
+        self.assertEqual([item.gross_salary for item in versions], [Decimal("6"), Decimal("7.5")])
+        self.assertEqual(versions[1].revision_reason, "Corrected operation")
+        self.assertEqual(versions[1].revision_started_by, self.owner)
+        self.assertEqual(versions[1].finalized_at, revised.finalized_at)
+        self.assertEqual(
+            list(WmsSalaryPieceLine.objects.for_business(self.business).order_by(
+                "salary_day__salary__revision_number",
+            ).values_list("order_reference_snapshot", "quantity", "applied_rate")),
+            [("RESTORE-OLD", 3, Decimal("2")), ("RESTORE-NEW", 5, Decimal("1.5"))],
+        )
 
     @override_settings(BACKUP_RESTORE_MUTATION_ENABLED=True)
     def test_safety_backup_is_durable_before_first_destructive_write(self):

@@ -38,6 +38,22 @@ def _actor(user=None, request=None):
     return user or getattr(request, "user", None)
 
 
+def is_business_owner(business, actor, request=None):
+    return bool(
+        actor is not None
+        and actor.pk == business.owner_id
+        and (request is None or (
+            request.user.pk == actor.pk
+            and not getattr(request, "support_admin", None)
+        ))
+    )
+
+
+def _require_business_owner(business, actor, request=None):
+    if not is_business_owner(business, actor, request):
+        raise ValidationError("Only the Business Owner can perform this salary action.")
+
+
 def _authorized_access(
     *,
     business,
@@ -103,7 +119,7 @@ def _validate_location_scope(access, location_ids):
 
 
 def _safe_salary_state(salary, *, day_count=None, location_count=None):
-    return {
+    state = {
         "salary_public_id": str(salary.public_id),
         "period": f"{salary.salary_year:04d}-{salary.salary_month:02d}",
         "status": salary.status,
@@ -116,6 +132,10 @@ def _safe_salary_state(salary, *, day_count=None, location_count=None):
             else location_count
         ),
     }
+    if salary.revision_number:
+        state["revision_number"] = salary.revision_number
+        state["revision_reason"] = salary.revision_reason
+    return state
 
 
 def _delete_draft_snapshots(business, salary):
@@ -196,36 +216,41 @@ def _fixed_breakdown(
     return days, locations
 
 
-def _piece_breakdown(
-    *,
-    business,
-    employee,
-    period_start,
-    period_end,
-):
-    first_date = max(period_start, employee.joining_date)
-    entries = list(
+def _production_sources(business, employee_id, first_date, period_end, *, lock=False):
+    entries = (
         WmsProductionEntry.objects.for_business(business)
-        .select_for_update()
         .select_related("location__branch")
         .filter(
-            employee=employee,
+            employee_id=employee_id,
             production_date__gte=first_date,
             production_date__lte=period_end,
         )
         .order_by("production_date")
     )
+    if lock:
+        entries = entries.select_for_update(of=("self",))
+    entries = list(entries)
     entry_ids = [entry.pk for entry in entries]
-    lines = list(
+    lines = (
         WmsProductionEntryLine.objects.for_business(business)
-        .select_for_update()
-        .select_related("entry", "order", "assignment", "category")
+        .select_related("entry", "order", "assignment", "category", "entry__location")
         .filter(entry_id__in=entry_ids, is_removed=False)
         .order_by(
             "entry__production_date",
             "assignment__category__display_order",
             "category_name_snapshot",
+            "pk",
         )
+    )
+    if lock:
+        lines = lines.select_for_update(of=("self",))
+    return entries, list(lines)
+
+
+def _piece_breakdown(*, business, employee, period_start, period_end):
+    entries, lines = _production_sources(
+        business, employee.pk, max(period_start, employee.joining_date), period_end,
+        lock=True,
     )
     assignment_ids = {line.assignment_id for line in lines}
     assignments = {
@@ -236,8 +261,8 @@ def _piece_breakdown(
             .filter(pk__in=assignment_ids)
         )
     }
-    lines_by_entry = {}
-    for line in lines:
+
+    def rate_for_line(line):
         if line.assignment_id not in assignments:
             raise ValidationError(
                 "A production assignment is unavailable for salary calculation."
@@ -260,12 +285,24 @@ def _piece_breakdown(
             raise ValidationError(
                 "Every production line requires a valid nonnegative piece rate."
             )
+        return rate, rate_source
+
+    return _piece_days(entries, lines, rate_for_line), {
+        employee.location_id: employee.location,
+        **{entry.location_id: entry.location for entry in entries},
+    }
+
+
+def _piece_days(entries, lines, rate_for_line):
+    lines_by_entry = {}
+    for line in lines:
+        rate, rate_source = rate_for_line(line)
         quantity = line.quantity
         line_amount = money(rate * quantity)
         lines_by_entry.setdefault(line.entry_id, []).append(
             {
                 "production_line": line,
-                "assignment_public_id_snapshot": assignment.public_id,
+                "assignment_public_id_snapshot": line.assignment.public_id,
                 "order_public_id_snapshot": (
                     line.order.public_id if line.order_id else None
                 ),
@@ -281,10 +318,8 @@ def _piece_breakdown(
             }
         )
 
-    locations = {employee.location_id: employee.location}
     days = []
     for entry in entries:
-        locations[entry.location_id] = entry.location
         piece_lines = lines_by_entry.get(entry.pk, [])
         eligible_quantity = sum(
             (item["quantity"] for item in piece_lines),
@@ -312,7 +347,7 @@ def _piece_breakdown(
                 "piece_lines": piece_lines,
             }
         )
-    return days, locations
+    return days
 
 
 def _hybrid_breakdown(
@@ -334,6 +369,11 @@ def _hybrid_breakdown(
         period_start=period_start,
         period_end=period_end,
     )
+    _merge_hybrid_days(fixed_days, piece_days)
+    return fixed_days, {**fixed_locations, **piece_locations}
+
+
+def _merge_hybrid_days(fixed_days, piece_days):
     piece_days_by_date = {
         item["salary_date"]: item for item in piece_days
     }
@@ -361,7 +401,6 @@ def _hybrid_breakdown(
             "One or more Hybrid production dates could not be merged into "
             "the salary calendar."
         )
-    return fixed_days, {**fixed_locations, **piece_locations}
 
 
 @transaction.atomic
@@ -406,6 +445,7 @@ def calculate_salary(
             employee=employee,
             salary_year=salary_year,
             salary_month=salary_month,
+            revision_number=0,
         )
         .first()
     )
@@ -518,33 +558,7 @@ def calculate_salary(
             ) from exc
         raise
 
-    for location in sorted(
-        locations.values(),
-        key=lambda item: (item.branch.name, item.pk),
-    ):
-        WmsSalaryLocationSnapshot.objects.create(
-            business=business,
-            salary=salary,
-            location=location,
-            location_name_snapshot=location.branch.name,
-            location_type_snapshot=location.location_type,
-        )
-
-    for item in days:
-        piece_lines = item.pop("piece_lines")
-        salary_day = WmsSalaryDay(
-            business=business,
-            salary=salary,
-            **item,
-        )
-        salary_day.save()
-        for line_data in piece_lines:
-            piece_line = WmsSalaryPieceLine(
-                business=business,
-                salary_day=salary_day,
-                **line_data,
-            )
-            piece_line.save()
+    _save_breakdown(salary, locations, days)
 
     new_values = _safe_salary_state(
         salary,
@@ -568,6 +582,39 @@ def calculate_salary(
     return salary
 
 
+def _save_breakdown(salary, locations, days, *, historical_locations=None):
+    business = salary.business
+    historical_locations = historical_locations or {}
+    for location in sorted(
+        locations.values(),
+        key=lambda item: (item.branch.name, item.pk),
+    ):
+        previous = historical_locations.get(location.pk)
+        WmsSalaryLocationSnapshot.objects.create(
+            business=business,
+            salary=salary,
+            location=location,
+            location_name_snapshot=previous.location_name_snapshot if previous else location.branch.name,
+            location_type_snapshot=previous.location_type_snapshot if previous else location.location_type,
+        )
+
+    for item in days:
+        piece_lines = item["piece_lines"]
+        salary_day = WmsSalaryDay(
+            business=business,
+            salary=salary,
+            **{key: value for key, value in item.items() if key != "piece_lines"},
+        )
+        salary_day.save()
+        for line_data in piece_lines:
+            piece_line = WmsSalaryPieceLine(
+                business=business,
+                salary_day=salary_day,
+                **line_data,
+            )
+            piece_line.save()
+
+
 @transaction.atomic
 def finalize_salary(
     *,
@@ -585,6 +632,8 @@ def finalize_salary(
         permission_code="wms.salary.finalize",
         request=request,
     )
+    business = Business.objects.select_for_update().get(pk=business.pk)
+    _require_business_owner(business, actor, request)
     try:
         salary = (
             WmsSalary.objects.for_business(business)
@@ -594,6 +643,13 @@ def finalize_salary(
         )
     except WmsSalary.DoesNotExist as exc:
         raise ValidationError("The salary belongs to another business.") from exc
+    if salary.revision_number:
+        raise ValidationError("Use Finalize Revision to finalize a salary revision.")
+    return _finalize_locked_salary(salary, access, actor, request)
+
+
+def _finalize_locked_salary(salary, access, actor, request, *, revision=False):
+    business = salary.business
     locations = list(
         WmsSalaryLocationSnapshot.objects.for_business(business)
         .select_for_update()
@@ -632,7 +688,7 @@ def finalize_salary(
         ]
     )
     audit.log(
-        "wms.salary_finalized",
+        "wms.salary_revision_finalized" if revision else "wms.salary_finalized",
         business=business,
         user=actor,
         request=request,

@@ -63,7 +63,7 @@
 
 <div class="card mt-3">
   <div class="card-header d-flex justify-content-between align-items-center">
-    <span><i class="bi bi-shield-check text-primary"></i> WMS roles</span>
+    <span><i class="bi bi-shield-check text-primary"></i> Roles &amp; Permissions</span>
     <a class="btn btn-sm btn-primary" href="{% url 'wms:role_create' %}"><i class="bi bi-plus-circle"></i> Add custom role</a>
   </div>
   <div class="card-body">
@@ -77,6 +77,11 @@
             {% if not role.is_active %}<span class="badge badge-status bs-suspended">Inactive</span>{% endif %}
           </div>
           <div class="small text-secondary">{{ role.permissions|length }} approved permissions · {{ role.code }}</div>
+          {% for code, label in salary_permissions %}
+            {% if code in role.permissions %}
+            <span class="badge text-bg-light border mt-1">{{ label }}{% if code == "wms.salary.finalize" or code == "wms.salary.revise" %} · Owner only{% endif %}</span>
+            {% endif %}
+          {% endfor %}
         </div>
         {% if not role.is_system %}
         <a class="btn btn-sm btn-outline-secondary" href="{% url 'wms:role_edit' role.public_id %}">Edit</a>

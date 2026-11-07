@@ -1502,13 +1502,9 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
                 f"WHERE source.{line_pk} = ?",
                 (raw_production_line,),
             )
-            if (
-                row is None
-                or len(row) != 2
-                or row[1] != context.business_id
-                or canonical_uuid(row[0]) != fields["assignment_public_id_snapshot"]
-            ):
+            if row is None or len(row) != 2 or row[1] != context.business_id:
                 raise TenantIsolationViolation()
+            assignment_matches = canonical_uuid(row[0]) == fields["assignment_public_id_snapshot"]
 
             order = django_apps.get_model("wms_orders.WmsWorkshopOrder")
             line_order = _quote_identifier(line._meta.get_field("order").column)
@@ -1531,18 +1527,50 @@ class SQLiteLogicalComponentExporter(ComponentExporter):
             if order_row is None or len(order_row) != 4:
                 raise TenantIsolationViolation()
             if order_row[3] is None:
-                if (
-                    fields.get("order_public_id_snapshot") is not None
-                    or fields.get("order_reference_snapshot") is not None
-                ):
-                    raise TenantIsolationViolation()
-            elif (
-                order_row[2] != context.business_id
-                or canonical_uuid(order_row[0])
-                != fields.get("order_public_id_snapshot")
-                or order_row[1] != fields.get("order_reference_snapshot")
+                current_order = (None, None)
+            elif order_row[2] != context.business_id:
+                raise TenantIsolationViolation()
+            else:
+                current_order = (canonical_uuid(order_row[0]), order_row[1])
+            saved_order = (fields["order_public_id_snapshot"], fields["order_reference_snapshot"])
+            if assignment_matches and current_order == saved_order:
+                continue
+
+            # Corrections may reassign a live row while the salary retains the
+            # original assignment and order. Verify the saved references in their
+            # own right and keep all current relation checks above.
+            entry = django_apps.get_model("wms_production.WmsProductionEntry")
+            entry_table = _quote_identifier(entry._meta.db_table)
+            entry_pk = _quote_identifier(entry._meta.pk.column)
+            line_entry = _quote_identifier(line._meta.get_field("entry").column)
+            saved_entry = reader.first(
+                f"SELECT entry.employee_id, entry.location_id, entry.is_corrected "
+                f"FROM {line_table} AS source "
+                f"JOIN {entry_table} AS entry ON source.{line_entry} = entry.{entry_pk} "
+                f"WHERE source.{line_pk} = ? AND entry.business_id = ?",
+                (raw_production_line, context.business_id),
+            )
+            if saved_entry is None or not saved_entry[2]:
+                raise TenantIsolationViolation()
+            if not assignment_matches and not reader.first(
+                f"SELECT 1 FROM {assignment_table} "
+                f"WHERE REPLACE({assignment_public}, '-', '') = ? "
+                f"AND {assignment_business} = ? AND employee_id = ?",
+                (
+                    fields["assignment_public_id_snapshot"].replace("-", ""),
+                    context.business_id,
+                    saved_entry[0],
+                ),
             ):
                 raise TenantIsolationViolation()
+            if current_order != saved_order and saved_order != (None, None):
+                if not all(saved_order) or not reader.first(
+                    f"SELECT 1 FROM {order_table} "
+                    f"WHERE REPLACE({order_public}, '-', '') = ? "
+                    f"AND {order_business} = ? AND location_id = ? AND {order_reference} = ?",
+                    (saved_order[0].replace("-", ""), context.business_id, saved_entry[1], saved_order[1]),
+                ):
+                    raise TenantIsolationViolation()
 
     @staticmethod
     def _validate_stock_movement_reference(*, reader, context, fields):

@@ -9,6 +9,7 @@
     <p class="text-secondary small">
       Custom roles use the approved WMS permission list. System roles cannot be
       edited, and your own role must keep user management to avoid lockout.
+      Finalize Salary and Revise Finalized Salary also require the Business Owner account.
     </p>
     <form method="post">{% csrf_token %}
       {% include "components/form_field.html" with field=form.name %}

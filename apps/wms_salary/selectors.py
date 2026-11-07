@@ -50,7 +50,19 @@ def filtered_salary_records(
     location_id="",
     status="",
 ):
-    salaries = salary_records_for_access(user_access).filter(
+    # Choose the effective version before filtering by location or status.
+    # An older version must never stand in for an out-of-scope latest version.
+    newer_finalized = WmsSalary.objects.for_business(user_access.business).filter(
+        employee_id=OuterRef("employee_id"),
+        salary_year=OuterRef("salary_year"),
+        salary_month=OuterRef("salary_month"),
+        revision_number__gt=OuterRef("revision_number"),
+        status=WmsSalary.Status.FINALIZED,
+    )
+    salaries = salary_records_for_access(user_access).exclude(
+        revision_number__gt=0, status=WmsSalary.Status.CALCULATED,
+    ).filter(
+        ~Exists(newer_finalized),
         salary_year=salary_year,
         salary_month=salary_month,
     )

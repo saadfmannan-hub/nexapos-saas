@@ -560,6 +560,7 @@ _DEFINITIONS = (
     ComponentDefinition(
         key="wms.salary",
         product_owner=ProductOwner.WMS,
+        component_version="2.0",
         included_model_labels=(
             "wms_salary.WmsSalary",
             "wms_salary.WmsSalaryLocationSnapshot",

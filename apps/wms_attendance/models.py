@@ -191,7 +191,10 @@ class WmsAttendance(ValidatedTenantModel):
             or original["employee_id"] != self.employee_id
             or original["location_id"] != self.location_id
         )
-        if identity_changed and self.employee_id and self.location_id:
+        if (
+            identity_changed and self.employee_id and self.location_id
+            and not (original is None and getattr(self, "_restoring_wms_history", False))
+        ):
             if self.employee.location_id != self.location_id:
                 errors["employee"] = (
                     "Attendance must use the employee's assigned WMS location."

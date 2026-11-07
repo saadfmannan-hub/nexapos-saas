@@ -109,7 +109,10 @@ class WmsProductionEntry(ValidatedTenantModel):
             errors["employee"] = (
                 "Employee, location, and date cannot be changed after creation."
             )
-        if original is None and self.employee_id and self.location_id:
+        if (
+            original is None and self.employee_id and self.location_id
+            and not getattr(self, "_restoring_wms_history", False)
+        ):
             if self.employee.location_id != self.location_id:
                 errors["employee"] = (
                     "Production location must match the employee's WMS location."
@@ -201,7 +204,7 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             return
         if not self.category_name_snapshot:
             self.category_name_snapshot = self.category.name
-        if not self.pk:
+        if not self.pk and not getattr(self, "_restoring_wms_history", False):
             self.category_code_snapshot = self.category.code
 
     def clean(self):
@@ -258,8 +261,17 @@ class WmsProductionEntryLine(ValidatedTenantModel):
             )
         if original is None and not self.order_id and self.created_at is None:
             errors["order"] = "A Workshop Order is required for new production."
+        restoring = original is None and getattr(self, "_restoring_wms_history", False)
+        if restoring:
+            if self.entry_id and self.assignment_id and self.assignment.employee_id != self.entry.employee_id:
+                errors["assignment"] = "The category assignment must belong to the entry employee."
+            if self.assignment_id and self.category_id and self.assignment.category_id != self.category_id:
+                errors["category"] = "The category must match the employee assignment."
+            if self.entry_id and self.order_id and self.order.location_id != self.entry.location_id:
+                errors["order"] = "The Workshop Order location must match the production entry."
         if (
             original is None
+            and not restoring
             and self.entry_id
             and self.order_id
             and self.assignment_id

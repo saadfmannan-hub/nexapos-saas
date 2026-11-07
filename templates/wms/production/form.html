@@ -35,6 +35,9 @@
       </div>
     </div>
     {% if is_correction %}
+    {% if salary_revision %}
+    <a class="btn btn-sm btn-outline-secondary mb-2" href="{% url 'wms:salary_revision' salary_revision.public_id %}">Back to Salary Revision</a>
+    {% endif %}
     <p class="text-secondary small">
       Employee, location, and date remain fixed. You can correct, add, or remove
       production rows. Every correction requires a reason and is written to the audit trail.

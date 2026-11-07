@@ -132,7 +132,7 @@ class WmsWorkshopOrder(ValidatedTenantModel):
                 )
                 .first()
             )
-        if original is None:
+        if original is None and not getattr(self, "_restoring_wms_history", False):
             if self.status != self.Status.IN_PROCESS:
                 errors["status"] = "New orders must start In Process."
             if (
@@ -155,7 +155,7 @@ class WmsWorkshopOrder(ValidatedTenantModel):
                 errors["eligible_piece_count"] = (
                     "Eligible PCS must be a whole number greater than zero."
                 )
-        else:
+        elif original is not None:
             if (
                 original["location_id"] != self.location_id
                 or normalize_order_reference(original["order_reference"])

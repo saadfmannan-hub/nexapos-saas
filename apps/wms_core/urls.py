@@ -128,6 +128,10 @@ urlpatterns = [
         salary_views.salary_finalize,
         name="salary_finalize",
     ),
+    path("salary/<uuid:public_id>/revise/", salary_views.salary_revision_start, name="salary_revision_start"),
+    path("salary/<uuid:public_id>/revision/", salary_views.salary_revision, name="salary_revision"),
+    path("salary/<uuid:public_id>/revision/calculate/", salary_views.salary_revision_calculate, name="salary_revision_calculate"),
+    path("salary/<uuid:public_id>/revision/finalize/", salary_views.salary_revision_finalize, name="salary_revision_finalize"),
     path("reports/", include("apps.wms_reports.urls")),
     path("employees/", workforce_views.employee_list, name="employee_list"),
     path(

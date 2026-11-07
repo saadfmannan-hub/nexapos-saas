@@ -34,6 +34,12 @@ from .restore_preflight import RestorePreflightConsumption
 from .restore_workspace import RestoredPackageProvider
 
 _MAXIMUM_RECORD_LINE_BYTES = 16 * 1024 * 1024
+_WMS_HISTORY_MODELS = frozenset({
+    "wms_salary.WmsSalary", "wms_salary.WmsSalaryLocationSnapshot",
+    "wms_salary.WmsSalaryDay", "wms_salary.WmsSalaryPieceLine",
+    "wms_orders.WmsWorkshopOrder", "wms_attendance.WmsAttendance",
+    "wms_production.WmsProductionEntry", "wms_production.WmsProductionEntryLine",
+})
 
 
 def _reject_constant(_value):
@@ -552,8 +558,12 @@ class LogicalRestoreEngine:
             )
         try:
             obj = model(**values)
+            if record.model_label in _WMS_HISTORY_MODELS:
+                obj._restoring_wms_history = True
             obj.full_clean(validate_unique=False, validate_constraints=False)
             obj.save(force_insert=True)
+            if record.model_label in _WMS_HISTORY_MODELS:
+                del obj._restoring_wms_history
             if auto_values:
                 queryset = self._query_for_spec(spec=spec, business=business)
                 if spec.identity_kind is IdentityKind.PUBLIC_UUID:

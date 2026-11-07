@@ -1,6 +1,7 @@
 """Access-scoped forms for WMS salary calculation."""
 
 from django import forms
+from django.utils.formats import date_format
 
 from apps.core.date_ranges import business_localdate
 from apps.wms_workforce.models import WmsEmployee
@@ -61,3 +62,32 @@ class SalaryCalculationForm(forms.Form):
                 "Salary cannot be calculated for a month before joining.",
             )
         return cleaned_data
+
+
+class SalaryRevisionStartForm(forms.Form):
+    reason = forms.CharField(
+        label="Correction reason",
+        max_length=1000,
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+    )
+
+
+class SalaryRevisionCalculationForm(forms.Form):
+    fingerprint = forms.CharField(widget=forms.HiddenInput, max_length=64)
+
+    def __init__(self, *args, lines, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.line_ids = {}
+        for line in lines:
+            field_name = f"rate_{line.public_id}"
+            self.line_ids[field_name] = line.public_id
+            day = date_format(line.entry.production_date, "DATE_FORMAT")
+            order = line.order.order_reference if line.order_id else "No order"
+            self.fields[field_name] = forms.DecimalField(
+                min_value=0, max_digits=14, decimal_places=3,
+                label=f"{day} · {order} · {line.category_name_snapshot} · {line.quantity} pieces",
+                widget=forms.NumberInput(attrs={"class": "form-control"}),
+            )
+
+    def confirmed_rates(self):
+        return {pk: self.cleaned_data[field] for field, pk in self.line_ids.items()}
