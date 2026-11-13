@@ -1,6 +1,8 @@
 """Tenant- and WMS-location-scoped workshop-order read helpers."""
 
-from django.db.models import Prefetch
+from calendar import monthrange
+
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 
 from apps.wms_core.selectors import (
@@ -12,23 +14,40 @@ from apps.wms_production.models import WmsProductionEntryLine
 from .models import WmsWorkshopOrder, WmsWorkshopOrderStatusHistory
 
 
-def workshop_orders_for_access(user_access):
+def orders_for_access(user_access):
     location_ids = historical_locations_for_access(user_access).values("pk")
+    return (
+        WmsWorkshopOrder.objects.for_business(user_access.business)
+        .filter(location_id__in=location_ids)
+        .select_related("location__branch")
+    )
+
+
+def workshop_orders_for_access(user_access):
     history = WmsWorkshopOrderStatusHistory.objects.for_business(
         user_access.business
     ).select_related("changed_by")
     return (
-        WmsWorkshopOrder.objects.for_business(user_access.business)
-        .filter(location_id__in=location_ids)
-        .select_related(
-            "location__branch",
-            "created_by",
-            "updated_by",
-        )
+        orders_for_access(user_access)
+        .select_related("created_by", "updated_by")
         .prefetch_related(
             Prefetch("status_history", queryset=history),
         )
     )
+
+
+def order_month_filter(month, *, status=""):
+    """Finished orders use their finish month. Other orders use their receipt month."""
+    first_day = month.replace(day=1)
+    last_day = month.replace(day=monthrange(month.year, month.month)[1])
+    date_field = (
+        "finished_date" if status == WmsWorkshopOrder.Status.FINISHED_READY
+        else "received_date"
+    )
+    filters = {f"{date_field}__range": (first_day, last_day)}
+    if status:
+        filters["status"] = status
+    return Q(**filters)
 
 
 def filtered_workshop_orders(
@@ -36,6 +55,7 @@ def filtered_workshop_orders(
     *,
     query="",
     received_date=None,
+    month=None,
     location_id="",
     status="",
 ):
@@ -46,7 +66,9 @@ def filtered_workshop_orders(
         orders = orders.filter(received_date=received_date)
     if location_id:
         orders = orders.filter(location__public_id=location_id)
-    if status:
+    if month is not None:
+        orders = orders.filter(order_month_filter(month, status=status))
+    elif status:
         orders = orders.filter(status=status)
     return orders.order_by("-received_date", "order_reference")
 

@@ -19,6 +19,18 @@ urlpatterns = [
         name="order_list",
     ),
     path(
+        "orders/export.pdf",
+        order_views.order_list_export,
+        {"export_format": "pdf"},
+        name="order_list_pdf",
+    ),
+    path(
+        "orders/export.xlsx",
+        order_views.order_list_export,
+        {"export_format": "xlsx"},
+        name="order_list_xlsx",
+    ),
+    path(
         "orders/new/",
         order_views.order_create_batch,
         name="order_create_batch",

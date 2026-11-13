@@ -530,6 +530,8 @@ def _monthly_orders_result(request):
         "sheet_name": "Monthly Orders",
         "filename": f"wms-monthly-orders-{cleaned['report_month']:%Y-%m}",
         "period_label": cleaned["report_month"].strftime("%B %Y"),
+        "month": cleaned["report_month"],
+        "location": cleaned["location"],
         "columns": ["Date", "Orders Received", "Orders Finished / Ready"],
         "export_rows": [
             [row["date"], row["received"], row["finished"]]

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ report.title }}</title>
+  <style>
+    @page { size: a4 landscape; margin: 28pt 32pt; }
+    body { font-family: Helvetica, sans-serif; color: #172033; font-size: 10pt; }
+    h1 { margin: 0 0 4pt; font-size: 19pt; }
+    .business { margin: 0 0 8pt; font-size: 12pt; }
+    .metadata { margin: 0 0 3pt; }
+    table { width: 100%; margin-top: 9pt; }
+    th, td { padding: 5pt 6pt 3pt; border-bottom: 0.5pt solid #dbe2ea; text-align: left; }
+    th { background: #25334a; color: white; }
+    .pieces { text-align: right; }
+    .empty { padding: 10pt 6pt; }
+  </style>
+</head>
+<body>
+  <h1>{{ report.title }}</h1>
+  <p class="business">{{ business.name }}</p>
+  {% for label, value in metadata %}
+  <p class="metadata"><strong>{{ label }}</strong>: {{ value }}</p>
+  {% endfor %}
+  <table repeat="1">
+    <thead>
+      <tr>
+        <th width="30%">{{ report.columns.0 }}</th>
+        <th width="22%">{{ report.columns.1 }}</th>
+        <th width="12%">{{ report.columns.2 }}</th>
+        <th width="10%" class="pieces">{{ report.columns.3 }}</th>
+        <th width="14%">{{ report.columns.4 }}</th>
+        <th width="12%">{{ report.columns.5 }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for reference, location, received, pieces, status, finished in report.export_rows %}
+      <tr>
+        <td>{{ reference }}</td>
+        <td>{{ location }}</td>
+        <td>{{ received|date:"Y-m-d" }}</td>
+        <td class="pieces">{{ pieces|default_if_none:"Not recorded" }}</td>
+        <td>{{ status }}</td>
+        <td>{{ finished|date:"Y-m-d"|default:"-" }}</td>
+      </tr>
+      {% empty %}
+      <tr><td class="empty" colspan="6">No workshop orders match these filters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

@@ -182,6 +182,23 @@ class WmsPhase8ReportTests(WmsPhase7Base):
         )
         self.assertNotContains(response, unused.name)
 
+    def test_monthly_production_print_header_identifies_employee_without_entries(self):
+        response = self.client.get(
+            reverse("wms:report_monthly_production"),
+            {
+                "report_month": "2026-07",
+                "employee": str(self.piece_employee.public_id),
+            },
+        )
+        self.assertEqual(response.context["report"]["grand_total"], 0)
+        self.assertContains(
+            response,
+            '<div class="wms-print-subtitle">'
+            f'{self.piece_employee.full_name} ({self.piece_employee.employee_code})</div>',
+            html=True,
+        )
+        self.assertContains(response, "July 2026 · Generated")
+
     def test_alterations_never_contribute_to_production_reports(self):
         self.create_report_production(daily_total=11)
         WmsAlteration.objects.create(

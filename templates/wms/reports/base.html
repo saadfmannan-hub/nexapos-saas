@@ -17,8 +17,19 @@
   .report-meta { color: var(--bs-secondary-color); }
   .wms-print-header { display: none; }
 
-  @page wmsPortrait { size: A4 portrait; margin: 10mm; }
-  @page wmsLandscape { size: A4 landscape; margin: 9mm; }
+  /* Supply report page numbers in place of Chrome's URL footer. */
+  @page wmsPortrait {
+    size: A4 portrait;
+    margin: 10mm;
+    @bottom-left { content: ""; }
+    @bottom-right { content: counter(page) "/" counter(pages); font-size: 8pt; }
+  }
+  @page wmsLandscape {
+    size: A4 landscape;
+    margin: 9mm;
+    @bottom-left { content: ""; }
+    @bottom-right { content: counter(page) "/" counter(pages); font-size: 8pt; }
+  }
 
   @media print {
     .wms-report-page-portrait { page: wmsPortrait; }
@@ -54,6 +65,12 @@
       font-weight: 800;
       color: #0f172a;
       margin: 1.5mm 0 .5mm;
+    }
+    .wms-print-subtitle {
+      font-size: 11px;
+      font-weight: 700;
+      color: #334155;
+      margin-bottom: .5mm;
     }
     .wms-print-meta { font-size: 9.5px; color: #475569; }
 
@@ -125,6 +142,7 @@
       <span class="wms-print-business">{{ current_business.name }}</span>
     </div>
     <h1 class="wms-print-title">{% if report %}{{ report.title }}{% else %}WMS Report{% endif %}</h1>
+    {% block print_subtitle %}{% endblock %}
     <div class="wms-print-meta">
       {% if report %}{{ report.period_label }} · {% endif %}Generated {{ report_generated_at|date:"D, d M Y" }} at {{ report_generated_at|date:"h:i A" }}
     </div>

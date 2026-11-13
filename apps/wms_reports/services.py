@@ -208,9 +208,14 @@ def export_xlsx(*, report, business, metadata):
         cell.fill = PatternFill("solid", fgColor="334155")
         cell.alignment = Alignment(horizontal="center")
 
+    text_columns = report.get("text_columns", ())
     for values in report["export_rows"]:
         row_number += 1
         for column, value in enumerate(values, start=1):
+            if column - 1 in text_columns and value is not None:
+                cell = sheet.cell(row=row_number, column=column, value=str(value))
+                cell.data_type = "s"
+                continue
             sheet.cell(
                 row=row_number,
                 column=column,
@@ -231,7 +236,7 @@ def export_xlsx(*, report, business, metadata):
         for row in range(header_row + 1, row_number + 1):
             sheet.cell(row=row, column=index + 1).number_format = number_format
 
-    sheet.freeze_panes = sheet.cell(row=header_row + 1, column=1)
+    sheet.freeze_panes = f"A{header_row + 1}"
     sheet.auto_filter.ref = (
         f"A{header_row}:{sheet.cell(row=header_row, column=column_count).column_letter}{row_number}"
     )

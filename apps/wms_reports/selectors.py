@@ -10,6 +10,7 @@ from apps.wms_alterations.models import WmsAlteration
 from apps.wms_attendance.selectors import attendance_for_access
 from apps.wms_core.selectors import historical_locations_for_access
 from apps.wms_orders.models import WmsWorkshopOrder
+from apps.wms_orders.selectors import order_month_filter, orders_for_access
 from apps.wms_production.models import WmsProductionEntryLine
 from apps.wms_salary import selectors as salary_selectors
 from apps.wms_workforce.models import WmsEmployeeCategoryAssignment
@@ -26,19 +27,10 @@ def _completion_percentage(completed, total):
     return round((completed / total) * 100, 1) if total else 0.0
 
 
-def _orders_for_access(user_access):
-    location_ids = historical_locations_for_access(user_access).values("pk")
-    return (
-        WmsWorkshopOrder.objects.for_business(user_access.business)
-        .filter(location_id__in=location_ids)
-        .select_related("location__branch")
-    )
-
-
 def daily_finished_orders(user_access, *, report_date, location=None):
     """Workshop orders that became Finished / Ready on the selected date."""
 
-    orders = _orders_for_access(user_access).filter(
+    orders = orders_for_access(user_access).filter(
         status=WmsWorkshopOrder.Status.FINISHED_READY,
         finished_date=report_date,
     )
@@ -51,7 +43,7 @@ def daily_finished_orders(user_access, *, report_date, location=None):
 def daily_orders(user_access, *, report_date, location=None, status=""):
     """Order activity for one day: received or finished on the date."""
 
-    base = _orders_for_access(user_access)
+    base = orders_for_access(user_access)
     if location is not None:
         base = base.filter(location=location)
     day_activity = base.filter(
@@ -102,48 +94,28 @@ def monthly_orders(user_access, *, report_month, location=None):
     """Month totals plus a day-wise received/finished breakdown."""
 
     period_start, period_end = _month_period(report_month)
-    base = _orders_for_access(user_access)
+    base = orders_for_access(user_access)
     if location is not None:
         base = base.filter(location=location)
+    received_filter = order_month_filter(report_month)
+    finished_filter = order_month_filter(
+        report_month, status=WmsWorkshopOrder.Status.FINISHED_READY,
+    )
+    in_process_filter = order_month_filter(
+        report_month, status=WmsWorkshopOrder.Status.IN_PROCESS,
+    )
     counts = base.aggregate(
-        received=Count(
-            "pk",
-            filter=Q(
-                received_date__gte=period_start,
-                received_date__lte=period_end,
-            ),
-        ),
-        finished=Count(
-            "pk",
-            filter=Q(
-                status=WmsWorkshopOrder.Status.FINISHED_READY,
-                finished_date__gte=period_start,
-                finished_date__lte=period_end,
-            ),
-        ),
-        received_in_process=Count(
-            "pk",
-            filter=Q(
-                received_date__gte=period_start,
-                received_date__lte=period_end,
-                status=WmsWorkshopOrder.Status.IN_PROCESS,
-            ),
-        ),
+        received=Count("pk", filter=received_filter),
+        finished=Count("pk", filter=finished_filter),
+        received_in_process=Count("pk", filter=in_process_filter),
     )
     received_by_day = dict(
-        base.filter(
-            received_date__gte=period_start,
-            received_date__lte=period_end,
-        )
+        base.filter(received_filter)
         .values_list("received_date")
         .annotate(total=Count("pk"))
     )
     finished_by_day = dict(
-        base.filter(
-            status=WmsWorkshopOrder.Status.FINISHED_READY,
-            finished_date__gte=period_start,
-            finished_date__lte=period_end,
-        )
+        base.filter(finished_filter)
         .values_list("finished_date")
         .annotate(total=Count("pk"))
     )
